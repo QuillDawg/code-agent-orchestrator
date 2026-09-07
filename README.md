@@ -125,8 +125,8 @@ npm install -g code-agent-orchestrator@beta
 cao --version
 ```
 
-The `@beta` tag is required until 1.0. A bare `npm install -g code-agent-orchestrator` will not resolve a
-version yet.
+Use the `@beta` tag until 1.0: every pre-release is published under it, so that is the tag that always
+resolves to the newest one.
 
 Two binaries are installed, `cao` and `code-agent-orchestrator`, the same program under both names. `cao` is
 a short name that npm does not reserve, so it can lose to a shell alias or another tool on your PATH. If
