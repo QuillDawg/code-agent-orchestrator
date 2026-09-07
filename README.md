@@ -1,8 +1,11 @@
 <div align="center">
 
-# Code Agent Orchestrator
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/QuillDawg/code-agent-orchestrator/main/assets/logo-light.png">
+  <img alt="Code Agent Orchestrator" src="https://raw.githubusercontent.com/QuillDawg/code-agent-orchestrator/main/assets/logo-dark.png" width="560">
+</picture>
 
-### `cao` — run YAML-defined engineering workflows as a DAG of isolated Claude Code and Codex sessions
+### Run YAML-defined engineering workflows as a DAG of isolated Claude Code and Codex sessions
 
 [![npm version](https://img.shields.io/npm/v/code-agent-orchestrator/beta?label=npm&color=cb3837)](https://www.npmjs.com/package/code-agent-orchestrator)
 [![CI](https://github.com/QuillDawg/code-agent-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/QuillDawg/code-agent-orchestrator/actions/workflows/ci.yml)
@@ -824,5 +827,11 @@ not the issue tracker.
 MIT. See [LICENSE](LICENSE).
 
 <div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/QuillDawg/code-agent-orchestrator/main/assets/logo-chip-dark.png">
+  <img alt="cao" src="https://raw.githubusercontent.com/QuillDawg/code-agent-orchestrator/main/assets/logo-chip-light.png" width="96">
+</picture>
+
 <sub>Built by <a href="https://github.com/QuillDawg">QuillDawg</a> · <a href="#table-of-contents">Back to top ↑</a></sub>
 </div>
