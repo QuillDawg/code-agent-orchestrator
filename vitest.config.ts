@@ -11,5 +11,5 @@ export default defineConfig({
     // output is the same everywhere; the tests that cover the ASCII fallback override this themselves.
     env: { CAO_UNICODE: '1' },
   },
-  esbuild: { jsx: 'automatic' },
+  oxc: { jsx: { runtime: 'automatic' } },
 });

@@ -14,6 +14,12 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   usage screen. The id is now cut to the column with an ellipsis, so the state, cost and activity columns
   stay aligned however long a task is named.
 
+### Security
+
+- Development toolchain updated to close the open Dependabot alerts: vitest 2 to 5 (with Vite 8), and
+  esbuild pinned to 0.28.1 or later for every package that pulls it in, including tsup. None of these ship
+  in the published package; they only affect building and testing this repository.
+
 ## [0.1.0-beta.3] - 2026-09-07
 
 `allowUnsafeSharedParallel` now does what its name says.
