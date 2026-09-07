@@ -522,6 +522,14 @@ tasks:
     const execution = runtime.scheduler.execute();
     await waitFor(() => run.tasks.b?.state === 'running' && run.tasks.b.attempts[0]?.pid !== undefined, 15_000);
     const pid = run.tasks.b!.attempts[0]!.pid!;
+    // The orchestrator records the pid the moment it spawns the fake, but the fake writes its trace line only
+    // once node has booted its script. Stopping in between races the kill against that startup (Linux wins
+    // the race, Windows usually does not), and the trace asserted below would then lack b#1.
+    const traceFile = path.join(repo, '.orchestrator', 'trace.jsonl');
+    for (const start = Date.now(); !(await readTrace(traceFile)).some((t) => t.taskId === 'b'); ) {
+      if (Date.now() - start > 15_000) throw new Error('fake Claude for task b never wrote its trace line');
+      await new Promise((r) => setTimeout(r, 20));
+    }
     runtime.scheduler.requestStop('cancel', 'signal');
     await runtime.processManager.shutdown('graceful');
     const result = await execution;
@@ -541,7 +549,7 @@ tasks:
     const runtime2 = createRuntime({ run: reloaded, environment: fakeEnv(repo), secrets: [], logger: silentLogger, isResume: true });
     const result2 = await runtime2.scheduler.execute();
     expect(result2.state).toBe('completed');
-    const trace = await readTrace(path.join(repo, '.orchestrator', 'trace.jsonl'));
+    const trace = await readTrace(traceFile);
     expect(trace.map((t) => `${t.taskId}#${t.attempt}`)).toEqual(['a#1', 'b#1', 'b#2', 'c#1']);
     expect(reloaded.tasks.b!.attempts[1]!.triggeredBy).toBe('resume');
   }, 60_000);
