@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contextWindowFor } from '../../src/runners/claude/models.js';
+import { contextWindowFor, supportsAutoMode, supportsEffort } from '../../src/runners/claude/models.js';
 import { agentLabel, shortModelName } from '../../src/tui/format.js';
 
 describe('contextWindowFor', () => {
@@ -52,5 +52,25 @@ describe('agent label', () => {
     expect(agentLabel('claude', 'claude-opus-5')).toBe('claude|opus-5');
     expect(agentLabel('codex', 'gpt-5.6-terra')).toBe('codex|gpt-5.6-terra');
     expect(agentLabel('claude', undefined)).toBe('claude');
+  });
+});
+
+describe('supportsEffort', () => {
+  it('is false only for Haiku, the one family Claude Code documents no effort levels for', () => {
+    for (const m of ['haiku', 'claude-haiku-4-5', 'claude-3-5-haiku-20241022', 'us.anthropic.claude-haiku-4-5-v1:0']) expect(supportsEffort(m), m).toBe(false);
+    for (const m of ['opus', 'sonnet', 'fable', 'claude-opus-5', 'claude-sonnet-4-6', undefined]) expect(supportsEffort(m), String(m)).toBe(true);
+  });
+});
+
+describe('supportsAutoMode', () => {
+  it('matches the models Claude Code runs its classifier for: Sonnet 5, Opus 4.7 and later, Fable', () => {
+    for (const m of ['claude-sonnet-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-fable-5-1', 'claude-mythos-5-1', 'opus', 'sonnet', 'fable', undefined]) {
+      expect(supportsAutoMode(m), String(m)).toBe(true);
+    }
+    for (const m of ['haiku', 'claude-haiku-4-5', 'claude-3-5-haiku-20241022', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5-20250929', 'us.anthropic.claude-haiku-4-5-v1:0']) {
+      expect(supportsAutoMode(m), m).toBe(false);
+    }
+    // not a Claude family we know: the CLI decides
+    expect(supportsAutoMode('gpt-5.6-terra')).toBe(true);
   });
 });

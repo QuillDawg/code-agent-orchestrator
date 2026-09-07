@@ -90,7 +90,8 @@ export interface FileTouch {
 export interface TaskAttempt {
   number: number;
   kind: 'task' | 'merge';
-  triggeredBy: 'initial' | 'retry' | 'resume' | 'user_input';
+  /** `nudge`: the previous attempt's session is asked for the completion object it did not produce. */
+  triggeredBy: 'initial' | 'retry' | 'resume' | 'user_input' | 'nudge';
   sessionId?: string;
   /** Set when this attempt continued a previous attempt's Claude session (transient API error recovery). */
   resumedSessionId?: string;

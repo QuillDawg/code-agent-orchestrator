@@ -10,6 +10,48 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 Nothing yet.
 
+## [0.1.0-beta.2] - 2026-09-07
+
+What a smaller model such as Haiku 4.5 does to a workflow, and what `cao` now does about it.
+
+### Added
+
+- A session that ends its turn without the JSON completion object (prose such as "Done, all tests pass.", or
+  JSON the contract rejects) is asked for just the object before a retry is spent: the scheduler resumes the
+  same session with a prompt that quotes what was wrong, the attempt shows as `nudge` in `cao task`, and the
+  dashboard row says `asking for the result`. `retry.resultNudges` (default 1) bounds it; a nudge that produces
+  a valid result does not count against `retry.attempts`. Smaller models end this way often.
+- The dashboard shows what the orchestrator is doing for a task before its worker says anything
+  (`preparing worktree`, `running beforeTask hook`, `starting claude`) instead of a bare idle timer, and a
+  workspace that takes more than 30 seconds to prepare is reported as a warning.
+- `cao validate` warns when a Haiku task inherits an `effort`, which Claude Code has no levels for; the flag
+  is dropped instead of being passed for the CLI to ignore.
+- Claude Code runs its auto permission mode only for Sonnet 5, Opus 4.7 and later, and Fable; for any other
+  model it accepts `--permission-mode auto` and silently starts the session in its ordinary prompting mode,
+  which asks before every file write and command. That is why a Haiku task under the default mode kept asking
+  for approval. `cao validate` now warns about such a task, and the runner compares the mode the worker
+  reports at start-up with the one requested and raises a run warning plus a transcript line when they differ.
+
+### Changed
+
+- Results are read the way a careful reader would: `null` for a field that does not apply is treated as
+  omitted, `status` is matched case-insensitively and with the usual synonyms (`completed`, `done`, `ok`,
+  `failure`, `error`, `needs input`), a missing `summary` is filled from `error` and noted in `warnings`,
+  and the object taken from prose is the fenced block or trailing object that carries a `status`, not merely
+  the last JSON block in the message.
+- The documentation now says what `permissionMode: auto` is (Claude Code's classifier, which allows what it
+  judges safe and still asks for the rest, is already the default, and only exists for some models), what
+  the other modes do, and which to pick for an unattended run or a Haiku task.
+
+### Fixed
+
+- Two tasks of one layer that both resolve to the shared working tree (`git.enabled: false`, an explicit
+  `workspace: shared`, `allowUnsafeSharedParallel`) deadlocked the run: the second task waited for the
+  shared-tree lock inside the scheduler loop that the first task needed in order to release it, so the first
+  task's result was never processed and the second sat `running` and idle forever. The lock is now only
+  taken when it is free; a task whose tree is busy stays `ready` until the holder finishes. The same applied
+  to a merge-resolution session started while a shared-tree task was running.
+
 ## [0.1.0-beta.1] - 2026-09-07
 
 The first public release, published under the `beta` tag

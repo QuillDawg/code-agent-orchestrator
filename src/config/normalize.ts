@@ -104,6 +104,7 @@ const ITEM_OVERRIDE_KEYS = [
 ] as const;
 
 const DEFAULT_INTERACTION_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_RESULT_NUDGES = 1;
 
 function buildExecution(file: LoadedWorkflow['file']): ExecutionConfig {
   const ex = file.execution ?? {};
@@ -387,6 +388,7 @@ export async function normalizeWorkflow(loaded: LoadedWorkflow): Promise<Normali
       transientDelayMs,
       transientMaxDelayMs,
       resumeSession: (retryBody.resumeSession as boolean | undefined) ?? true,
+      resultNudges: (retryBody.resultNudges as number | undefined) ?? DEFAULT_RESULT_NUDGES,
     };
 
     // Dependencies (foreach source ids expand to children)

@@ -11,6 +11,7 @@
  *   thinking (thinking blocks around a line of prose, plus a redacted_thinking block)
  *   edge (rename into a path with a space, binary change, delete+recreate, CRLF file) | noop (changes nothing)
  *   permission | permission-always | question | permission-cancel | permission-hang   (interactive modes, need --input-format stream-json)
+ *   prose-no-json (ends with prose that reads like a result and no JSON at all; a --resume of the session answers with the object)
  * FAKE_CLAUDE_NO_SUBAGENT_TEXT=1 drops --forward-subagent-text from the --help text.
  * FAKE_CLAUDE_DELAY_MS delays between events. FAKE_CLAUDE_TRACE=<file> appends one line per invocation
  * with cwd + prompt so tests can assert isolation and context passing; control responses received on stdin
@@ -103,7 +104,10 @@ if (failUntil[taskId] !== undefined && attempt < failUntil[taskId]) effectiveMod
 if (apiErrorUntil[taskId] !== undefined && attempt < apiErrorUntil[taskId]) effectiveMode = 'api-error';
 if (process.env.CAO_ATTEMPT_KIND === 'merge') effectiveMode = process.env.FAKE_CLAUDE_MERGE_MODE ?? 'merge';
 
-emit({ type: 'system', subtype: 'init', session_id: sessionId, model: 'fake-model', cwd: process.cwd() });
+// The real CLI reports the mode it actually runs in; FAKE_CLAUDE_PERMISSION_MODE simulates a model it downgrades.
+const permissionModeIdx = args.indexOf('--permission-mode');
+const permissionMode = process.env.FAKE_CLAUDE_PERMISSION_MODE ?? (permissionModeIdx >= 0 ? args[permissionModeIdx + 1] : 'default');
+emit({ type: 'system', subtype: 'init', session_id: sessionId, model: process.env.FAKE_CLAUDE_MODEL ?? 'fake-model', cwd: process.cwd(), permissionMode });
 await sleep(delay);
 
 const result = (status, extra = {}) => ({
@@ -338,6 +342,18 @@ switch (effectiveMode) {
   case 'no-result':
     text('I stopped early');
     break;
+  case 'prose-no-json': {
+    // A weaker model's ending: prose that reads like a result, but no JSON anywhere. The orchestrator's nudge
+    // resumes the session, and only then does the object arrive.
+    if (resumedSessionId) {
+      finish(result('success', { summary: `Nudged ${taskId}` }));
+      break;
+    }
+    const prose = 'Success - implemented the change and ran the tests.';
+    text(prose);
+    finish(undefined, { text: prose });
+    break;
+  }
   case 'error-result':
     finish(undefined, { isError: true, subtype: 'error_max_turns', text: 'max turns reached' });
     break;

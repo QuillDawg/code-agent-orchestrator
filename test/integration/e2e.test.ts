@@ -428,6 +428,28 @@ tasks:
     expect(isProcessAlive(pid)).toBe(false);
   }, 60_000);
 
+  it('asks a session that ended in prose for the completion object before spending a retry', async () => {
+    const repo = await tmpGitRepo('cao-e2e-nudge-');
+    const yaml = 'name: nudge\ntasks:\n  - id: chatty\n    prompt: p\n';
+    const env = fakeEnv(repo, { FAKE_CLAUDE_TASK_MODES: JSON.stringify({ chatty: 'prose-no-json' }) });
+    const { run, result } = await execute(repo, yaml, env);
+    const trace = await readTrace(env.FAKE_CLAUDE_TRACE!);
+    expect(result.state).toBe('completed');
+    const chatty = run.tasks.chatty!;
+    expect(chatty.state).toBe('success');
+    expect(chatty.attempts.map((a) => a.outcome)).toEqual(['invalid_result', 'success']);
+    expect(chatty.attempts.map((a) => a.triggeredBy)).toEqual(['initial', 'nudge']);
+    const session = chatty.attempts[0]!.usage?.sessionId ?? chatty.attempts[0]!.sessionId;
+    expect(session).toBeTruthy();
+    expect(chatty.attempts[1]!.resumedSessionId).toBe(session);
+    const calls = trace.filter((t) => t.taskId === 'chatty').sort((a, b) => a.attempt - b.attempt);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.args[calls[1]!.args.indexOf('--resume') + 1]).toBe(session);
+    expect(calls[1]!.prompt).toContain('# Completion Object Required');
+    expect(calls[1]!.prompt).toContain('machine-readable result');
+    expect(chatty.result?.summary).toBe('Nudged chatty');
+  }, 60_000);
+
   it('recovers from a transient API error by resuming the same Claude session', async () => {
     const repo = await tmpGitRepo('cao-e2e-api-error-');
     const yaml = [

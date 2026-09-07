@@ -181,7 +181,7 @@ tasks:
 
   it('retries with a fresh attempt, injecting the previous failure, then succeeds', async () => {
     const runner = new MockRunner().when('a', [{ kind: 'error', outcome: 'invalid_result', message: 'bad json' }, { kind: 'status', status: 'failed', error: 'tests red' }, { kind: 'success' }]);
-    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retries: 2\n    prompt: do it\n'), runner);
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retries: 2\n    retry:\n      resultNudges: 0\n    prompt: do it\n'), runner);
     const res = await h.scheduler.execute();
     expect(res.state).toBe('completed');
     expect(runner.calls).toHaveLength(3);
@@ -549,5 +549,140 @@ describe('scheduler: transient API errors resume the session', () => {
     expect(h.run.tasks.a!.reason).toBe('api_error');
     expect(h.store.eventsOf('task.retrying')).toHaveLength(0);
     expect(res.state).not.toBe('completed');
+  });
+});
+
+describe('scheduler: a session that ends without the completion object is asked for it', () => {
+  const NO_JSON = 'Claude finished without a machine-readable result (subtype: success, stop: end_turn)';
+
+  it('asks the same session for the JSON without spending retry.attempts', async () => {
+    const runner = new MockRunner().when('a', [{ kind: 'error', outcome: 'invalid_result', message: NO_JSON }, { kind: 'success' }]);
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    prompt: do it\n'), runner);
+    const res = await h.scheduler.execute();
+    expect(res.state).toBe('completed');
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[1]!.resumeSessionId).toBe('s-1');
+    expect(runner.calls[1]!.prompt).toContain('# Completion Object Required');
+    expect(runner.calls[1]!.prompt).toContain('machine-readable result');
+    expect(runner.calls[1]!.prompt).not.toContain('# Previous Attempt');
+    expect(runner.calls[1]!.prompt).not.toContain('# Task');
+    const attempts = h.run.tasks.a!.attempts;
+    expect(attempts.map((a) => a.outcome)).toEqual(['invalid_result', 'success']);
+    expect(attempts.map((a) => a.triggeredBy)).toEqual(['initial', 'nudge']);
+    expect(attempts[1]!.resumedSessionId).toBe('s-1');
+    expect(h.run.tasks.a!.resumeSessionId).toBeUndefined();
+    expect(h.store.eventsOf('task.retrying')).toHaveLength(1);
+    expect(h.store.eventsOf('task.retrying')[0]).toMatchObject({ resumeSession: true, nudge: true, delayMs: 0 });
+    expect(h.store.eventsOf('task.failed')[0]).toMatchObject({ reason: 'invalid_result', final: false });
+    // the launch notes say what each attempt is for
+    const notes = h.store.eventsOf('task.transcript').map((e) => (e as { entry: { kind: string; text?: string } }).entry).filter((e) => e.kind === 'system').map((e) => e.text);
+    expect(notes).toContain('starting claude');
+    expect(notes).toContain('asking claude for the completion object');
+  });
+
+  it('counts the attempt as failed when the nudged session still produces nothing usable', async () => {
+    const runner = new MockRunner().when('a', [
+      { kind: 'error', outcome: 'invalid_result', message: NO_JSON },
+      { kind: 'error', outcome: 'invalid_result', message: NO_JSON },
+      { kind: 'success' },
+    ]);
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retries: 1\n    prompt: do it\n'), runner);
+    const res = await h.scheduler.execute();
+    expect(res.state).toBe('completed');
+    expect(runner.calls.map((c) => c.resumeSessionId)).toEqual([undefined, 's-1', undefined]);
+    expect(runner.calls[2]!.prompt).toContain('# Previous Attempt');
+    expect(runner.calls[2]!.prompt).toContain('# Task\n\ndo it');
+    expect(h.run.tasks.a!.attempts.map((a) => a.triggeredBy)).toEqual(['initial', 'nudge', 'retry']);
+    expect(h.store.eventsOf('task.retrying').map((e) => Boolean((e as { nudge?: boolean }).nudge))).toEqual([true, false]);
+  });
+
+  it('with no retries left, a failed nudge ends the task as invalid_result', async () => {
+    const runner = new MockRunner().when('a', { kind: 'error', outcome: 'invalid_result', message: NO_JSON });
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    prompt: p\n'), runner);
+    const res = await h.scheduler.execute();
+    expect(res.state).toBe('failed');
+    expect(runner.calls).toHaveLength(2);
+    expect(h.run.tasks.a!.state).toBe('failed');
+    expect(h.run.tasks.a!.reason).toBe('invalid_result');
+  });
+
+  it('resultNudges: 0 fails the attempt at once, as before', async () => {
+    const runner = new MockRunner().when('a', { kind: 'error', outcome: 'invalid_result', message: NO_JSON });
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retry:\n      resultNudges: 0\n    prompt: p\n'), runner);
+    const res = await h.scheduler.execute();
+    expect(res.state).toBe('failed');
+    expect(runner.calls).toHaveLength(1);
+    expect(h.store.eventsOf('task.retrying')).toHaveLength(0);
+  });
+
+  it('retries with a fresh session instead when the session cannot be resumed', async () => {
+    const runner = new MockRunner().when('a', [{ kind: 'error', outcome: 'invalid_result', message: NO_JSON }, { kind: 'success' }]);
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retries: 1\n    retry:\n      resumeSession: false\n    prompt: do it\n'), runner);
+    const res = await h.scheduler.execute();
+    expect(res.state).toBe('completed');
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[1]!.resumeSessionId).toBeUndefined();
+    expect(runner.calls[1]!.prompt).toContain('# Previous Attempt');
+    expect(h.run.tasks.a!.attempts.map((a) => a.triggeredBy)).toEqual(['initial', 'retry']);
+  });
+});
+
+describe('scheduler: the shared working tree never parks the loop', () => {
+  const deadline = <T,>(p: Promise<T>): Promise<T> => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('scheduler deadlocked')), 5000))]);
+
+  it('runs two shared-tree tasks of one layer one after the other', async () => {
+    const yaml = `
+name: t
+execution:
+  maxConcurrency: 2
+  workspaceStrategy: shared
+  allowUnsafeSharedParallel: true
+tasks:
+  - id: a
+    parallelGroup: g
+    prompt: p
+  - id: b
+    parallelGroup: g
+    prompt: p
+`;
+    const runner = new MockRunner().when('a', { kind: 'success', delayMs: 40 }).when('b', { kind: 'success', delayMs: 40 });
+    const h = harness(await wf(yaml), runner);
+    const res = await deadline(h.scheduler.execute());
+    expect(res.state).toBe('completed');
+    expect(states(h.run)).toEqual({ a: 'success', b: 'success' });
+    expect(runner.maxConcurrent).toBe(1);
+    expect(h.workspace.acquisitions.map((x) => `${x.taskId}:${x.mode}`)).toEqual(['a:shared', 'b:shared']);
+    // b was launched only once a released the tree, not left running-but-idle behind it
+    const [a, b] = runner.calls;
+    expect(b!.startedAt).toBeGreaterThanOrEqual(a!.endedAt!);
+  });
+
+  it('starts a merge-resolution session once the shared-tree task holding the tree is done', async () => {
+    const yaml = `
+name: t
+execution:
+  mode: dag
+  maxConcurrency: 3
+tasks:
+  - id: hold
+    workspace: shared
+    prompt: p
+  - id: b
+    prompt: p
+  - id: c
+    prompt: p
+`;
+    const runner = new MockRunner().when('hold', { kind: 'success', delayMs: 150 }).when('b', { kind: 'success', delayMs: 20 }).when('c', { kind: 'success', delayMs: 20 });
+    const h = harness(await wf(yaml), runner);
+    h.workspace.conflictFor.add('b');
+    const res = await deadline(h.scheduler.execute());
+    expect(res.state).toBe('completed');
+    expect(states(h.run)).toEqual({ hold: 'success', b: 'success', c: 'success' });
+    const b = h.run.tasks.b!;
+    expect(b.attempts.map((x) => x.kind)).toEqual(['task', 'merge']);
+    const hold = runner.calls.find((x) => x.taskId === 'hold')!;
+    const merge = runner.calls.find((x) => x.taskId === 'b' && x.attempt === 2)!;
+    expect(merge.startedAt).toBeGreaterThanOrEqual(hold.endedAt!);
+    expect(h.store.eventsOf('task.merged').map((e) => (e as { taskId: string }).taskId).sort()).toEqual(['b', 'c']);
   });
 });

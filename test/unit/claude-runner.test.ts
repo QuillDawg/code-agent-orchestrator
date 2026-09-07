@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { buildClaudeArgs, ClaudeRunner, resolveClaudeOptions } from '../../src/runners/claude/claude-runner.js';
+import { buildClaudeArgs, ClaudeRunner, permissionModeDowngrade, resolveClaudeOptions } from '../../src/runners/claude/claude-runner.js';
 import { clearDetectionCache, detectClaude } from '../../src/runners/claude/detect.js';
 import { parseClaudeEvents } from '../../src/runners/claude/event-parser.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
@@ -41,10 +41,19 @@ describe('Claude runner model/effort resolution', () => {
   });
 
   it('lets the resolved generic keys win over the legacy claude block', () => {
-    const options = resolveClaudeOptions({}, task({ model: 'haiku', effort: 'low', claude: { model: 'opus', effort: 'max' } }));
+    const options = resolveClaudeOptions({}, task({ model: 'sonnet', effort: 'low', claude: { model: 'opus', effort: 'max' } }));
 
-    expect(options.model).toBe('haiku');
+    expect(options.model).toBe('sonnet');
     expect(options.effort).toBe('low');
+  });
+
+  it('drops effort for Haiku, which has no effort levels, wherever the effort came from', () => {
+    for (const options of [resolveClaudeOptions({ effort: 'high' }, task({ model: 'claude-haiku-4-5' })), resolveClaudeOptions({}, task({ model: 'haiku', effort: 'low' }))]) {
+      expect(options.effort).toBeUndefined();
+      const args = buildClaudeArgs(options, 'session-1');
+      expect(flagValue(args, '--model')).toMatch(/haiku/);
+      expect(args).not.toContain('--effort');
+    }
   });
 
   it('keeps workflow-level claude defaults that the task does not override', () => {
@@ -144,12 +153,13 @@ interface Trace {
 }
 
 /** Run one attempt of the fake CLI through the real runner and collect what the orchestrator saw. */
-async function runFake(mode: string): Promise<{ entries: TranscriptEntry[]; activity: string[]; usage: RunnerUsage | undefined; persisted: TranscriptEntry[]; trace: Trace[] }> {
+async function runFake(mode: string, extraEnv: Record<string, string> = {}): Promise<{ entries: TranscriptEntry[]; activity: string[]; usage: RunnerUsage | undefined; persisted: TranscriptEntry[]; trace: Trace[]; warnings: string[] }> {
   clearDetectionCache();
   const dir = await tmpDir('cao-runner-');
   const attemptDir = path.join(dir, 'attempt');
   const entries: TranscriptEntry[] = [];
   const activity: string[] = [];
+  const warnings: string[] = [];
   let usage: RunnerUsage | undefined;
   const hooks: RunnerHooks = {
     onActivity: (line) => activity.push(line),
@@ -160,6 +170,7 @@ async function runFake(mode: string): Promise<{ entries: TranscriptEntry[]; acti
       usage = u;
     },
     onFileChange: () => {},
+    onWarning: (message) => warnings.push(message),
     onInteraction: () => Promise.reject(new Error('no interaction expected')),
   };
   const runner = new ClaudeRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CLAUDE } });
@@ -170,7 +181,7 @@ async function runFake(mode: string): Promise<{ entries: TranscriptEntry[]; acti
       attempt: 1,
       prompt: 'do it',
       cwd: dir,
-      env: { FAKE_CLAUDE_MODE: mode, FAKE_CLAUDE_TRACE: path.join(dir, 'trace.jsonl') },
+      env: { FAKE_CLAUDE_MODE: mode, FAKE_CLAUDE_TRACE: path.join(dir, 'trace.jsonl'), ...extraEnv },
       timeoutMs: 30_000,
       signal: new AbortController().signal,
       attemptDir,
@@ -182,8 +193,30 @@ async function runFake(mode: string): Promise<{ entries: TranscriptEntry[]; acti
   const persisted = log.trim().split('\n').map(parseTranscriptLine).filter((e): e is TranscriptEntry => e !== null);
   const traceText = await fs.readFile(path.join(dir, 'trace.jsonl'), 'utf8');
   const trace = traceText.trim().split('\n').map((l) => JSON.parse(l) as Trace);
-  return { entries, activity, usage, persisted, trace };
+  return { entries, activity, usage, persisted, trace, warnings };
 }
+
+describe('Claude runner: the permission mode the CLI actually runs', () => {
+  afterEach(() => clearDetectionCache());
+
+  it('names the model when auto mode is the reason, and stays quiet when the modes agree', () => {
+    expect(permissionModeDowngrade('auto', 'auto', 'sonnet')).toBeUndefined();
+    expect(permissionModeDowngrade('manual', 'default', 'sonnet')).toBeUndefined();
+    expect(permissionModeDowngrade('auto', undefined, 'claude-haiku-4-5')).toBeUndefined();
+    expect(permissionModeDowngrade('auto', 'default', 'claude-haiku-4-5')).toMatch(/"default", not the requested "auto" because claude-haiku-4-5 has no auto mode; every file write and command will prompt/);
+    expect(permissionModeDowngrade('acceptEdits', 'default', 'sonnet')).toMatch(/"default", not the requested "acceptEdits"; every file write/);
+  });
+
+  it('warns, in the transcript and to the host, when a session starts in a different mode than requested', async () => {
+    const downgraded = await runFake('success', { FAKE_CLAUDE_PERMISSION_MODE: 'default', FAKE_CLAUDE_MODEL: 'claude-haiku-4-5' });
+    expect(downgraded.warnings).toHaveLength(1);
+    expect(downgraded.warnings[0]).toMatch(/because claude-haiku-4-5 has no auto mode/);
+    expect(downgraded.entries.filter((e) => e.kind === 'system').map((e) => (e as { text: string }).text)).toEqual(expect.arrayContaining([expect.stringMatching(/not the requested "auto"/)]));
+    expect(downgraded.persisted.some((e) => e.kind === 'system' && /not the requested "auto"/.test((e as { text: string }).text))).toBe(true);
+    const honoured = await runFake('success');
+    expect(honoured.warnings).toEqual([]);
+  });
+});
 
 describe('Claude runner: tool timing and subagent entries', () => {
   afterEach(() => clearDetectionCache());

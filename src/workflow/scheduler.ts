@@ -10,7 +10,7 @@
 import path from 'node:path';
 import type { WorkflowRun, TaskRunState, TaskAttempt, TaskState, TaskReason, AttemptOutcome, RunSummary, LiveStatus, WorkspaceInfo } from '../types/run.js';
 import { TERMINAL_TASK_STATES, ACTIVE_TASK_STATES } from '../types/run.js';
-import type { ResolvedTask, ResolvedWorkflow } from '../types/workflow.js';
+import type { ResolvedTask, ResolvedWorkflow, WorkspaceMode } from '../types/workflow.js';
 import type { AttemptDiff, EnrichedTaskResult, GitInfo, TaskResult, RunnerUsage } from '../types/result.js';
 import { transcriptLine, type TranscriptEntry } from '../types/transcript.js';
 import { describeAnswer, toInteractionRecord, type Interaction, type InteractionAnswer, type InteractionAnswerSource, type InteractionRecord } from '../types/interaction.js';
@@ -75,6 +75,9 @@ export interface SchedulerResult {
   summary: RunSummary;
 }
 
+/** A workspace that takes longer than this to prepare gets a warning, so a long checkout is not mistaken for a stuck worker. */
+const SLOW_WORKSPACE_MS = 30_000;
+
 const FAILURE_OUTCOMES: ReadonlySet<AttemptOutcome> = new Set(['failed', 'timeout', 'crash', 'api_error', 'invalid_result', 'merge_conflict']);
 
 /**
@@ -87,7 +90,8 @@ const FAILURE_OUTCOMES: ReadonlySet<AttemptOutcome> = new Set(['failed', 'timeou
 export function budgetedFailures(state: TaskRunState, task: ResolvedTask): { counted: number; transientStreak: number } {
   let counted = 0;
   let streak = 0;
-  for (const a of state.attempts) {
+  for (let i = 0; i < state.attempts.length; i++) {
+    const a = state.attempts[i]!;
     if (a.number < state.retryWindowStart || a.kind !== 'task' || !a.outcome) continue;
     if (a.outcome === 'api_error') {
       streak++;
@@ -96,11 +100,20 @@ export function budgetedFailures(state: TaskRunState, task: ResolvedTask): { cou
         streak = 0;
       }
     } else {
+      // A session asked for the completion object it forgot is the same attempt continuing, not a failure yet.
+      if (a.outcome === 'invalid_result' && state.attempts[i + 1]?.triggeredBy === 'nudge') continue;
       if (FAILURE_OUTCOMES.has(a.outcome)) counted++;
       streak = 0;
     }
   }
   return { counted, transientStreak: streak };
+}
+
+/** Nudges already spent on the attempt that is being judged: the run of `nudge` attempts ending at the newest one. */
+function nudgesUsed(state: TaskRunState): number {
+  let n = 0;
+  for (let i = state.attempts.length - 1; i >= 0 && state.attempts[i]!.triggeredBy === 'nudge'; i--) n++;
+  return n;
 }
 
 /** Delay before transient recovery `n` (1-based): doubles from `baseMs`, capped at `maxMs`. */
@@ -129,6 +142,17 @@ function resumePrompt(previous: TaskAttempt | undefined): string {
     '# Session Resumed',
     `Your previous turn in this session was cut short by a transient API error${detail ? ` (${detail})` : ''}. The task and its context are unchanged.`,
     'Continue exactly where you left off. Re-check the working tree if you are unsure what was already done, finish the remaining work, and end with the single JSON completion object required by the contract.',
+  ].join('\n\n');
+}
+
+/** Prompt for a nudge: the session did the work but ended without the completion object, so ask for only that. */
+function nudgePrompt(previous: TaskAttempt | undefined): string {
+  const detail = previous?.error?.split('\n')[0]?.trim();
+  return [
+    '# Completion Object Required',
+    `Your previous turn in this session ended without the JSON completion object the contract requires${detail ? ` (${detail})` : ''}.`,
+    'Do no further work. Reply now with only the single JSON object describing what you already did, with no prose around it:',
+    '{"status":"success|failed|blocked|needs_input|skipped","summary":"...","filesChanged":["..."],"commits":["..."],"decisions":["..."],"warnings":["..."],"followUp":["..."],"error":"..."}',
   ].join('\n\n');
 }
 
@@ -181,6 +205,8 @@ export class WorkflowScheduler {
   >();
   private readonly buffers = new Map<string, RingBuffer<TranscriptEntry>>();
   private readonly pendingApprovals = new Set<string>();
+  /** Merge-resolution sessions waiting for the shared tree, which another attempt owns right now. */
+  private readonly pendingMerges = new Map<string, { task: ResolvedTask; state: TaskRunState; attempt: TaskAttempt; fin: FinalizeResult }>();
   /** taskId -> still-open interactions by request id; a worker can block on several at once (parallel tool calls). */
   private readonly openInteractions = new Map<string, Map<string, InteractionRecord>>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
@@ -346,8 +372,9 @@ export class WorkflowScheduler {
     try {
       for (;;) {
         this.promoteReady();
+        await this.launchPendingMerges();
         await this.launchReady();
-        if (this.inflight.size === 0 && this.pendingApprovals.size === 0 && this.wake.size === 0 && !this.hasDelayedReady()) break;
+        if (this.inflight.size === 0 && this.pendingApprovals.size === 0 && this.pendingMerges.size === 0 && this.wake.size === 0 && !this.hasDelayedReady()) break;
         const w = await this.wake.next();
         await this.handleWake(w);
         await this.persist();
@@ -519,7 +546,14 @@ export class WorkflowScheduler {
           continue;
         }
       }
-      await this.launch(this.taskDefs.get(id)!);
+      const task = this.taskDefs.get(id)!;
+      let release: (() => void) | undefined;
+      if (this.workspaceMode(task) === 'shared') {
+        // Never wait for the shared tree here: the attempt holding it can only release it through this loop.
+        release = this.workspace.tryLockShared();
+        if (!release) continue;
+      }
+      await this.launch(task, release);
     }
     if (earliest !== undefined && this.retryTimer === undefined) {
       this.retryTimer = this.clock.setTimeout(() => {
@@ -529,25 +563,51 @@ export class WorkflowScheduler {
     }
   }
 
-  private async launch(task: ResolvedTask): Promise<void> {
+  /** Which workspace a task gets: its own worktree when it may run beside another task, else the shared tree. */
+  private workspaceMode(task: ResolvedTask): WorkspaceMode {
+    const parallel = this.parallelLayerTasks.has(task.id) && this.workflow.execution.maxConcurrency > 1;
+    return effectiveWorkspace(task, this.workflow, parallel);
+  }
+
+  /**
+   * A line from the orchestrator in a task's transcript, for the stretch before the worker says anything
+   * itself: the activity cell would otherwise show a launching task as idle. Not part of the attempt's
+   * events.jsonl, which the runner owns.
+   */
+  private note(taskId: string, attempt: number, text: string): void {
+    const entry: TranscriptEntry = { kind: 'system', ts: nowIso(), text };
+    this.bufferFor(taskId).push(entry);
+    const state = this.run.tasks[taskId];
+    if (state) state.lastActivity = text;
+    this.bus.emit({ type: 'task.transcript', taskId, attempt, entry });
+    this.markLive(false);
+  }
+
+  /** `release` is the shared-tree lock `launchReady` already holds for a shared-mode task. */
+  private async launch(task: ResolvedTask, release?: () => void): Promise<void> {
     const state = this.run.tasks[task.id]!;
     if (state.state !== 'ready' || this.inflight.has(task.id)) {
+      release?.();
       throw new Error(`Internal error: attempted to launch "${task.id}" while ${state.state}/inflight`);
     }
     const lastAttempt = state.attempts[state.attempts.length - 1];
     const number = (lastAttempt?.number ?? 0) + 1;
+    const mode = this.workspaceMode(task);
+    // After a transient API error the worker's session is intact: continue it instead of starting over. The
+    // same goes for a session that finished its turn without the completion object: it is asked for just that.
+    const resumable = lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result';
+    const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
+    const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
+    state.resumeSessionId = undefined;
     const triggeredBy: TaskAttempt['triggeredBy'] = state.userInput && lastAttempt
       ? 'user_input'
       : lastAttempt
-        ? this.isResume && (lastAttempt.outcome === 'interrupted' || lastAttempt.outcome === 'cancelled')
-          ? 'resume'
-          : 'retry'
+        ? nudge
+          ? 'nudge'
+          : this.isResume && (lastAttempt.outcome === 'interrupted' || lastAttempt.outcome === 'cancelled')
+            ? 'resume'
+            : 'retry'
         : 'initial';
-    const parallel = this.parallelLayerTasks.has(task.id) && this.workflow.execution.maxConcurrency > 1;
-    const mode = effectiveWorkspace(task, this.workflow, parallel);
-    // After a transient API error the worker's session is intact: continue it instead of starting over.
-    const resumeSessionId = lastAttempt?.outcome === 'api_error' && sessionResumable(task) ? state.resumeSessionId : undefined;
-    state.resumeSessionId = undefined;
     const attempt: TaskAttempt = { number, kind: 'task', triggeredBy, startedAt: nowIso(), cwd: task.workingDirectory };
     if (resumeSessionId) attempt.resumedSessionId = resumeSessionId;
     state.attempts.push(attempt);
@@ -563,9 +623,15 @@ export class WorkflowScheduler {
     this.inflight.set(task.id, entry);
 
     try {
-      if (mode === 'shared') entry.release = await this.workspace.lockShared();
+      entry.release = release;
       const previousWs = [...state.attempts].reverse().find((a) => a.number < number && a.kind === 'task' && a.workspace?.kind === 'worktree')?.workspace;
+      this.note(task.id, number, mode === 'worktree' ? 'preparing worktree' : 'preparing workspace');
+      const acquireStart = this.clock.now();
       const ws = await this.workspace.acquire(task, number, mode, this.run, previousWs, { preserve: Boolean(resumeSessionId) });
+      const acquireMs = this.clock.now() - acquireStart;
+      if (acquireMs > SLOW_WORKSPACE_MS) {
+        this.bus.emit({ type: 'workflow.warning', code: 'workspace', taskId: task.id, message: `workspace for "${task.id}" took ${formatDuration(acquireMs)} to prepare` });
+      }
       entry.workspace = ws;
       attempt.workspace = ws;
       attempt.cwd = ws.cwd;
@@ -580,15 +646,17 @@ export class WorkflowScheduler {
         userInput: state.userInput,
       });
       for (const w of ctx.warnings) this.bus.emit({ type: 'workflow.warning', code: 'context', message: w, taskId: task.id });
-      const prompt = resumeSessionId ? resumePrompt(lastAttempt) : ContextBuilder.compose(ctx.markdown, task.prompt);
+      const prompt = resumeSessionId ? (nudge ? nudgePrompt(lastAttempt) : resumePrompt(lastAttempt)) : ContextBuilder.compose(ctx.markdown, task.prompt);
       await this.store.writeContext(this.run.runId, task.id, ctx.markdown);
       await this.store.writePrompt(this.run.runId, task.id, number, prompt);
       await this.store.writeAttempt(this.run.runId, task.id, attempt);
       this.bus.emit({ type: 'task.started', taskId: task.id, attempt: number, cwd: ws.cwd, workspace: ws });
+      if (this.workflow.hooks.beforeTask.length) this.note(task.id, number, 'running beforeTask hook');
       await this.hooks.run('beforeTask', { taskId: task.id, env: this.hookEnv(task, ws) });
 
       const attemptDir = await this.store.attemptDir(this.run.runId, task.id, number);
       const runner = this.runners.get(task.runner);
+      this.note(task.id, number, nudge ? `asking ${task.agent} for the completion object` : resumeSessionId ? `resuming ${task.agent} session` : `starting ${task.agent}`);
       const promise = runner.run(
         {
           runId: this.run.runId,
@@ -651,6 +719,9 @@ export class WorkflowScheduler {
         this.markLive(false);
       },
       onInteraction: (interaction, signal) => this.handleInteraction(taskId, attempt, interaction, signal),
+      onWarning: (message) => {
+        this.bus.emit({ type: 'workflow.warning', code: 'permission', taskId, message });
+      },
       onProcess: ({ pid, sessionId }) => {
         const state = this.run.tasks[taskId];
         const a = state?.attempts.find((x) => x.number === attempt);
@@ -952,12 +1023,17 @@ export class WorkflowScheduler {
       const conflictMsg = `merge of ${fin.merge.branch} into ${fin.merge.into} conflicted${fin.merge.conflicts?.length ? ` in ${fin.merge.conflicts.join(', ')}` : ''}: ${fin.merge.output ?? ''}`.trim();
       const mergeAgent = strategy === 'agent' ? task.agent : strategy;
       if (mergeAgent !== 'fail' && entry.kind === 'task' && !this.stop) {
-        await this.launchMergeAttempt({ ...task, agent: mergeAgent, runner: mergeAgent }, state, attempt, fin);
+        const mergeTask = { ...task, agent: mergeAgent, runner: mergeAgent };
+        const release = this.workspace.tryLockShared();
+        if (release) {
+          await this.launchMergeAttempt(mergeTask, state, attempt, fin, release);
+        } else {
+          // Another attempt owns the shared tree. Waiting for it here would park the loop that lets it finish.
+          this.pendingMerges.set(taskId, { task: mergeTask, state, attempt, fin });
+        }
         return;
       }
-      attempt.outcome = 'merge_conflict';
-      attempt.error = conflictMsg;
-      await this.store.writeAttempt(this.run.runId, taskId, attempt);
+      await this.abandonMerge(taskId, attempt, conflictMsg);
     }
 
     const taskResult: TaskResult | undefined = entry.kind === 'merge' ? this.originalResult(state, attemptNo) : attempt.result;
@@ -968,12 +1044,35 @@ export class WorkflowScheduler {
     await this.applyAttemptOutcome(task, state, attempt, taskResult, outcome);
   }
 
+  private async abandonMerge(taskId: string, attempt: TaskAttempt, conflictMsg: string): Promise<void> {
+    attempt.outcome = 'merge_conflict';
+    attempt.error = conflictMsg;
+    await this.store.writeAttempt(this.run.runId, taskId, attempt);
+  }
+
+  /** Start the merge-resolution sessions whose shared tree has since been released; on a stop they fail instead. */
+  private async launchPendingMerges(): Promise<void> {
+    for (const [taskId, pm] of [...this.pendingMerges]) {
+      if (this.stop) {
+        this.pendingMerges.delete(taskId);
+        const merge = pm.fin.merge!;
+        await this.abandonMerge(taskId, pm.attempt, `merge of ${merge.branch} into ${merge.into} conflicted: ${merge.output ?? ''}`.trim());
+        await this.applyAttemptOutcome(pm.task, pm.state, pm.attempt, pm.attempt.result, pm.fin);
+        continue;
+      }
+      const release = this.workspace.tryLockShared();
+      if (!release) return;
+      this.pendingMerges.delete(taskId);
+      await this.launchMergeAttempt(pm.task, pm.state, pm.attempt, pm.fin, release);
+    }
+  }
+
   private originalResult(state: TaskRunState, mergeAttemptNo: number): TaskResult | undefined {
     const original = [...state.attempts].reverse().find((a) => a.number < mergeAttemptNo && a.kind === 'task' && a.result);
     return original?.result;
   }
 
-  private async launchMergeAttempt(task: ResolvedTask, state: TaskRunState, previous: TaskAttempt, fin: FinalizeResult): Promise<void> {
+  private async launchMergeAttempt(task: ResolvedTask, state: TaskRunState, previous: TaskAttempt, fin: FinalizeResult, release: () => void): Promise<void> {
     const merge = fin.merge!;
     const number = previous.number + 1;
     // The resolution session works in the shared tree; remember where that tree was so its own diff has a base.
@@ -983,11 +1082,10 @@ export class WorkflowScheduler {
     state.currentAttempt = number;
     await this.persist();
     const abort = new AbortController();
-    const entry = { attempt: number, abort, kind: 'merge' as const, workspace, release: undefined as (() => void) | undefined, priorGit: fin.git };
+    const entry = { attempt: number, abort, kind: 'merge' as const, workspace, release: release as (() => void) | undefined, priorGit: fin.git };
     this.inflight.set(task.id, entry);
     this.bus.emit({ type: 'task.merging', taskId: task.id, branch: merge.branch ?? '', into: merge.into ?? 'HEAD' });
     try {
-      entry.release = await this.workspace.lockShared();
       const conflicts = merge.conflicts?.length ? merge.conflicts.map((c) => `- ${c}`).join('\n') : '(see merge output)';
       const prompt = [
         `# Merge Conflict Resolution`,
@@ -1128,6 +1226,21 @@ export class WorkflowScheduler {
       this.bus.emit({ type: 'task.failed', taskId: task.id, attempt: attempt.number, outcome, reason: 'api_error', message, final: false });
       this.bus.emit({ type: 'task.retrying', taskId: task.id, nextAttempt: attempt.number + 1, delayMs, resumeSession, transient: true });
       return;
+    }
+
+    // The worker ended its turn without the completion object. Its session already holds the work, so ask
+    // that session for just the JSON before spending a fresh attempt on doing everything again.
+    if (outcome === 'invalid_result' && attempt.kind === 'task' && !mergeFailed && !this.stop && nudgesUsed(state) < task.retry.resultNudges) {
+      const sessionId = attempt.usage?.sessionId ?? attempt.sessionId;
+      if (sessionResumable(task) && sessionId) {
+        state.resumeSessionId = sessionId;
+        state.retryNotBefore = new Date(this.clock.now()).toISOString();
+        this.setState(state, 'ready', 'invalid_result', message);
+        this.logger.warn(`${task.id}: attempt ${attempt.number} ended without a completion object (${nudgesUsed(state) + 1}/${task.retry.resultNudges}); asking session ${sessionId} for it`);
+        this.bus.emit({ type: 'task.failed', taskId: task.id, attempt: attempt.number, outcome, reason: 'invalid_result', message, final: false });
+        this.bus.emit({ type: 'task.retrying', taskId: task.id, nextAttempt: attempt.number + 1, delayMs: 0, resumeSession: true, nudge: true });
+        return;
+      }
     }
     state.resumeSessionId = undefined;
 

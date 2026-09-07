@@ -1,6 +1,6 @@
 /** The worker completion contract: JSON schema handed to Claude and the validator applied to its output. */
 import { z } from 'zod';
-import { TASK_RESULT_STATUSES, type TaskResult } from '../../types/result.js';
+import { TASK_RESULT_STATUSES, type TaskResult, type TaskResultStatus } from '../../types/result.js';
 
 const stringArray = z
   .array(z.union([z.string(), z.number(), z.boolean(), z.null()]))
@@ -9,7 +9,7 @@ const stringArray = z
 export const taskResultSchema = z
   .object({
     status: z.enum(TASK_RESULT_STATUSES),
-    summary: z.string().min(1),
+    summary: z.string().optional(),
     filesChanged: stringArray.optional().default([]),
     commits: stringArray.optional().default([]),
     decisions: stringArray.optional().default([]),
@@ -47,6 +47,44 @@ export const CONTRACT_SYSTEM_PROMPT = [
   'Use "success" only if the requested work is actually done and verified. Use "failed" when you could not complete it.',
 ].join('\n');
 
+/** Words a model reaches for instead of the contract's status vocabulary. Matched after trimming and lower-casing. */
+const STATUS_ALIASES: Record<string, TaskResultStatus> = {
+  succeeded: 'success',
+  successful: 'success',
+  completed: 'success',
+  complete: 'success',
+  done: 'success',
+  ok: 'success',
+  failure: 'failed',
+  error: 'failed',
+  errored: 'failed',
+  'needs input': 'needs_input',
+  'needs-input': 'needs_input',
+  needsinput: 'needs_input',
+  input_required: 'needs_input',
+  'input required': 'needs_input',
+  block: 'blocked',
+  skip: 'skipped',
+};
+
+export const MISSING_SUMMARY = '(no summary provided)';
+
+/**
+ * What a weaker model gets wrong without meaning anything different: `null` for fields that do not apply
+ * (the schema only allows omission), and a status in the wrong case or a synonym of the contract's word.
+ * Everything else is left for the schema to judge.
+ */
+export function normalizeCandidate(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) if (v !== null) out[k] = v;
+  if (typeof out.status === 'string') {
+    const key = out.status.trim().toLowerCase();
+    out.status = STATUS_ALIASES[key] ?? key;
+  }
+  return out;
+}
+
 export interface ParsedResult {
   ok: true;
   result: TaskResult;
@@ -57,29 +95,42 @@ export interface ParseFailure {
 }
 
 export function validateTaskResult(value: unknown): ParsedResult | ParseFailure {
-  const parsed = taskResultSchema.safeParse(value);
+  const parsed = taskResultSchema.safeParse(normalizeCandidate(value));
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
     return { ok: false, error: `Result does not match the completion contract: ${issues}` };
   }
   const { status, summary, filesChanged, commits, decisions, warnings, followUp, error, data } = parsed.data;
-  const result: TaskResult = { status, summary, filesChanged, commits, decisions, warnings, followUp };
+  const result: TaskResult = { status, summary: summary?.trim() || '', filesChanged, commits, decisions, warnings, followUp };
+  if (!result.summary) {
+    // A valid status with nothing said about it is still a usable result; the gap is recorded where a reviewer looks.
+    result.summary = error?.trim() || MISSING_SUMMARY;
+    result.warnings = [...warnings, 'The worker returned no summary'];
+  }
   if (error) result.error = error;
   if (data) result.data = data;
   return { ok: true, result };
 }
 
-/** Fallback: find the last JSON object in free-form text (```json fences or bare). */
+function parseObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fallback: find the completion object in free-form text. Fenced blocks are tried last-to-first, preferring
+ * one that carries a `status` over a trailing fence that merely happens to be JSON (a config the worker was
+ * showing off); then the last balanced object with a `status` key.
+ */
 export function extractJsonObject(text: string): unknown | undefined {
   if (!text) return undefined;
-  const fence = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-  for (let i = fence.length - 1; i >= 0; i--) {
-    try {
-      return JSON.parse((fence[i]![1] ?? '').trim());
-    } catch {
-      /* try next */
-    }
-  }
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => parseObject((m[1] ?? '').trim())).filter((o): o is Record<string, unknown> => o !== undefined);
+  const withStatus = [...fences].reverse().find((o) => 'status' in o);
+  if (withStatus) return withStatus;
   // Scan for a balanced object from the last "{" that contains "status".
   let end = text.length;
   while (end > 0) {
@@ -92,18 +143,13 @@ export function extractJsonObject(text: string): unknown | undefined {
       else if (ch === '{') {
         depth--;
         if (depth === 0) {
-          const candidate = text.slice(i, close + 1);
-          try {
-            const parsed = JSON.parse(candidate);
-            if (parsed && typeof parsed === 'object' && 'status' in parsed) return parsed;
-          } catch {
-            /* keep scanning */
-          }
+          const parsed = parseObject(text.slice(i, close + 1));
+          if (parsed && 'status' in parsed) return parsed;
           break;
         }
       }
     }
     end = close;
   }
-  return undefined;
+  return fences[fences.length - 1];
 }

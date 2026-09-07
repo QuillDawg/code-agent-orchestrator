@@ -775,6 +775,30 @@ so all traffic is theirs, under your own credentials.
 </details>
 
 <details>
+<summary><strong>I set <code>permissionMode: auto</code> and the dashboard still asks me to approve things.</strong></summary>
+
+`auto` is Claude Code's classifier mode, and it is already the default: it allows what it judges safe and
+still asks about the rest. It also only exists for Sonnet 5, Opus 4.7 and later, and Fable. For any other
+model, Haiku included, Claude Code accepts the flag and then silently runs the session in its ordinary
+prompting mode, which asks before every file write and command; `cao validate` warns about such a task.
+Give it `acceptEdits`, `dontAsk` with an `allowedTools` list, or `bypassPermissions` in an isolated
+environment; `permissionPrompts: deny` keeps the mode but fails fast instead of waiting for you. The full
+table of modes is in [docs/configuration.md](docs/configuration.md#claude-workflow-template-or-task-level).
+
+</details>
+
+<details>
+<summary><strong>The worker said it was done, but the task did not complete.</strong></summary>
+
+The contract asks the worker to end with a JSON object; a worker that ends with prose instead ("Success -
+implemented the change") has produced no result. `cao` now asks that same session for the object before it
+spends a retry (`retry.resultNudges`), and `cao task <run> <task>` shows the `nudge` attempt and, if it still
+failed, the exact validation error. Smaller models do this often; see
+[docs/models.md](docs/models.md#smaller-models).
+
+</details>
+
+<details>
 <summary><strong>A parallel task failed to merge. Where is its work?</strong></summary>
 
 On its `orchestrator/<task-id>` branch, which is kept when a merge fails. `cao diff <task>` shows the

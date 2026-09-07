@@ -842,6 +842,15 @@ describe('activity cell', () => {
     expect(cell({ startedAt: ago(5_000) })).toBe('');
   });
 
+  it('labels a session being asked for its completion object, and what the orchestrator does before a worker starts', () => {
+    const nudging = state({ state: 'ready', reason: 'invalid_result', resumeSessionId: 's-1', retryNotBefore: new Date(NOW).toISOString(), attempts: [attempt(1, 'invalid_result')] });
+    expect(retryLabel(nudging, task, NOW)).toBe('asking for the result');
+    expect(cell({ state: nudging })).toBe('asking for the result');
+    // a launching worker shows the orchestrator's own note instead of a bare idle timer
+    const launching: TranscriptEntry[] = [{ kind: 'system', ts: ago(5_000), text: 'preparing worktree' }];
+    expect(cell({ entries: launching, startedAt: ago(45_000) })).toBe('preparing worktree');
+  });
+
   it('labels a retry with the counters the scheduler is spending', () => {
     const waiting = (over: Partial<TaskRunState>): TaskRunState => state({ state: 'ready', retryNotBefore: new Date(NOW + 12_000).toISOString(), ...over });
     const transient = waiting({ reason: 'api_error', attempts: [attempt(1, 'api_error'), attempt(2, 'api_error')] });

@@ -52,6 +52,20 @@ export class RingBuffer<T> {
 export class KeyedMutex {
   private readonly chains = new Map<string, Promise<void>>();
 
+  /** The lock at once if nobody holds or waits for it, otherwise undefined; never blocks the caller. */
+  tryAcquire(key: string): (() => void) | undefined {
+    if (this.chains.has(key)) return undefined;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.chains.set(key, current);
+    return () => {
+      release();
+      if (this.chains.get(key) === current) this.chains.delete(key);
+    };
+  }
+
   async acquire(key: string): Promise<() => void> {
     const previous = this.chains.get(key) ?? Promise.resolve();
     let release!: () => void;

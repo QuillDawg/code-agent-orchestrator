@@ -31,6 +31,7 @@ export const TRIGGER_LABEL: Record<TaskAttempt['triggeredBy'], string> = {
   retry: 'retry',
   resume: 'resume',
   user_input: 'user input',
+  nudge: 'nudge',
 };
 
 /** How the orchestrator came back for another attempt; `initial` never has a previous attempt to explain. */
@@ -39,6 +40,7 @@ const TRIGGER_VERB: Record<TaskAttempt['triggeredBy'], string> = {
   retry: 'retried',
   resume: 'resumed with the run',
   user_input: 'restarted with your answer',
+  nudge: 'asked the same session for the completion object',
 };
 
 const ANSWER_LABEL: Record<NonNullable<InteractionRecord['answer']>, string> = {

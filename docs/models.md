@@ -101,7 +101,7 @@ The examples in this repository use `gpt-5.6-terra` (implementation) and `gpt-5.
 
 The schema accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`.
 
-**Claude Code accepts `low`, `medium`, `high`, `xhigh` and `max`** (confirmed by `claude --help` on 2.1.259). `none` and `minimal` exist for Codex; if you set either on a Claude task, `cao validate` warns and the flag is dropped rather than passed to a CLI that would reject it.
+**Claude Code accepts `low`, `medium`, `high`, `xhigh` and `max`** (confirmed by `claude --help` on 2.1.259). `none` and `minimal` exist for Codex; if you set either on a Claude task, `cao validate` warns and the flag is dropped rather than passed to a CLI that would reject it. Haiku has no effort levels at all, so a Haiku task drops whatever `effort` it inherits, again with a warning, instead of passing `--effort` for the CLI to ignore.
 
 | Level | Use for |
 |---|---|
@@ -236,6 +236,14 @@ Per-attempt cost, duration and turn count are stored in `result.json` under `usa
 There is no `--model` flag. Models are workflow configuration, so a run is reproducible from its YAML. To try a different model, either edit the workflow or point `cao` at a different one.
 
 The CLI overrides that do exist are `--permission-mode`, `--max-concurrency`, `--repository`, and `--claude-command`. `CAO_CLAUDE_COMMAND` and `CAO_CODEX_COMMAND` replace the binary itself, which is how the test suite runs whole workflows against a fake agent with no API calls.
+
+## Smaller models
+
+Nothing in `cao` treats one model differently from another, but a smaller model such as Haiku changes what the same workflow does:
+
+- **`effort` is dropped.** Claude Code has no effort levels for Haiku, so a workflow-level `effort: high` is not passed to a Haiku task; `cao validate` says so.
+- **No auto mode, so every tool call prompts.** Claude Code runs its permission classifier only for Sonnet 5, Opus 4.7 and later, and Fable. A Haiku task asked for the default `permissionMode: auto` is silently started in the ordinary prompting mode and asks before every file write and command; `cao validate` warns. Give such tasks `acceptEdits`, `dontAsk` with `allowedTools`, or `bypassPermissions` ([configuration.md](configuration.md#claude-workflow-template-or-task-level)).
+- **Prose instead of the result.** A session that ends with "Done!" instead of the JSON completion object is asked for just the object, in the same session, before a retry is spent (`retry.resultNudges`, default 1). See [configuration.md](configuration.md#a-worker-that-ends-without-the-completion-object).
 
 ## Related
 

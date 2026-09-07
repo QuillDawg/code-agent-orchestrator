@@ -345,6 +345,8 @@ claude:
 
 With a dashboard attached, anything needing a human decision is shown to you and the worker waits (see *Answer a worker while it runs*). Headless, workers run with `--permission-prompts none` and every prompt is denied rather than hanging forever.
 
+`permissionMode` is passed to the CLI unchanged and defaults to `auto`, which is Claude Code's classifier: it allows what it judges safe and asks for the rest, so `auto` does not mean "never ask". It also exists only for Sonnet 5, Opus 4.7 and later, and Fable: a Haiku task asked for `auto` is silently run in the ordinary prompting mode and asks before every file write and command. Use `bypassPermissions` in an isolated environment, `dontAsk` with `allowedTools`, or at least `acceptEdits` for such tasks; the full table is in [configuration.md](configuration.md#claude-workflow-template-or-task-level).
+
 ---
 
 ## Running your own commands

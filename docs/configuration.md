@@ -164,6 +164,21 @@ claude:
   extraArgs: []                  # passed verbatim to claude
 ```
 
+**Permission modes.** `permissionMode` is handed to `claude --permission-mode` unchanged, and `auto` is what a task gets when nothing is set, so writing `permissionMode: auto` changes nothing. What each mode does to a worker:
+
+| Mode | What Claude Code does |
+|---|---|
+| `auto` (default) | Auto mode: a classifier reviews every tool call, allows what it judges safe and **still asks** for the rest: destructive or broad shell commands, work outside the repository, anything it cannot classify. With a dashboard attached those are the prompts you answer; headless they are denied. |
+| `acceptEdits` | File edits are allowed without asking; shell commands and everything else prompt as in `manual`. |
+| `dontAsk` | Nothing prompts. Whatever is not allowed by `allowedTools` or your settings' allow rules is denied, `AskUserQuestion` included. |
+| `bypassPermissions` | Every tool call is allowed. Only for an isolated environment. |
+| `plan` | Read-only: the worker may not edit files or run commands. |
+| `manual` | The CLI's ordinary interactive mode: it asks before most edits, commands and network access. |
+
+**`auto` depends on the model.** Auto mode exists only for Sonnet 5, Opus 4.7 and later, and Fable. For any other model, Haiku included, Claude Code accepts `--permission-mode auto` and then silently starts the session in its ordinary prompting mode, which asks before every file write and command (the worker's init event reports `default`). `cao validate` warns about such a task, and the run log reports the mode a worker actually started in. On a model that does have auto mode, how often it asks depends on what the worker does: coarse shell commands (`rm -rf`, `git checkout --`, `sed -i`), work outside the repository or malformed tool input trip the classifier more often. For an unattended run, or any Haiku task, choose `bypassPermissions` in a sandbox, or `dontAsk` with an `allowedTools` list, or `acceptEdits` to at least stop the prompts for file edits; `permissionPrompts: deny` keeps the mode but fails fast instead of waiting for a human.
+
+The worker also inherits your Claude Code settings (`~/.claude/settings.json`, the repository's `.claude/settings.json` and `settings.local.json`): `ask` rules and `PreToolUse` / `PermissionRequest` hooks there are evaluated before the permission mode and can prompt under any mode. `cao` does not pass `--bare`.
+
 **Permission prompts and questions.** With `permissionPrompts: ask` (the default whenever a dashboard is attached) a worker's permission prompts and `AskUserQuestion` calls are routed to the dashboard over Claude Code's stdio control protocol: the task shows as **Needs you**, you answer with a key, the worker continues. Without a dashboard (`--no-tui`, CI, non-TTY) the worker runs with `--permission-prompts none` and everything that would prompt is denied, exactly as with `permissionPrompts: deny`. A denied worker is told to finish with `status: needs_input`, which pauses the run for `cao resume --input`. `execution.interactionTimeout` bounds how long a worker waits for you; `hooks.onInputRequired` lets you get notified.
 
 **Subagent transcripts.** Everything a worker's subagents produce is nested in the transcript under the `Agent:` call that spawned it, collapsed until you press `t`. The runner probes `claude --help` once per configured command and adds `--forward-subagent-text` when the installed CLI advertises it, so a subagent's prose arrives too; on an older CLI only its tool calls do. There is nothing to configure.
@@ -198,6 +213,7 @@ Task fields (all optional unless noted):
     transientDelay: 30s          # wait before the first recovery; doubles each consecutive transient failure
     transientMaxDelay: 5m        # cap for that backoff
     resumeSession: true          # continue the same Claude session (--resume) instead of starting over
+    resultNudges: 1              # times a session that ended without the JSON result is asked for just that (not counted in attempts)
   onFailure: stop                # stop | continue | skip_dependents
   runIfDependencyFailed: false
   context: { ... }               # see below; `context: false` disables
@@ -333,7 +349,7 @@ Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TA
 | Outcome | Meaning | Retryable |
 |---|---|---|
 | `success` | validated result with status success | – |
-| `failed` | worker reported failure, or exit without a valid result (`invalid_result`), non-zero exit (`crash`), `timeout` | yes |
+| `failed` | worker reported failure, or exit without a valid result (`invalid_result`, after the session was asked for it, see below), non-zero exit (`crash`), `timeout` | yes |
 | `api_error` | Claude Code exited because of a transient API/network problem (HTTP 5xx, overloaded, rate limit, connection reset) | yes, by resuming the session |
 | `blocked` | worker reported it cannot proceed | no |
 | `needs_input` | worker asked a question: run pauses; answer with `cao resume --task <id> --input "..."` | after input |
@@ -352,6 +368,16 @@ Claude Code in print mode exits when the API keeps returning a server-side error
 4. Up to `transientAttempts` consecutive recoveries are free; they do not consume `retry.attempts`. The failure that exceeds the transient budget counts as one regular failed attempt, and a regular retry (fresh session, previous failure injected) follows if `attempts` allows.
 
 Set `resumeSession: false` (or `claude.sessionPersistence: false`, which makes resuming impossible) to recover with a fresh session instead; the previous failure is then injected like a normal retry. Set `transientAttempts: 0` to disable transient recovery entirely. Authentication, billing, context-length and max-turn/budget errors are never classified as transient.
+
+### A worker that ends without the completion object
+
+A session sometimes finishes its turn with prose ("Done, all tests pass.") instead of the JSON object the contract asks for, or with JSON the contract rejects. Smaller models do this often. The work is done and sits in that session, so throwing it away for a fresh attempt is the expensive answer:
+
+1. The attempt ends with outcome `invalid_result`, as before.
+2. If `retry.resultNudges` allows (default 1) and the session can be resumed (`resumeSession`, `claude.sessionPersistence`), the task goes straight back to `ready` and the next attempt runs `claude -p --resume <session id>` with a prompt that asks for only the JSON object, quoting what was wrong with the previous ending. `cao task` shows that attempt as `nudge`; the dashboard row says `asking for the result`.
+3. A nudge that produces a valid result finishes the task as if the first attempt had; the `invalid_result` attempt is not counted against `retry.attempts`. A nudge that fails again counts as one regular failure, and `retry.attempts` decides what happens next: a fresh session with the failure injected, or `onFailure`.
+
+Set `resultNudges: 0` to fail the attempt at once instead. Before the validator gets that far, results are read generously: `null` for a field that does not apply is treated as omitted, `status` is matched case-insensitively with the usual synonyms (`completed`, `done`, `ok`, `failure`, `error`, `needs input`), a missing `summary` is filled from `error` and noted in `warnings`, and the JSON object is the fenced block or trailing object that carries a `status`, not merely the last block in the message.
 
 ## Persisted state
 

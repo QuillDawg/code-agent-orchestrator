@@ -5,6 +5,7 @@ import { TaskGraph } from './graph.js';
 import { compileWhen } from '../conditions/evaluator.js';
 import { ConfigError } from '../util/errors.js';
 import { errorLine, warnLine } from '../util/marks.js';
+import { supportsAutoMode, supportsEffort } from '../runners/claude/models.js';
 
 export interface ValidationOptions {
   knownRunners?: string[];
@@ -59,6 +60,12 @@ export function validateWorkflow(
     }
     if (t.agent === 'claude' && (t.effort === 'none' || t.effort === 'minimal')) {
       warn(`Task "${t.id}": effort "${t.effort}" is Codex-only; Claude accepts low, medium, high, xhigh or max, so it will be ignored`, t.id);
+    }
+    if (t.agent === 'claude' && (t.claude.permissionMode ?? 'auto') === 'auto' && t.model && !supportsAutoMode(t.model)) {
+      warn(`Task "${t.id}": model "${t.model}" has no auto mode; Claude Code will run it in its ordinary prompting mode and ask before every file write and command. Set permissionMode to acceptEdits, dontAsk or bypassPermissions for this task`, t.id);
+    }
+    if (t.agent === 'claude' && t.effort && t.model && !supportsEffort(t.model)) {
+      warn(`Task "${t.id}": model "${t.model}" has no effort levels; effort "${t.effort}" is dropped`, t.id);
     }
   }
 

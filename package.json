@@ -1,6 +1,6 @@
 {
   "name": "code-agent-orchestrator",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Orchestrate isolated code-agent CLI sessions through YAML-defined task workflows",
   "type": "module",
   "license": "MIT",

@@ -36,6 +36,8 @@ export interface RunnerHooks {
   onUsage(usage: RunnerUsage): void;
   /** The worker edited or wrote a file. */
   onFileChange(change: { path: string; op: FileOp }): void;
+  /** Something about the session the operator should know (shown as a run warning); optional for hosts that do not care. */
+  onWarning?(message: string): void;
   /**
    * The worker is blocked on a human. Resolves with the answer to send back. `signal` aborts when the
    * runner withdraws the request (worker cancelled it, process exited); the promise must still settle.

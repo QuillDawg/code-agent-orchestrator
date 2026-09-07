@@ -368,6 +368,9 @@ export class MockWorkspace implements WorkspaceManager {
   lockShared(): Promise<() => void> {
     return this.mutex.acquire('shared');
   }
+  tryLockShared(): (() => void) | undefined {
+    return this.mutex.tryAcquire('shared');
+  }
   async prepareRun(): Promise<RunPreparation> {
     return { baseBranch: 'main', baseCommit: 'base', warnings: [] };
   }

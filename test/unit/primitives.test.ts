@@ -79,17 +79,48 @@ describe('TaskGraph', () => {
 });
 
 describe('completion contract', () => {
+  const statusOf = (value: unknown): string => {
+    const r = validateTaskResult(value);
+    return r.ok ? r.result.status : r.error;
+  };
+
   it('validates and normalizes results', () => {
     const r = validateTaskResult({ status: 'success', summary: 'ok', filesChanged: ['a', 1], extra: true });
     expect(r.ok && r.result).toEqual({ status: 'success', summary: 'ok', filesChanged: ['a', '1'], commits: [], decisions: [], warnings: [], followUp: [] });
-    expect(validateTaskResult({ status: 'done', summary: 'x' }).ok).toBe(false);
-    expect(validateTaskResult({ status: 'success' }).ok).toBe(false);
+    expect(validateTaskResult({ status: 'partial', summary: 'x' }).ok).toBe(false);
+    expect(validateTaskResult({ summary: 'no status' }).ok).toBe(false);
     expect(validateTaskResult('nope').ok).toBe(false);
+    expect(validateTaskResult({ status: 'success', summary: 'x', data: 'not an object' }).ok).toBe(false);
+  });
+  it('forgives what a weaker model gets wrong without meaning anything different', () => {
+    // null for a field that does not apply, where the schema only allows leaving it out
+    const nulls = validateTaskResult({ status: 'success', summary: 'done', filesChanged: null, error: null, data: null });
+    expect(nulls.ok && nulls.result).toEqual({ status: 'success', summary: 'done', filesChanged: [], commits: [], decisions: [], warnings: [], followUp: [] });
+    // the contract's word in the wrong case, or a synonym for it
+    for (const status of ['Success', 'SUCCESS', ' completed ', 'done', 'ok']) expect(statusOf({ status, summary: 's' }), status).toBe('success');
+    for (const status of ['Failed', 'failure', 'error']) expect(statusOf({ status, summary: 's' }), status).toBe('failed');
+    for (const status of ['needs input', 'Needs-Input', 'input_required']) expect(statusOf({ status, summary: 's' }), status).toBe('needs_input');
+    expect(statusOf({ status: 'Blocked', summary: 's' })).toBe('blocked');
+    expect(statusOf({ status: 'skip', summary: 's' })).toBe('skipped');
+    expect(statusOf({ status: 'mostly', summary: 's' })).toMatch(/status/);
+    // a missing or empty summary is filled in and pointed out, never a reason to throw the result away
+    const bare = validateTaskResult({ status: 'success' });
+    expect(bare.ok && bare.result.summary).toBe('(no summary provided)');
+    expect(bare.ok && bare.result.warnings).toEqual(['The worker returned no summary']);
+    const failed = validateTaskResult({ status: 'failed', summary: '  ', error: 'tests red', warnings: ['w'] });
+    expect(failed.ok && failed.result).toMatchObject({ summary: 'tests red', error: 'tests red', warnings: ['w', 'The worker returned no summary'] });
   });
   it('extracts JSON from prose', () => {
     expect(extractJsonObject('Done.\n```json\n{"status":"success","summary":"s"}\n```')).toEqual({ status: 'success', summary: 's' });
     expect(extractJsonObject('blah {"status":"failed","summary":"x","data":{"k":[1,2]}} trailing')).toEqual({ status: 'failed', summary: 'x', data: { k: [1, 2] } });
     expect(extractJsonObject('no json here')).toBeUndefined();
+  });
+  it('prefers the object that carries a status over a later block that merely is JSON', () => {
+    const text = '```json\n{"status":"success","summary":"s"}\n```\n\nThe config I wrote:\n```json\n{"port":8080}\n```';
+    expect(extractJsonObject(text)).toEqual({ status: 'success', summary: 's' });
+    expect(extractJsonObject('Result: {"status":"success","summary":"s"}\n\nSee also {"port":8080}')).toEqual({ status: 'success', summary: 's' });
+    // with no status anywhere the last JSON block is still handed to the validator, which names what is missing
+    expect(extractJsonObject('```json\n{"port":8080}\n```')).toEqual({ port: 8080 });
   });
   it('json schema requires status and summary', () => {
     expect(TASK_RESULT_JSON_SCHEMA.required).toEqual(['status', 'summary']);
@@ -99,6 +130,7 @@ describe('completion contract', () => {
 describe('claude event parser', () => {
   it('parses init, tool_use, text and result messages', () => {
     expect(parseClaudeLine('{"type":"system","subtype":"init","session_id":"s1","model":"m"}')).toEqual({ kind: 'init', sessionId: 's1', model: 'm' });
+    expect(parseClaudeLine('{"type":"system","subtype":"init","session_id":"s1","model":"m","permissionMode":"default"}')).toMatchObject({ kind: 'init', permissionMode: 'default' });
     expect(parseClaudeLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test\nsecond' } }] } }))).toEqual({ kind: 'command', command: 'npm test\nsecond', tool: 'Bash' });
     expect(parseClaudeLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'src/a.ts' } }] } }))).toMatchObject({ line: 'Read src/a.ts' });
     expect(parseClaudeLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at auth...' }] } }))).toEqual({ kind: 'text', text: 'Looking at auth...' });

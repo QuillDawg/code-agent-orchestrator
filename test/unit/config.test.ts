@@ -348,3 +348,19 @@ tasks:
     expect(errors(validation.diagnostics)[0]).toMatch(/unknown runner "gemini"/);
   });
 });
+
+describe('effort on models without effort levels', () => {
+  it('warns that a Haiku task drops the effort it inherited', async () => {
+    const { workflow, validation } = await buildWorkflow('name: t\neffort: high\ntasks:\n  - id: cheap\n    model: claude-haiku-4-5\n    prompt: p\n  - id: real\n    model: opus\n    prompt: p\n', { gitRoot: process.cwd() });
+    expect(validation.ok).toBe(true);
+    expect(workflow.tasks[0]!.effort).toBe('high');
+    const warnings = validation.diagnostics.filter((d) => d.level === 'warning').map((d) => d.message);
+    expect(warnings).toEqual([
+      expect.stringMatching(/"cheap".*claude-haiku-4-5.*has no auto mode.*acceptEdits, dontAsk or bypassPermissions/),
+      expect.stringMatching(/"cheap".*claude-haiku-4-5.*effort "high" is dropped/),
+    ]);
+    // a mode the model does run in gets no such warning
+    const explicit = await buildWorkflow('name: t\ntasks:\n  - id: cheap\n    model: claude-haiku-4-5\n    claude:\n      permissionMode: acceptEdits\n    prompt: p\n', { gitRoot: process.cwd() });
+    expect(explicit.validation.diagnostics.filter((d) => d.level === 'warning')).toEqual([]);
+  });
+});

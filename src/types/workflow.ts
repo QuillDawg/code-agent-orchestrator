@@ -26,6 +26,11 @@ export interface RetryPolicy {
   transientMaxDelayMs: number;
   /** Resume the same Claude session (`--resume`) instead of starting fresh after a transient failure. */
   resumeSession: boolean;
+  /**
+   * How many times a session that ended without the JSON completion object is asked for just that object
+   * before the attempt counts as a failure. Free like transient recoveries; needs `resumeSession`.
+   */
+  resultNudges: number;
 }
 
 export type PermissionMode = 'auto' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions' | 'plan' | 'manual';

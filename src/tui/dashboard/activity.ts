@@ -55,6 +55,7 @@ export function retryLabel(state: TaskRunState, task: ResolvedTask, now: number)
   if (state.state !== 'ready' || !state.retryNotBefore) return undefined;
   const left = new Date(state.retryNotBefore).getTime() - now;
   const when = Number.isNaN(left) ? '' : left > 0 ? ` in ${formatDurationShort(left)}` : ' now';
+  if (state.reason === 'invalid_result' && state.resumeSessionId) return 'asking for the result';
   const budget = budgetedFailures(state, task);
   if (state.reason === 'api_error' && budget.transientStreak > 0) return `api retry ${budget.transientStreak}/${task.retry.transientAttempts}${when}`;
   const counted = Math.min(Math.max(1, budget.counted), task.retry.attempts);

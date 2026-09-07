@@ -69,7 +69,7 @@ export function attachPlainRenderer(bus: EventBus, run: WorkflowRun, opts: Plain
         break;
       case 'task.retrying':
         write(
-          `${stamp()} ${glyph('retry')} ${ev.taskId}  ${ev.transient ? 'transient API error; ' : ''}${ev.resumeSession ? 'resuming session' : 'retrying'} (attempt ${ev.nextAttempt}${ev.delayMs ? ` in ${formatDuration(ev.delayMs)}` : ''})`,
+          `${stamp()} ${glyph('retry')} ${ev.taskId}  ${ev.nudge ? 'no completion object; asking the session for it' : `${ev.transient ? 'transient API error; ' : ''}${ev.resumeSession ? 'resuming session' : 'retrying'}`} (attempt ${ev.nextAttempt}${ev.delayMs ? ` in ${formatDuration(ev.delayMs)}` : ''})`,
         );
         break;
       case 'task.skipped':

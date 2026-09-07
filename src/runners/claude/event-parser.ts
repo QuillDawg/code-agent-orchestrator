@@ -10,6 +10,8 @@ export interface ClaudeInitEvent {
   kind: 'init';
   sessionId?: string;
   model?: string;
+  /** The permission mode the CLI actually started the session in, which can differ from the one requested. */
+  permissionMode?: string;
 }
 export interface ClaudeActivityEvent {
   kind: 'activity';
@@ -191,7 +193,9 @@ export function parseClaudeEvents(line: string): ClaudeEvent[] {
   }
   const type = String(msg.type ?? '');
   if (type === 'system') {
-    if (msg.subtype === 'init') return [{ kind: 'init', sessionId: msg.session_id as string | undefined, model: msg.model as string | undefined }];
+    if (msg.subtype === 'init') {
+      return [{ kind: 'init', sessionId: msg.session_id as string | undefined, model: msg.model as string | undefined, permissionMode: str(msg, 'permissionMode') }];
+    }
     if (msg.subtype === 'compact_boundary') return [{ kind: 'compact' }];
     return [{ kind: 'other', type: `system.${String(msg.subtype ?? '')}` }];
   }

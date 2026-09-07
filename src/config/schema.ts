@@ -18,6 +18,7 @@ export const retrySchema = z
     transientDelay: durationSchema.optional(),
     transientMaxDelay: durationSchema.optional(),
     resumeSession: z.boolean().optional(),
+    resultNudges: z.number().int().min(0).max(5).optional(),
   })
   .strict();
 

@@ -40,7 +40,7 @@ export type WorkflowEventBody =
       message?: string;
       final: boolean;
     }
-  | { type: 'task.retrying'; taskId: string; nextAttempt: number; delayMs: number; resumeSession?: boolean; transient?: boolean }
+  | { type: 'task.retrying'; taskId: string; nextAttempt: number; delayMs: number; resumeSession?: boolean; transient?: boolean; nudge?: boolean }
   | { type: 'task.skipped'; taskId: string; reason: TaskReason; message?: string }
   | { type: 'task.blocked'; taskId: string; reason: TaskReason; by?: string; message?: string }
   | { type: 'task.cancelled'; taskId: string; attempt?: number; reason: TaskReason }

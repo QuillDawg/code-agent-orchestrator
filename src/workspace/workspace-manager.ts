@@ -59,6 +59,8 @@ export interface WorkspaceManager {
   cleanupRun(run: WorkflowRun): Promise<void>;
   /** Serialises access to the shared working tree. */
   lockShared(): Promise<() => void>;
+  /** The shared-tree lock if it is free right now, otherwise undefined; never waits. */
+  tryLockShared(): (() => void) | undefined;
   readonly sharedRoot: string;
 }
 
@@ -79,6 +81,10 @@ export class GitWorkspaceManager implements WorkspaceManager {
 
   lockShared(): Promise<() => void> {
     return this.mutex.acquire('shared');
+  }
+
+  tryLockShared(): (() => void) | undefined {
+    return this.mutex.tryAcquire('shared');
   }
 
   private get gitEnabled(): boolean {
@@ -436,6 +442,10 @@ export class SharedOnlyWorkspaceManager implements WorkspaceManager {
   }
   lockShared(): Promise<() => void> {
     return this.mutex.acquire('shared');
+  }
+
+  tryLockShared(): (() => void) | undefined {
+    return this.mutex.tryAcquire('shared');
   }
   async prepareRun(): Promise<RunPreparation> {
     return { warnings: this.workflow.git.enabled ? ['Repository is not a git repository; git capture and worktrees are disabled'] : [] };

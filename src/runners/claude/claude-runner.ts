@@ -20,7 +20,7 @@ import { detectClaude, splitCommand } from './detect.js';
 import { parseClaudeEvents, activityFromText, type ClaudeResultEvent } from './event-parser.js';
 import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA_STRING, extractJsonObject, validateTaskResult } from './contract.js';
 import { isTransientApiError } from './transient.js';
-import { contextWindowFor } from './models.js';
+import { contextWindowFor, supportsAutoMode, supportsEffort } from './models.js';
 import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, summarizeAnswer, PendingInteractions } from './protocol.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, uuid } from '../../util/misc.js';
@@ -46,6 +46,7 @@ export function resolveClaudeOptions(defaults: ClaudeOptions, task: Pick<Resolve
   const options: ClaudeOptions = { ...defaults, ...task.claude };
   if (task.model) options.model = task.model;
   if (task.effort && task.effort !== 'none' && task.effort !== 'minimal') options.effort = task.effort;
+  if (!supportsEffort(options.model)) delete options.effort;
   return options;
 }
 
@@ -77,6 +78,20 @@ export function buildClaudeArgs(
   if (options.sessionPersistence === false) args.push('--no-session-persistence');
   if (options.extraArgs?.length) args.push(...options.extraArgs);
   return args;
+}
+
+/**
+ * The CLI accepts every permission mode on the command line but does not run every model in every mode: auto
+ * mode falls back to the ordinary prompting mode for models without it, and the only sign is the init event.
+ * Returns the warning to show, or undefined when the session runs in the mode that was asked for.
+ */
+export function permissionModeDowngrade(requested: string, reported: string | undefined, model: string | undefined): string | undefined {
+  if (!reported || reported === requested) return undefined;
+  // cao's `manual` is the CLI's `default`; same thing under two names.
+  if (requested === 'manual' && reported === 'default') return undefined;
+  const why = requested === 'auto' && model && !supportsAutoMode(model) ? ` because ${model} has no auto mode` : '';
+  const effect = reported === 'default' ? '; every file write and command will prompt' : '';
+  return `Claude Code started this session in permission mode "${reported}", not the requested "${requested}"${why}${effect}. Set permissionMode to acceptEdits, dontAsk or bypassPermissions for this task to avoid the prompts.`;
 }
 
 /** Which prompt mode an attempt runs in: the explicit option wins, otherwise ask only when someone can answer. */
@@ -196,6 +211,13 @@ export class ClaudeRunner implements TaskRunner {
               usage.contextWindow = contextWindowFor(model);
               hooks.onProcess({ pid: proc?.pid ?? -1, sessionId: ev.sessionId ?? sessionId });
               entry({ kind: 'system', ts, text: `session ${ev.sessionId ?? sessionId}${model ? ` (${model})` : ''}` });
+              {
+                const downgrade = permissionModeDowngrade(options.permissionMode ?? 'auto', ev.permissionMode, model);
+                if (downgrade) {
+                  entry({ kind: 'system', ts, text: downgrade });
+                  hooks.onWarning?.(downgrade);
+                }
+              }
               break;
             case 'activity':
               hooks.onActivity(ev.line);

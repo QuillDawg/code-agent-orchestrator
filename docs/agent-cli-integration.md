@@ -29,7 +29,7 @@ claude -p \
   [--no-session-persistence] [extraArgs...]
 ```
 
-- `--model` and `--effort` come from the resolved task values, so a workflow-level, `defaults`, template or task-level `model:`/`effort:` all reach the CLI, with `claude.model`/`claude.effort` as the legacy fallback ([models.md](models.md#resolution-order)). Effort `none`/`minimal` are Codex-only and are dropped rather than passed.
+- `--model` and `--effort` come from the resolved task values, so a workflow-level, `defaults`, template or task-level `model:`/`effort:` all reach the CLI, with `claude.model`/`claude.effort` as the legacy fallback ([models.md](models.md#resolution-order)). Effort `none`/`minimal` are Codex-only and are dropped rather than passed, and so is any effort for a Haiku model, which has no effort levels.
 - The **prompt is written to the child's stdin**. In deny mode stdin is then closed and Claude Code treats the piped text as the prompt. In ask mode the prompt is framed as a stream-json user message (`{"type":"user","message":{"role":"user","content":…}}`) and stdin stays open until the `result` line arrives, so the orchestrator can answer prompts (below). Either way large context sections never hit Windows command-line length limits.
 - `cwd` is the task's working directory (repository root, `workingDirectory`, or the task's worktree). Claude discovers `CLAUDE.md`, skills, settings and git context from there.
 - Environment: the orchestrator's environment plus workflow `environment`/`envFile`, task `env`, and `CAO_RUN_ID`, `CAO_TASK_ID`, `CAO_ATTEMPT` (`CAO_ATTEMPT_KIND=merge` for merge-resolution sessions). `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_CHILD_SESSION` are stripped so a worker never believes it is nested.
@@ -62,7 +62,7 @@ Partial message streaming (`--include-partial-messages`) is not enabled; tool-us
 | no `structured_output` but a JSON object in `result` text (fenced or trailing) | validated the same way |
 | `is_error: true` with a transient API/network message (`API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, …) | `api_error` → the scheduler waits and resumes the session |
 | `is_error: true` otherwise (max turns, budget, auth) | `crash` with Claude's message |
-| exit 0 without a valid result | `invalid_result` |
+| exit 0 without a valid result | `invalid_result` → the scheduler first asks the same session for the object (`retry.resultNudges`), then retries |
 | non-zero exit with a transient network error on stderr | `api_error` |
 | non-zero exit without a result | `crash` with exit code and stderr tail |
 
@@ -72,9 +72,13 @@ Partial message streaming (`--include-partial-messages`) is not enabled; tool-us
 
 Classification lives in `src/runners/claude/transient.ts`; the budget and backoff are `retry.transientAttempts` / `transientDelay` / `transientMaxDelay` ([configuration.md](configuration.md#transient-api-errors)). A resumed attempt's `events.jsonl` starts with `{"type":"resume","sessionId":…}`.
 
+### Asking for the completion object
+
+A session that ends its turn without the JSON completion object (prose such as "Done!", or JSON the contract rejects) is not retried from scratch first. The scheduler relaunches `claude -p --resume <session id>` once per attempt (`retry.resultNudges`, default 1) with a prompt that asks for only the object and quotes the validation error; the attempt shows as `nudge` in `cao task`. Only when that fails does the ordinary retry accounting apply. Validation is lenient about what weaker models get wrong without meaning anything different: `null` fields, a status in the wrong case or a synonym of it, a missing summary, and a trailing fenced block that is JSON but not the result ([configuration.md](configuration.md#a-worker-that-ends-without-the-completion-object)).
+
 ### Permissions and live prompts
 
-Default `permissionMode: auto`, overridable per workflow/task or with `--permission-mode`. What happens when a tool still needs a human depends on the prompt mode (`claude.permissionPrompts`, resolved per attempt):
+`permissionMode` reaches the CLI unchanged as `--permission-mode` and defaults to `auto` (overridable per workflow/task or with `--permission-mode`). `auto` is Claude Code's classifier mode: it allows what it judges safe and asks for the rest. Auto mode exists only for Sonnet 5, Opus 4.7 and later, and Fable. For any other model, Haiku included, Claude Code accepts `--permission-mode auto` and then silently starts the session in its ordinary prompting mode, which asks before every file write and command (the worker's init event reports `default`). `cao validate` warns about such a task, and the run log reports the mode a worker actually started in. The runner compares the requested mode with the one in the init event and writes a `system` line into the transcript plus a run warning when they differ. `acceptEdits`, `dontAsk`, `bypassPermissions`, `plan` and `manual` are described in [configuration.md](configuration.md#claude-workflow-template-or-task-level). `--bare` is not passed, so `ask` rules and permission hooks in the user's or the repository's Claude Code settings apply before the mode. What happens when a tool still needs a human depends on the prompt mode (`claude.permissionPrompts`, resolved per attempt):
 
 - **ask** (default whenever a dashboard is attached): the worker is started with `--input-format stream-json --permission-prompt-tool stdio`. Every permission prompt and every `AskUserQuestion` call arrives on stdout as a control request and the worker blocks on that tool until the orchestrator answers on stdin. The task shows as `waiting` (**Needs you**) meanwhile.
 - **deny** (headless runs, or set explicitly): `--permission-prompts none`; anything that would prompt is denied by the CLI itself and surfaces in `permission_denials`.
