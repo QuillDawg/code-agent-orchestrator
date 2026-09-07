@@ -16,3 +16,6 @@ coverage/
 # are the supported way to get the skills, so they are source, not local scratch. Do not add
 # an ignore rule for them: `.gitignore` does not apply to files already tracked, so the rule
 # would do nothing except silently swallow new skill files added under `.agents/`.
+
+# Local Claude Code instructions for this checkout; not project source.
+CLAUDE.md

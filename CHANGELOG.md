@@ -8,7 +8,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- A task id longer than the task column pushed every column after it out of line on the dashboard and the
+  usage screen. The id is now cut to the column with an ellipsis, so the state, cost and activity columns
+  stay aligned however long a task is named.
 
 ## [0.1.0-beta.3] - 2026-09-07
 

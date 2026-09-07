@@ -22,6 +22,7 @@ import { ReviewView, type ReviewTaskInput } from './dashboard/review.js';
 import { fileLabel, taskFiles } from './dashboard/files.js';
 import { activityCell, ACTIVITY_LOOKBACK } from './dashboard/activity.js';
 import { paint, sanitizeText } from '../cli/color.js';
+import { truncateVisible } from '../cli/util.js';
 import { BELL } from '../util/misc.js';
 import { agentLabel, bar, contextRatio, formatCost, formatTokens } from './format.js';
 import { attemptRows, currentAttempt, elapsedCell, elapsedParts, interactionRows, resultNotes, totalWaitedMs } from './history.js';
@@ -217,6 +218,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const elapsed = run.startedAt ? formatDuration(now - new Date(run.startedAt).getTime()) : '';
   const totalUsage = addUsage(...tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
   const idWidth = Math.min(28, Math.max(12, ...tasks.map((t) => t.id.length)));
+  // The task column is capped so a wordy id cannot claim half the terminal, and the cap only holds if the
+  // id itself is cut to it: padded but uncut, one long name shifts every cell after it on its row alone.
+  const taskCell = (id: string): string => truncateVisible(id, idWidth).padEnd(idWidth);
 
   const progressBar = (): string => {
     const width = 20;
@@ -401,7 +405,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           return (
             <Text key={t.id} wrap="truncate-end">
               {'  '}
-              {t.id.padEnd(idWidth)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
+              {taskCell(t.id)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
               {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)} {cache.padStart(11)} {String(u.numTurns ?? '').padStart(5)} {(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} {paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'cyan')}  {ratio !== undefined ? paint(`[${bar(ratio, 8)}] `, ctxStyle as 'red') : ''}
               {paint(ctx, ctxStyle as 'red')}
               {u.compactions ? paint(`  ${u.compactions} compaction${u.compactions === 1 ? '' : 's'}`, 'dim') : ''}
@@ -601,7 +605,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         return (
           <Text key={t.id} wrap="truncate-end">
             {idx === cursor ? paint('▶ ', 'cyan') : '  '}
-            {paint(glyph, STATE_COLOR[st.state])} {idx === cursor ? paint(t.id.padEnd(idWidth), ['inverse', 'bold']) : t.id.padEnd(idWidth)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {elapsed.total.padStart(9)}
+            {paint(glyph, STATE_COLOR[st.state])} {idx === cursor ? paint(taskCell(t.id), ['inverse', 'bold']) : taskCell(t.id)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {elapsed.total.padStart(9)}
             {currentWidth ? paint((elapsed.current ? ` (${elapsed.current})` : '').padEnd(currentWidth), 'dim') : ''}  {paint(agentLabel(t.agent, u?.model ?? t.model), 'magenta')}
             {ctx ? `  ${ctx}` : ''}
             {cost ? `  ${cost}` : ''}

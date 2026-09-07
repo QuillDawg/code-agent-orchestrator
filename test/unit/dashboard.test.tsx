@@ -985,6 +985,38 @@ describe('DashboardApp', () => {
     unmount();
   });
 
+  it('cuts a long task id to the task column so the columns after it stay aligned', async () => {
+    const long = 'research-charter-requests-and-quotes-for-the-mobile-app';
+    const run = liveRun({
+      workflow: { execution: { maxConcurrency: 2 }, tasks: [workflowTask(long), workflowTask('review')] },
+      tasks: {
+        [long]: { id: long, state: 'running', retryWindowStart: 1, attempts: [attemptAt(1)] },
+        review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] },
+      },
+    });
+    const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] });
+    await wait();
+    const stateColumn = (frame: string): number[] =>
+      frame
+        .split(NL)
+        .filter((line) => /Running|Waiting/.test(line))
+        .map((line) => line.search(/Running|Waiting/));
+    let frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).not.toContain(long);
+    expect(frame).toContain('research-charter-requests-a…');
+    let columns = stateColumn(frame);
+    expect(columns).toHaveLength(2);
+    expect(columns[0]).toBe(columns[1]);
+    stdin.write('u');
+    await wait();
+    frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).not.toContain(long);
+    columns = stateColumn(frame);
+    expect(columns).toHaveLength(2);
+    expect(columns[0]).toBe(columns[1]);
+    unmount();
+  });
+
   it('lists the transcript viewer keys in the help panel', async () => {
     const run = liveRun({ tasks: { 'implement-102': { id: 'implement-102', state: 'running', retryWindowStart: 1, attempts: [attemptAt(1)] }, review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] } } });
     const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] });
