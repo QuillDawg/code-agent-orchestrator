@@ -1,0 +1,31 @@
+# Sequential issue implementation. Each task runs in a fresh Claude Code session,
+# one after another, in the repository you launch `cao` from.
+version: 1
+name: Sequential issues
+repository: .
+
+defaults:
+  timeout: 60m
+  retries: 1
+  onFailure: stop
+
+templates:
+  implementIssue:
+    type: implementation
+    prompt: "/implement {{issueNumber}}"
+
+tasks:
+  - id: issue-101
+    name: Implement issue 101
+    template: implementIssue
+    issueNumber: 101
+
+  - id: issue-102
+    name: Implement issue 102
+    template: implementIssue
+    issueNumber: 102
+
+  - id: issue-103
+    name: Implement issue 103
+    template: implementIssue
+    issueNumber: 103

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: What you can express in a workflow
+    url: https://github.com/QuillDawg/code-agent-orchestrator/blob/main/docs/capabilities.md
+    about: Every feature with a smallest working example, before filing a bug.
+  - name: YAML schema reference
+    url: https://github.com/QuillDawg/code-agent-orchestrator/blob/main/docs/configuration.md
+    about: Every key, its type and its default.

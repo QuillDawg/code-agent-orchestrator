@@ -1,0 +1,38 @@
+# Explicit, structured context passing between isolated Claude sessions.
+# Sessions never share a conversation; downstream tasks receive selected fields from the
+# structured results of the tasks they name.
+version: 1
+name: Context passing
+repository: .
+
+tasks:
+  - id: backend
+    type: implementation
+    prompt: "/implement 101"
+
+  - id: frontend
+    type: implementation
+    dependsOn: [backend]
+    context:
+      from:
+        - task: backend
+          include: [summary, filesChanged, decisions]
+    prompt: |
+      Implement the frontend for issue 102 against the backend described in context.
+
+  - id: mobile
+    type: implementation
+    dependsOn: [backend]
+    context:
+      from: [backend]           # default fields: summary, filesChanged, commits, decisions, warnings, followUp, error, git
+    prompt: "/implement 103"
+
+  - id: integration-review
+    type: review
+    dependsOn: [frontend, mobile]
+    context:
+      fromType: implementation    # aggregate every implementation task
+      maxChars: 40000
+    prompt: |
+      Review the completed implementation and verify that all components integrate
+      correctly. The structured results of every implementation task are in context.

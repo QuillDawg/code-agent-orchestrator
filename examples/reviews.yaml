@@ -1,0 +1,66 @@
+# Review stages with conditions, an approval gate and a lifecycle hook.
+version: 1
+name: Review pipeline
+repository: .
+
+hooks:
+  afterWorkflow:
+    - git status --short
+
+tasks:
+  - id: code-review
+    type: review
+    prompt: |
+      Perform a detailed code review of the current branch compared to main.
+      Review correctness, maintainability, duplication, architecture, security,
+      performance and potential breaking changes. Record concrete findings as warnings.
+    state: completed
+    completion:
+      completedAt: 2026-09-03T19:22:59.961Z
+      runId: 2026-09-03-001
+
+  - id: security-review
+    type: security-review
+    when:
+      task: code-review
+      status: success
+    context:
+      from: [ code-review ]
+    prompt: Perform a security review, focusing on the findings passed in context.
+    state: completed
+    completion:
+      completedAt: 2026-09-03T19:29:43.215Z
+      runId: 2026-09-03-001
+
+  - id: fix-findings
+    type: implementation
+    when:
+      expr: tasks.code-review.warnings.length > 0 ||
+        tasks.security-review.warnings.length > 0
+    context:
+      from: [ code-review, security-review ]
+    prompt: Address the review findings supplied in context. Do not change unrelated
+      code.
+    state: completed
+    completion:
+      completedAt: 2026-09-03T20:08:10.005Z
+      runId: 2026-09-03-001
+
+  - id: ship-approval
+    type: approval
+    prompt: Reviews are complete. Continue to documentation?
+    state: completed
+    completion:
+      completedAt: 2026-09-04T04:51:52.742Z
+      runId: 2026-09-03-001
+
+  - id: docs
+    type: documentation
+    context:
+      from: [ "*-review", fix-findings ]
+      includeFailed: true
+    prompt: Update the documentation to reflect the reviewed changes.
+    state: completed
+    completion:
+      completedAt: 2026-09-04T05:00:05.159Z
+      runId: 2026-09-03-001

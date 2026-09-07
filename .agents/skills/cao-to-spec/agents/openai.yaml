@@ -1,0 +1,6 @@
+interface:
+  display_name: "CAO To Spec"
+  short_description: "Author a CAO spec or PRD workflow"
+  default_prompt: "Use $cao-to-spec to create a CAO spec workflow from this map."
+policy:
+  allow_implicit_invocation: false

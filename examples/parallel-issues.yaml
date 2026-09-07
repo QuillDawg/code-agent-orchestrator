@@ -1,0 +1,41 @@
+# Parallel issue implementation with git worktree isolation.
+# Tasks in the same parallelGroup run concurrently, each in its own worktree and branch
+# (orchestrator/<task-id>); successful branches are merged back into the base branch.
+version: 1
+name: Parallel issues
+repository: .
+
+execution:
+  maxConcurrency: 3
+  workspaceStrategy:
+    sequential: shared
+    parallel: worktree
+  worktree:
+    base: runStart            # or headAtStart
+    mergeBack: true
+    mergeConflictStrategy: claude   # fresh Claude session resolves conflicts as a last resort
+    cleanup: onSuccess
+
+templates:
+  implementIssue:
+    type: implementation
+    prompt: "/implement {{issueNumber}}"
+
+tasks:
+  - id: issue-101
+    template: implementIssue
+    issueNumber: 101
+
+  - id: issue-102
+    template: implementIssue
+    issueNumber: 102
+    parallelGroup: group-a
+
+  - id: issue-103
+    template: implementIssue
+    issueNumber: 103
+    parallelGroup: group-a
+
+  - id: issue-104
+    template: implementIssue
+    issueNumber: 104

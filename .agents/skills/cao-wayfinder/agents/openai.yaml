@@ -1,0 +1,6 @@
+interface:
+  display_name: "CAO Wayfinder"
+  short_description: "Author a CAO Wayfinder planning workflow"
+  default_prompt: "Use $cao-wayfinder to chart this destination as a Wayfinder map."
+policy:
+  allow_implicit_invocation: false

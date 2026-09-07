@@ -1,0 +1,6 @@
+interface:
+  display_name: "CAO To Tickets"
+  short_description: "Author a CAO GitHub ticket workflow"
+  default_prompt: "Use $cao-to-tickets to create CAO ticket workflow from this PRD."
+policy:
+  allow_implicit_invocation: false

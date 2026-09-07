@@ -1,0 +1,362 @@
+# Implements docs/research/improvement-proposals.md (P1-P8 + the public beta checklist).
+#
+# Task scopes live in .cao-files/scope/<task>.md; shared rules in .cao-files/scope/RULES.md.
+# The research doc on disk is the spec, so tasks receive only upstream summaries as context.
+#
+# Cycle for the bigger features:  feature -> iterate -> review -> fix (fix only if findings).
+# Model policy: claude-opus-5, effort high; xhigh for the two hardest steps; one Fable review.
+#
+# Before running: commit or stash pending changes (every task commits its own work).
+#   cao validate .cao-files/beta-improvements.yaml
+#   cao run .cao-files/beta-improvements.yaml
+
+version: 1
+name: Beta improvements
+repository: .
+
+agent: claude
+model: claude-opus-5
+effort: high
+
+execution:
+  maxConcurrency: 1
+  workspaceStrategy:
+    sequential: shared
+    parallel: shared
+
+defaults:
+  timeout: 90m
+  retry:
+    attempts: 1
+    includePreviousFailure: true
+  onFailure: stop
+
+hooks:
+  afterWorkflow:
+    - git log --oneline -40
+
+templates:
+  feature:
+    type: implementation
+    prompt: Implement `.cao-files/scope/{{scope}}.md`. Follow the Feature rules in
+      `.cao-files/scope/RULES.md`.
+
+  iterate:
+    type: implementation
+    prompt: Work through `.cao-files/scope/{{scope}}.md`. Follow the Iterate rules
+      in `.cao-files/scope/RULES.md`. The previous pass's result is in context.
+
+  review:
+    type: review
+    prompt: Review {{sections}}. Follow the Review rules in
+      `.cao-files/scope/RULES.md`.
+
+  fix:
+    type: implementation
+    prompt: Fix the review findings in context. Follow the Fix rules in
+      `.cao-files/scope/RULES.md`.
+
+tasks:
+  # --- baseline ---------------------------------------------------------------
+  - id: baseline
+    type: test
+    effort: medium
+    timeout: 30m
+    prompt: Follow `.cao-files/scope/baseline.md`.
+    state: completed
+    completion:
+      completedAt: 2026-09-04T14:25:03.178Z
+      runId: 2026-09-04-001
+
+  # --- phase 1: code review capability (P1, P2, P3) ---------------------------
+  - id: diff-capture
+    template: feature
+    scope: diff-capture
+    effort: xhigh
+    timeout: 120m
+    state: completed
+    completion:
+      completedAt: 2026-09-04T14:49:20.763Z
+      runId: 2026-09-04-001
+
+  - id: diff-capture-iterate
+    template: iterate
+    scope: diff-capture-iterate
+    context:
+      from:
+        - task: diff-capture
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T15:20:48.720Z
+      runId: 2026-09-04-001
+
+  - id: diff-command
+    template: feature
+    scope: diff-command
+    context:
+      from:
+        - task: diff-capture-iterate
+          include: [ summary ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T15:38:59.895Z
+      runId: 2026-09-04-001
+
+  - id: dashboard-review-view
+    template: feature
+    scope: dashboard-review-view
+    timeout: 120m
+    context:
+      from:
+        - task: diff-command
+          include: [ summary ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T16:03:37.215Z
+      runId: 2026-09-04-001
+
+  - id: dashboard-review-view-iterate
+    template: iterate
+    scope: dashboard-review-view-iterate
+    context:
+      from:
+        - task: dashboard-review-view
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T16:26:38.770Z
+      runId: 2026-09-04-001
+
+  - id: review-phase-1
+    template: review
+    sections: sections P1, P2 and P3 of docs/research/improvement-proposals.md
+    state: completed
+    completion:
+      completedAt: 2026-09-04T16:34:57.108Z
+      runId: 2026-09-04-001
+
+  - id: fix-phase-1
+    template: fix
+    when:
+      expr: tasks.review-phase-1.warnings.length > 0
+    context:
+      from:
+        - task: review-phase-1
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T16:49:27.432Z
+      runId: 2026-09-04-001
+
+  # --- phase 2: visibility (P4-P7) and CLI consistency (P8) -------------------
+  - id: activity-column
+    template: feature
+    scope: activity-column
+    timeout: 60m
+    state: completed
+    completion:
+      completedAt: 2026-09-04T17:03:06.907Z
+      runId: 2026-09-04-001
+
+  - id: attempt-history
+    template: feature
+    scope: attempt-history
+    state: completed
+    completion:
+      completedAt: 2026-09-04T17:24:50.304Z
+      runId: 2026-09-04-001
+
+  - id: transcript-timing
+    template: feature
+    scope: transcript-timing
+    state: completed
+    completion:
+      completedAt: 2026-09-04T17:41:43.050Z
+      runId: 2026-09-04-001
+
+  - id: transcript-navigation
+    template: feature
+    scope: transcript-navigation
+    effort: xhigh
+    timeout: 120m
+    context:
+      from:
+        - task: transcript-timing
+          include: [ summary, decisions ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T18:02:35.754Z
+      runId: 2026-09-04-001
+
+  - id: transcript-iterate
+    template: iterate
+    scope: transcript-iterate
+    context:
+      from:
+        - task: transcript-timing
+          include: [ summary ]
+        - task: transcript-navigation
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T18:34:16.297Z
+      runId: 2026-09-04-001
+
+  - id: run-report
+    template: feature
+    scope: run-report
+    context:
+      from:
+        - task: diff-command
+          include: [ summary ]
+        - task: attempt-history
+          include: [ summary ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T18:52:18.289Z
+      runId: 2026-09-04-001
+
+  - id: run-report-iterate
+    template: iterate
+    scope: run-report-iterate
+    timeout: 60m
+    context:
+      from:
+        - task: run-report
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T19:16:10.041Z
+      runId: 2026-09-04-001
+
+  - id: cli-consistency
+    template: feature
+    scope: cli-consistency
+    state: completed
+    completion:
+      completedAt: 2026-09-04T19:45:15.072Z
+      runId: 2026-09-04-001
+
+  - id: cli-consistency-iterate
+    template: iterate
+    scope: cli-consistency-iterate
+    context:
+      from:
+        - task: cli-consistency
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T20:20:03.102Z
+      runId: 2026-09-04-001
+
+  - id: review-phase-2
+    template: review
+    sections: sections P4, P5, P6, P7 and P8 of docs/research/improvement-proposals.md
+    state: completed
+    completion:
+      completedAt: 2026-09-04T20:30:32.788Z
+      runId: 2026-09-04-001
+
+  - id: fix-phase-2
+    template: fix
+    when:
+      expr: tasks.review-phase-2.warnings.length > 0
+    context:
+      from:
+        - task: review-phase-2
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T20:47:21.157Z
+      runId: 2026-09-04-001
+
+  # --- phase 3: public beta readiness -----------------------------------------
+  - id: release-packaging
+    template: feature
+    scope: release-packaging
+    state: completed
+    completion:
+      completedAt: 2026-09-04T20:57:58.414Z
+      runId: 2026-09-04-001
+
+  - id: doctor-command
+    template: feature
+    scope: doctor-command
+    timeout: 60m
+    state: completed
+    completion:
+      completedAt: 2026-09-04T21:13:30.984Z
+      runId: 2026-09-04-001
+
+  - id: docs-and-changelog
+    type: documentation
+    prompt: Follow `.cao-files/scope/docs-and-changelog.md`.
+    context:
+      from:
+        - diff-capture
+        - diff-command
+        - dashboard-review-view
+        - activity-column
+        - attempt-history
+        - transcript-timing
+        - transcript-navigation
+        - run-report
+        - cli-consistency
+        - release-packaging
+        - doctor-command
+        - fix-phase-1
+        - fix-phase-2
+      include: [ summary ]
+      maxChars: 30000
+    state: completed
+    completion:
+      completedAt: 2026-09-04T21:25:28.687Z
+      runId: 2026-09-04-001
+
+  - id: final-review
+    template: review
+    model: fable
+    sections: |
+      the whole run against all of docs/research/improvement-proposals.md and its public
+      beta checklist. Pay particular attention to Windows and POSIX path handling in the git
+      snapshot code, to any agent-controlled text reaching the terminal unsanitised, and to
+      the published package contents (`npm pack --dry-run`)
+    state: completed
+    completion:
+      completedAt: 2026-09-04T21:32:45.668Z
+      runId: 2026-09-04-001
+
+  - id: fix-final
+    template: fix
+    when:
+      expr: tasks.final-review.warnings.length > 0
+    context:
+      from:
+        - task: final-review
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-04T21:47:45.171Z
+      runId: 2026-09-04-001
+
+  - id: publish-approval
+    type: approval
+    retry:
+      attempts: 0
+    prompt: All phases are complete and reviewed. Continue to the publish dry run
+      (version bump to 0.1.0-beta.1, no publish)?
+    state: completed
+    completion:
+      completedAt: 2026-09-07T06:15:02.408Z
+      runId: 2026-09-04-001
+
+  - id: publish-dry-run
+    type: implementation
+    effort: medium
+    timeout: 30m
+    prompt: Follow `.cao-files/scope/publish-dry-run.md`.
+    state: completed
+    completion:
+      completedAt: 2026-09-07T06:19:41.848Z
+      runId: 2026-09-04-001

@@ -1,0 +1,91 @@
+{
+  "name": "code-agent-orchestrator",
+  "version": "0.1.0-beta.1",
+  "description": "Orchestrate isolated code-agent CLI sessions through YAML-defined task workflows",
+  "type": "module",
+  "license": "MIT",
+  "author": "Luxaviation Development (https://github.com/Luxaviation-Development)",
+  "homepage": "https://github.com/QuillDawg/code-agent-orchestrator#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QuillDawg/code-agent-orchestrator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/QuillDawg/code-agent-orchestrator/issues"
+  },
+  "keywords": [
+    "orchestrator",
+    "workflow",
+    "dag",
+    "agent",
+    "ai-agent",
+    "claude",
+    "claude-code",
+    "codex",
+    "cli",
+    "automation",
+    "yaml",
+    "git-worktree"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "code-agent-orchestrator": "./dist/bin.js",
+    "cao": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs/*.md",
+    "examples"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/bin.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "execa": "^9.5.2",
+    "ink": "^5.1.0",
+    "picomatch": "^4.0.2",
+    "react": "^18.3.1",
+    "yaml": "^2.6.1",
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.2",
+    "@types/picomatch": "^3.0.1",
+    "@types/react": "^18.3.18",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "ink-testing-library": "^4.0.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^2.1.8"
+  }
+}

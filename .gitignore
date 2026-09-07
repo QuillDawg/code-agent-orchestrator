@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.orchestrator/
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+
+# `.cao-files/` is tracked on purpose: the workflows and task scopes under it are how this
+# repository's own improvement runs are defined, and they are reviewed like any other source.
+# Run state never lands there — that is `.orchestrator/`, ignored above.
+
+# `.agents/` (the cao skills for Claude Code and Codex) and `scripts/install-cao-skills.ps1`
+# (the installer that copies them into a user's agent directories) are tracked as well. They
+# are the supported way to get the skills, so they are source, not local scratch. Do not add
+# an ignore rule for them: `.gitignore` does not apply to files already tracked, so the rule
+# would do nothing except silently swallow new skill files added under `.agents/`.

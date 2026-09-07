@@ -1,0 +1,70 @@
+name: A workflow fails
+description: A `cao run` did not do what the YAML says it should
+title: "[workflow] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most failures are environment or YAML, and both are visible in the two listings below.
+        `cao` makes no network calls of its own, so nothing here is sent anywhere but this issue —
+        please still redact anything private in prompts, paths or agent output.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected the run to do, and what it did instead.
+      placeholder: |
+        `review` should have started after `implement` merged, but the run exited 1 with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: validate
+    attributes:
+      label: "`cao validate <workflow>.yaml --json` output"
+      description: >-
+        The complete output. It carries the normalised workflow, the diagnostics and the execution
+        plan, which is usually enough on its own.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: run-directory
+    attributes:
+      label: Run directory listing
+      description: >-
+        `ls -R .orchestrator/runs/<run-id>` (PowerShell: `Get-ChildItem -Recurse .orchestrator/runs/<run-id>`).
+        `cao list` prints the run ids. The file names and sizes alone say which attempts ran and what
+        they persisted — attach `run.json`, `report.md` or an attempt's `events.jsonl` if you can share them.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "`cao --version`"
+      placeholder: 0.1.0-beta.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS, Node and agent CLI versions
+      description: "`node --version`, `git --version`, and `claude --version` and/or `codex --version`."
+      placeholder: Windows 11, node v22.12.0, git 2.47.1, claude 2.0.14
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: The workflow YAML
+      description: The smallest version of it that still fails, if you can get there.
+      render: yaml
+    validations:
+      required: false

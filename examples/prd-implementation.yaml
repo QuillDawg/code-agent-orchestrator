@@ -1,0 +1,97 @@
+# Full PRD implementation: foreach over issues, dependency DAG, review stages with context passing.
+version: 1
+name: Authentication V2 Implementation
+repository: .
+
+variables:
+  prd: docs/prd/authentication-v2.md
+
+execution:
+  maxConcurrency: 3
+  workspaceStrategy:
+    sequential: shared
+    parallel: worktree
+
+defaults:
+  timeout: 60m
+  retry:
+    attempts: 1
+    includePreviousFailure: true
+  onFailure: stop
+
+templates:
+  implementIssue:
+    type: implementation
+    prompt: |
+      /implement {{item.number}}
+
+      The PRD is at {{variables.prd}}. Keep changes scoped to the issue.
+
+issues:
+  - number: 201
+  - number: 202
+    parallelGroup: auth-core
+  - number: 203
+    parallelGroup: auth-core
+  - number: 204
+
+tasks:
+  - id: implement
+    foreach: issues
+    template: implementIssue
+
+  - id: test
+    type: test
+    context:
+      fromType: implementation
+    prompt: |
+      Review the implementation completed by the previous agents (see context).
+      Run the project's relevant automated tests. Investigate and fix failures caused
+      by the implementation. Do not modify unrelated functionality.
+
+  - id: prd-review
+    type: review
+    context:
+      from:
+        - "implement-*"
+        - test
+    prompt: |
+      Review the original PRD ({{variables.prd}}) and the associated GitHub issues.
+      Verify that the complete implementation satisfies the PRD. Identify missing or
+      incomplete requirements, integration problems, acceptance-criteria failures and
+      regressions. Fix issues where it is safe and appropriate.
+
+  - id: code-review
+    type: review
+    context:
+      from: [prd-review]
+    prompt: |
+      Perform a senior-level code review of all changes associated with this workflow:
+      code quality, architecture, maintainability, duplication, error handling,
+      concurrency, performance, database/query performance, security vulnerabilities and
+      potential breaking changes. Fix clear issues where doing so will not introduce
+      unintended architectural changes.
+
+  - id: security-review
+    type: security-review
+    context:
+      from: [prd-review, code-review]
+    prompt: |
+      Perform a security review of the completed implementation against relevant OWASP
+      guidance: authentication, authorization, injection, insecure data exposure, broken
+      access control, secrets, logging of sensitive data, insecure cryptography, race
+      conditions and abuse scenarios.
+
+  - id: final-review
+    type: verification
+    context:
+      from:
+        - task: prd-review
+          include: [summary, warnings, followUp]
+        - task: code-review
+          include: [summary, warnings, followUp]
+        - task: security-review
+          include: [summary, warnings, followUp]
+    prompt: |
+      Perform final verification. Confirm whether this workflow can be considered
+      successfully complete and clearly identify anything that remains unresolved.

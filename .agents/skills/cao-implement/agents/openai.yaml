@@ -1,0 +1,6 @@
+interface:
+  display_name: "CAO Implement"
+  short_description: "Author a CAO implementation workflow"
+  default_prompt: "Use $cao-implement to create a CAO workflow for these ready issues."
+policy:
+  allow_implicit_invocation: false

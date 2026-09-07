@@ -1,0 +1,67 @@
+# Tiered models: spend capability where it changes the outcome.
+#
+#   implement (opus, xhigh)  ->  review (sonnet, high)  ->  changelog (haiku 4.5, low)
+#                                cross-review (codex)
+#
+# Run from the project you want to work on:
+#   cd C:\Projects\MyProject && cao run path\to\model-selection.yaml
+#
+# Check what each task resolved to before spending anything:
+#   cao validate path\to\model-selection.yaml --json
+#
+# See docs/models.md for the model catalog, effort levels and resolution order.
+version: 1
+name: Tiered model selection
+repository: .
+
+# Workflow-level defaults. Every task inherits these unless it overrides them.
+agent: claude
+model: opus
+effort: high
+
+execution:
+  maxConcurrency: 2
+
+templates:
+  # A cheap, shallow task shape for mechanical work.
+  quick:
+    model: claude-haiku-4-5
+    effort: low
+    timeout: 10m
+
+tasks:
+  # The hardest step: strongest model, most reasoning.
+  - id: implement
+    type: implementation
+    effort: xhigh
+    timeout: 60m
+    claude:
+      maxBudgetUsd: 10        # hard spend ceiling for this task (Claude only)
+    prompt: "/implement 101"
+
+  # Reviews run together. A different model - and a different agent - catches
+  # more than a second pass by the same one that wrote the code.
+  - id: review
+    type: review
+    model: sonnet             # cheaper than opus, still a capable reviewer
+    parallelGroup: reviews
+    context:
+      from: [implement]
+    prompt: Review the implementation described in context for correctness and missed edge cases.
+
+  - id: cross-review
+    type: review
+    agent: codex              # requires the Codex CLI installed and authenticated
+    model: gpt-5.6-terra      # no codex.model key exists - this top-level key is the only way
+    parallelGroup: reviews
+    context:
+      from: [implement]
+    prompt: Independently review the change described in context.
+
+  # Mechanical summarization: cheapest model, least reasoning, trimmed context.
+  - id: changelog
+    template: quick
+    context:
+      from: [implement]
+      include: [summary]      # only the summary is needed, so only pay for it
+    prompt: Write a single-line changelog entry for the change described in context.

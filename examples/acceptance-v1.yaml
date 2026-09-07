@@ -1,0 +1,72 @@
+# V1 acceptance scenario:
+#   #101 -> (#102 || #103 in isolated worktrees) -> #104 -> PRD review -> code review -> final review
+# Run from the project you want to work on:
+#   cd C:\Projects\MyProject && cao run path\to\acceptance-v1.yaml
+version: 1
+name: Acceptance V1
+repository: .
+
+execution:
+  maxConcurrency: 3
+  workspaceStrategy:
+    sequential: shared
+    parallel: worktree
+
+defaults:
+  timeout: 60m
+  retry:
+    attempts: 1
+
+templates:
+  implementIssue:
+    type: implementation
+    prompt: "/implement {{issueNumber}}"
+
+tasks:
+  - id: implement-101
+    template: implementIssue
+    issueNumber: 101
+
+  - id: implement-102
+    template: implementIssue
+    issueNumber: 102
+    parallelGroup: core
+
+  - id: implement-103
+    template: implementIssue
+    issueNumber: 103
+    parallelGroup: core
+
+  - id: implement-104
+    template: implementIssue
+    issueNumber: 104
+
+  - id: prd-review
+    type: review
+    context:
+      fromType: implementation
+    prompt: |
+      Review the PRD and all issues that were implemented (structured summaries in context).
+      Determine whether every requirement was implemented, whether edge cases are missing,
+      whether the implementations work together and whether acceptance criteria are satisfied.
+
+  - id: code-review
+    type: review
+    context:
+      from:
+        - prd-review
+        - "implement-*"
+    prompt: |
+      Perform a detailed code review of the implementation: correctness, maintainability,
+      duplication, architecture, security, performance, database/query performance and
+      potential breaking changes.
+
+  - id: final-review
+    type: verification
+    context:
+      from:
+        - task: prd-review
+          include: [summary, warnings, followUp]
+        - task: code-review
+          include: [summary, warnings, followUp]
+    prompt: Perform final verification of the completed work and list anything unresolved.
