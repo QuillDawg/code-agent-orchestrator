@@ -62,7 +62,8 @@ describe('package.json', () => {
     expect(pkg.exports['.']).toEqual({ types: pkg.types, default: pkg.main });
     // `types` first: the condition order in the map is what a bundler resolves by.
     expect(Object.keys(pkg.exports['.'] as object)).toEqual(['types', 'default']);
-    for (const target of Object.values(pkg.bin)) expect(target).toMatch(/^\.\/dist\//);
+    // No `./` prefix: npm 11 treats `./dist/bin.js` as an invalid bin path and strips the entry at publish.
+    for (const target of Object.values(pkg.bin)) expect(target).toMatch(/^dist//);
   });
 
   it('publishes the reference docs but not docs/research', () => {

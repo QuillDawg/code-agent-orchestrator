@@ -31,8 +31,8 @@
     "node": ">=22"
   },
   "bin": {
-    "code-agent-orchestrator": "./dist/bin.js",
-    "cao": "./dist/bin.js"
+    "code-agent-orchestrator": "dist/bin.js",
+    "cao": "dist/bin.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
