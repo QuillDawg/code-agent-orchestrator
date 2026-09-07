@@ -630,7 +630,7 @@ describe('scheduler: a session that ends without the completion object is asked 
 describe('scheduler: the shared working tree never parks the loop', () => {
   const deadline = <T,>(p: Promise<T>): Promise<T> => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('scheduler deadlocked')), 5000))]);
 
-  it('runs two shared-tree tasks of one layer one after the other', async () => {
+  it('runs two shared-tree tasks of one layer side by side when allowUnsafeSharedParallel opts into it', async () => {
     const yaml = `
 name: t
 execution:
@@ -650,11 +650,42 @@ tasks:
     const res = await deadline(h.scheduler.execute());
     expect(res.state).toBe('completed');
     expect(states(h.run)).toEqual({ a: 'success', b: 'success' });
-    expect(runner.maxConcurrent).toBe(1);
+    // The flag is the operator saying the tasks may share the tree: they must actually overlap, not queue on
+    // the shared-tree lock (which left every task but one sitting `ready` for the whole run).
+    expect(runner.maxConcurrent).toBe(2);
     expect(h.workspace.acquisitions.map((x) => `${x.taskId}:${x.mode}`)).toEqual(['a:shared', 'b:shared']);
-    // b was launched only once a released the tree, not left running-but-idle behind it
     const [a, b] = runner.calls;
-    expect(b!.startedAt).toBeGreaterThanOrEqual(a!.endedAt!);
+    expect(b!.startedAt).toBeLessThan(a!.endedAt!);
+  });
+
+  it('still queues shared-tree tasks from different layers behind each other without the flag', async () => {
+    // Layers [a, c] and [b]: the validator only checks a layer, so b (shared) may overlap c (shared) in time.
+    const yaml = `
+name: t
+execution:
+  mode: dag
+  maxConcurrency: 3
+tasks:
+  - id: a
+    workspace: worktree
+    prompt: p
+  - id: b
+    workspace: shared
+    dependsOn: [a]
+    prompt: p
+  - id: c
+    workspace: shared
+    prompt: p
+`;
+    const runner = new MockRunner().when('a', { kind: 'success', delayMs: 20 }).when('b', { kind: 'success', delayMs: 20 }).when('c', { kind: 'success', delayMs: 150 });
+    const h = harness(await wf(yaml), runner);
+    const res = await deadline(h.scheduler.execute());
+    expect(res.state).toBe('completed');
+    expect(states(h.run)).toEqual({ a: 'success', b: 'success', c: 'success' });
+    // b was launched only once c released the tree, not left running-but-idle behind it
+    const b = runner.calls.find((x) => x.taskId === 'b')!;
+    const c = runner.calls.find((x) => x.taskId === 'c')!;
+    expect(b.startedAt).toBeGreaterThanOrEqual(c.endedAt!);
   });
 
   it('starts a merge-resolution session once the shared-tree task holding the tree is done', async () => {

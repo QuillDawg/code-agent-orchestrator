@@ -548,8 +548,10 @@ export class WorkflowScheduler {
       }
       const task = this.taskDefs.get(id)!;
       let release: (() => void) | undefined;
-      if (this.workspaceMode(task) === 'shared') {
+      if (this.workspaceMode(task) === 'shared' && !this.workflow.execution.allowUnsafeSharedParallel) {
         // Never wait for the shared tree here: the attempt holding it can only release it through this loop.
+        // With allowUnsafeSharedParallel the operator has said the tasks may share the tree, so no lock is
+        // taken at all: taking it would queue them one behind the other, which is exactly what the flag waives.
         release = this.workspace.tryLockShared();
         if (!release) continue;
       }

@@ -10,6 +10,18 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 Nothing yet.
 
+## [0.1.0-beta.3] - 2026-09-07
+
+`allowUnsafeSharedParallel` now does what its name says.
+
+### Fixed
+
+- `execution.allowUnsafeSharedParallel: true` did not make parallel tasks run in parallel. Every shared-tree
+  task still queued on the shared working tree lock, so with `workspaceStrategy: shared` one task ran while
+  the rest of its `parallelGroup` sat `ready` for the whole run, whatever `maxConcurrency` said and
+  whichever model the tasks used. Shared-tree tasks now take no lock when the flag is set and overlap up to
+  `maxConcurrency`; without the flag they still wait for the tree one at a time, as before.
+
 ## [0.1.0-beta.2] - 2026-09-07
 
 What a smaller model such as Haiku 4.5 does to a workflow, and what `cao` now does about it.

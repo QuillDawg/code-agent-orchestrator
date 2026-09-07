@@ -46,7 +46,7 @@ execution:
   workspaceStrategy:             # or a single string: shared | worktree
     sequential: shared           # workspace for tasks that run alone
     parallel: worktree           # workspace for tasks that may run concurrently
-  allowUnsafeSharedParallel: false
+  allowUnsafeSharedParallel: false # true lets shared-tree tasks of one layer run at the same time instead of one after the other
   stopMode: wait                 # wait | cancel: what happens to running tasks when onFailure: stop fires
   killGrace: 5s                  # grace period before force-killing a worker (default 3s on Windows)
   outputBufferLines: 500         # in-memory rolling transcript entries per worker (scrolling past the top pages the rest in from disk)
@@ -74,6 +74,8 @@ The workflow is a DAG. In `sequential` mode (default) the following rules add im
 5. `mode: dag` disables rules 1–3: only explicit `dependsOn` edges exist and `parallelGroup` is an error.
 
 Tasks that can run concurrently (same layer of the plan with `maxConcurrency > 1`) use the `parallel` workspace; everything else uses the `sequential` workspace. Two tasks that could run concurrently in the same shared working tree are rejected unless `allowUnsafeSharedParallel: true`.
+
+Without that flag the shared working tree is held by one attempt at a time: a shared-tree task whose tree is busy (another shared-tree task, or a merge-resolution session) stays `ready` until the holder finishes. With the flag, shared-tree tasks take no lock and really do run side by side, up to `maxConcurrency`. That is the "unsafe" part: two workers can edit the same file, and each task's captured diff is a snapshot of the whole tree, so it can include what a neighbour changed at the same time. Merge-backs of worktree tasks still serialise among themselves, but not against a running shared-tree task.
 
 ### Worktree base
 
