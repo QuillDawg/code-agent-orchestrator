@@ -83,6 +83,15 @@ tasks: [{ id: a, agent: codex, prompt: p }]
       expect.stringMatching(/readOnly.*sandbox/i), expect.stringMatching(/readOnly.*approvalPolicy/i),
     ]));
 
+    const incompatibleAutoReview = await buildWorkflow(`
+name: invalid-auto-review-sandbox
+codex: { transport: exec, approvals: autoReview, sandbox: read-only }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(incompatibleAutoReview.validation.diagnostics)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/automatic review.*workspace-write/i),
+    ]));
+
     const rawOverride = await buildWorkflow(`
 name: invalid-raw-security
 codex: { extraArgs: [--sandbox, danger-full-access] }

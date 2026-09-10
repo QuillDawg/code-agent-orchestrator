@@ -39,8 +39,12 @@ export function buildCodexArgs(options: CodexOptions, schemaPath: string, output
   const conflict = codexExtraArgsSecurityConflict(options.extraArgs);
   if (conflict) throw new Error(`Codex extraArgs cannot override security option "${conflict}"; use the validated codex permission fields`);
   const permissions = resolveCodexPermissions(options, false);
-  const args = ['--sandbox', permissions.sandbox, '-c', `approval_policy="${permissions.approvalPolicy}"`];
+  if (permissions.autoReview && permissions.sandbox !== 'workspace-write') {
+    throw new Error('Codex automatic review requires the workspace-write sandbox');
+  }
+  const args = ['-c', `approval_policy="${permissions.approvalPolicy}"`];
   if (permissions.autoReview) args.unshift('--approve-for-me');
+  else args.unshift('--sandbox', permissions.sandbox);
   if (options.profile) args.push('--profile', options.profile);
   for (const dir of options.addDirs ?? []) args.push('--add-dir', dir);
   args.push('exec');

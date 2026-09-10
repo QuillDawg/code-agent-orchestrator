@@ -9,9 +9,10 @@ import type { Interaction } from '../../src/types/interaction.js';
 import { FAKE_CODEX, tmpDir } from '../helpers/index.js';
 
 describe('Codex runner arguments', () => {
-  it('maps the auto permission preset and includes structured output files', () => {
+  it('uses the Codex automatic-review preset without its mutually exclusive sandbox flag', () => {
     const args = buildCodexArgs({ permissionMode: 'auto' }, 'schema.json', 'final.json');
-    expect(args).toEqual(expect.arrayContaining(['--approve-for-me', '--sandbox', 'workspace-write', '-c', 'approval_policy="on-request"', 'exec', '--json', '--output-schema', 'schema.json', '--output-last-message', 'final.json']));
+    expect(args).toEqual(expect.arrayContaining(['--approve-for-me', '-c', 'approval_policy="on-request"', 'exec', '--json', '--output-schema', 'schema.json', '--output-last-message', 'final.json']));
+    expect(args).not.toContain('--sandbox');
   });
 
   it('denies approvals in read-only mode and isolates ambient configuration when requested', () => {
@@ -23,6 +24,11 @@ describe('Codex runner arguments', () => {
   it('uses automatic review for an unattended explicit on-request policy', () => {
     const args = buildCodexArgs({ approvalPolicy: 'on-request', approvals: 'autoReview' }, 'schema.json', 'final.json');
     expect(args).toContain('--approve-for-me');
+  });
+
+  it('rejects automatic review with a sandbox the Codex preset cannot preserve', () => {
+    expect(() => buildCodexArgs({ approvals: 'autoReview', sandbox: 'read-only' }, 'schema.json', 'final.json'))
+      .toThrow('Codex automatic review requires the workspace-write sandbox');
   });
 
   it('uses an explicit session for a resumed worker', () => {
