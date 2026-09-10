@@ -118,6 +118,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `crash`.
 - A Codex `appServer` task configured with `codex.approvals: host` and run without a dashboard now pauses
   with `needs_input` explaining the two ways to fix it, instead of failing the task as an invalid result.
+- A Codex `appServer` task that stopped on a question it could not ask now reports it as sentences. The
+  deny message the worker was given is stripped of the instruction addressed to it and terminated before the
+  fix is appended, instead of running the two together (`…answer Which?; finish with status needs_input if
+  you cannot continue Run this task with the dashboard…`), and taking that instruction out of the middle of a
+  sentence no longer leaves a dangling `; ` behind on `cao run`, `cao status`, `cao task` or in `report.md`.
 - Codex `appServer` answers to `item/tool/requestUserInput` are keyed by the server's own question id, as
   the protocol requires; they used to be keyed by the question text, so a worker never received an answer
   it could match to its question. "Allow for the rest of this task" now sends the proposed execpolicy

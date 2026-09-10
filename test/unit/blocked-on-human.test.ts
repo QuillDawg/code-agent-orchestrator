@@ -13,8 +13,9 @@ import {
   REQUEST_DECLINED, REQUEST_UNSUPPORTED, approvalResponse, cancelResponse, interactionFromRequest, isAnswerableRequest,
   parseQuestions, quoteQuestions, userInputResponse,
 } from '../../src/runners/codex/app-server-protocol.js';
+import { needsInputResult } from '../../src/runners/codex/app-server.js';
 import { describeDenials } from '../../src/runners/claude/protocol.js';
-import { canAllowAlways, type Interaction } from '../../src/types/interaction.js';
+import { NEEDS_INPUT_HINT, canAllowAlways, withoutWorkerInstructions, type Interaction } from '../../src/types/interaction.js';
 import { ESC } from '../../src/util/text.js';
 
 const ctx = { taskId: 'a', attempt: 1 };
@@ -153,6 +154,29 @@ describe('codex app-server: requests and answers on the wire', () => {
     expect(quoteQuestions([{ question: `${ESC}[31mWhich database?`, options: [], multiSelect: false }])).toBe('"Which database?"');
     expect(quoteQuestions([{ question: 'a', options: [], multiSelect: false }, { question: 'b', options: [], multiSelect: false }])).toBe('"a" (and 1 more)');
     expect(quoteQuestions([])).toBe('a question with no text');
+  });
+
+  it('reads as sentences when the deny message the worker got becomes an operator-facing error', () => {
+    const questions = [{ question: 'Which?', options: [], multiSelect: false }];
+    // What the scheduler sends a denied worker: a reason, then the instruction addressed to the worker.
+    const reason = `No human is available to answer Which?; ${NEEDS_INPUT_HINT}`;
+    const result = needsInputResult({ questions, reason, fix: 'Run this task with the dashboard attached' });
+
+    expect(result.error).toBe(
+      'Codex asked "Which?". No human is available to answer Which? Run this task with the dashboard attached, or answer this task with `cao resume --task <id> --input "…"`.',
+    );
+    // The instruction is addressed to the agent; an operator reading it back learns nothing.
+    expect(result.error).not.toContain(NEEDS_INPUT_HINT);
+    // And no seam is left where it was taken out, in the result or in what a surface strips again.
+    expect(result.error).not.toMatch(/;|\s{2}/);
+    expect(withoutWorkerInstructions(result.error!)).not.toMatch(/\s{2}|;\s*$/);
+  });
+
+  it('closes the seam where the worker instruction is taken out of a sentence', () => {
+    expect(withoutWorkerInstructions(`No human is available to answer Which?; ${NEEDS_INPUT_HINT}`)).toBe('No human is available to answer Which?');
+    expect(withoutWorkerInstructions(`No human is available to answer Which?; ${NEEDS_INPUT_HINT} Run it with the dashboard`)).toBe('No human is available to answer Which? Run it with the dashboard');
+    expect(withoutWorkerInstructions(`Questions cannot be answered; ${NEEDS_INPUT_HINT}. Set experimentalUserInput`)).toBe('Questions cannot be answered. Set experimentalUserInput');
+    expect(withoutWorkerInstructions('Nothing to strip here')).toBe('Nothing to strip here');
   });
 
   it('has no title to lose when the request carries neither a command nor a reason', () => {

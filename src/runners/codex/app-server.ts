@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createWriteStream } from 'node:fs';
 import type { ProcessManager, ManagedProcess } from '../../execution/process-manager.js';
 import type { CodexOptions } from '../../types/workflow.js';
-import type { InteractionQuestion } from '../../types/interaction.js';
+import { asSentence, withoutWorkerInstructions, type InteractionQuestion } from '../../types/interaction.js';
 import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js';
 import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
@@ -85,10 +85,14 @@ interface BlockedOnHuman {
   fix: string;
 }
 
-function needsInputResult(blocked: BlockedOnHuman, warnings: string[] = []): TaskResult {
+export function needsInputResult(blocked: BlockedOnHuman, warnings: string[] = []): TaskResult {
   const quoted = quoteQuestions(blocked.questions);
   const summary = `Codex asked ${quoted} and no one could answer it`;
-  const error = [`Codex asked ${quoted}.`, blocked.reason, `${blocked.fix}, or answer this task with \`cao resume --task <id> --input "…"\`.`].join(' ');
+  // `reason` is what the *worker* was told when its request was declined. On its way to an operator the
+  // instruction addressed to the worker comes off, and what is left is punctuated as its own sentence -
+  // without that, the reason and the fix run into each other as one unreadable line.
+  const why = asSentence(withoutWorkerInstructions(blocked.reason));
+  const error = [`Codex asked ${quoted}.`, why, `${blocked.fix}, or answer this task with \`cao resume --task <id> --input "…"\`.`].filter(Boolean).join(' ');
   return { status: 'needs_input', summary, error, filesChanged: [], commits: [], decisions: [], warnings, followUp: [`${blocked.fix}.`], data: { blockedOn: 'codexUserInput' } };
 }
 
@@ -174,7 +178,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     blocked ??= { questions, reason, fix };
     entry({ kind: 'question', ts: nowIso(), id: String(message.id), questions, answer: `declined: ${reason}` });
     hooks.onActivity(`? declined: ${quoteQuestions(questions)}`);
-    hooks.onWarning?.(`Codex asked ${quoteQuestions(questions)}; ${reason}`);
+    hooks.onWarning?.(`Codex asked ${quoteQuestions(questions)}; ${withoutWorkerInstructions(reason)}`);
     send({ id: message.id, error: { code, message: reason } });
   };
 

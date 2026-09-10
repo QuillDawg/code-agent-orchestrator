@@ -93,11 +93,28 @@ export function toInteractionRecord(interaction: Interaction): InteractionRecord
  */
 export const NEEDS_INPUT_HINT = 'finish with status needs_input if you cannot continue';
 
-/** Agent-facing boilerplate removed, for text on its way to an operator rather than to a worker. */
+/**
+ * Agent-facing boilerplate removed, for text on its way to an operator rather than to a worker.
+ *
+ * The hint is usually appended to a sentence with `; `, and sometimes has a sentence of its own after it, so
+ * the seam is closed up rather than left as the dangling `; ` and double space that taking the middle out of
+ * a sentence would otherwise leave behind.
+ */
 export function withoutWorkerInstructions(text: string): string {
-  return text
-    .split(NEEDS_INPUT_HINT)
-    .join('')
-    .replace(/[;,.\s]+$/, '')
-    .trim();
+  const parts = text.split(NEEDS_INPUT_HINT);
+  let out = parts[0] ?? '';
+  for (const part of parts.slice(1)) {
+    const before = out.replace(/[;,\s]+$/, '');
+    const after = part.replace(/^\s+/, '');
+    // Punctuation the hint was standing in front of belongs to the sentence before it, so it stays put.
+    out = before && after && !/^[.!?,;]/.test(after) ? `${before} ${after}` : `${before}${after}`;
+  }
+  return out.replace(/[;,.\s]+$/, '').trim();
+}
+
+/** One sentence of operator-facing text, terminated, so the next one does not run into it. */
+export function asSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
