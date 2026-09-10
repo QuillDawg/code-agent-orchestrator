@@ -7,7 +7,7 @@ import { parseClaudeEvents } from '../../src/runners/claude/event-parser.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
 import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import type { RunnerUsage } from '../../src/types/result.js';
-import type { RunnerHooks } from '../../src/runners/task-runner.js';
+import type { RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.js';
 import type { ResolvedTask } from '../../src/types/workflow.js';
 import { renderTranscript } from '../../src/tui/transcript.js';
 import { FAKE_CLAUDE, tmpDir } from '../helpers/index.js';
@@ -127,6 +127,11 @@ describe('Claude stream events: tool ids and subagent parentage', () => {
     const [retry] = parseClaudeEvents(JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 5, retry_delay_ms: 1500, error_status: 529, error: 'overloaded' }));
     expect(retry).toEqual({ kind: 'api_retry', attempt: 2, maxRetries: 5, retryDelayMs: 1500, httpStatus: 529, message: 'overloaded' });
   });
+
+  it('preserves init capabilities and initialization failures', () => {
+    const [init] = parseClaudeEvents(JSON.stringify({ type: 'system', subtype: 'init', capabilities: ['stream-json'], mcp_server_errors: [{ name: 'required', error: 'offline' }], plugin_errors: ['bad plugin'] }));
+    expect(init).toMatchObject({ kind: 'init', capabilities: ['stream-json'], initializationFailures: [expect.stringMatching(/^MCP:/), 'plugin: bad plugin'] });
+  });
 });
 
 describe('Claude CLI capability probe', () => {
@@ -158,7 +163,7 @@ interface Trace {
 }
 
 /** Run one attempt of the fake CLI through the real runner and collect what the orchestrator saw. */
-async function runFake(mode: string, extraEnv: Record<string, string> = {}): Promise<{ entries: TranscriptEntry[]; activity: string[]; usage: RunnerUsage | undefined; persisted: TranscriptEntry[]; trace: Trace[]; warnings: string[] }> {
+async function runFake(mode: string, extraEnv: Record<string, string> = {}, expectResult = true): Promise<{ outcome: RunnerOutcome; entries: TranscriptEntry[]; activity: string[]; usage: RunnerUsage | undefined; persisted: TranscriptEntry[]; trace: Trace[]; warnings: string[] }> {
   clearDetectionCache();
   const dir = await tmpDir('cao-runner-');
   const attemptDir = path.join(dir, 'attempt');
@@ -193,13 +198,21 @@ async function runFake(mode: string, extraEnv: Record<string, string> = {}): Pro
     },
     hooks,
   );
-  expect(outcome.kind).toBe('result');
+  if (expectResult) expect(outcome.kind).toBe('result');
   const log = await fs.readFile(path.join(attemptDir, 'events.jsonl'), 'utf8');
   const persisted = log.trim().split('\n').map(parseTranscriptLine).filter((e): e is TranscriptEntry => e !== null);
   const traceText = await fs.readFile(path.join(dir, 'trace.jsonl'), 'utf8');
   const trace = traceText.trim().split('\n').map((l) => JSON.parse(l) as Trace);
-  return { entries, activity, usage, persisted, trace, warnings };
+  return { outcome, entries, activity, usage, persisted, trace, warnings };
 }
+
+describe('Claude runner: initialization diagnostics', () => {
+  it('fails a successful-looking process when initialization reported a dependency failure', async () => {
+    const run = await runFake('success', { FAKE_CLAUDE_INIT_FAILURE: '1' }, false);
+    expect(run.outcome).toMatchObject({ kind: 'error', outcome: 'crash', failure: { providerCode: 'initializationFailed', retryable: false } });
+    expect(run.warnings).toEqual([expect.stringMatching(/MCP.*required/i)]);
+  });
+});
 
 describe('Claude runner: the permission mode the CLI actually runs', () => {
   afterEach(() => clearDetectionCache());

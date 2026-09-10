@@ -12,6 +12,9 @@ export interface ClaudeInitEvent {
   model?: string;
   /** The permission mode the CLI actually started the session in, which can differ from the one requested. */
   permissionMode?: string;
+  capabilities?: string[];
+  /** Startup failures reported even when the CLI later exits zero. */
+  initializationFailures?: string[];
 }
 export interface ClaudeActivityEvent {
   kind: 'activity';
@@ -190,6 +193,11 @@ function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+function initFailures(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => `${label}: ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+}
+
 /** Parse one stream-json line into zero or more events (an assistant message may carry several blocks). */
 export function parseClaudeEvents(line: string): ClaudeEvent[] {
   const trimmed = line.trim();
@@ -203,7 +211,12 @@ export function parseClaudeEvents(line: string): ClaudeEvent[] {
   const type = String(msg.type ?? '');
   if (type === 'system') {
     if (msg.subtype === 'init') {
-      return [{ kind: 'init', sessionId: msg.session_id as string | undefined, model: msg.model as string | undefined, permissionMode: str(msg, 'permissionMode') }];
+      const failures = [...initFailures(msg.mcp_server_errors, 'MCP'), ...initFailures(msg.plugin_errors, 'plugin')];
+      return [{
+        kind: 'init', sessionId: msg.session_id as string | undefined, model: msg.model as string | undefined, permissionMode: str(msg, 'permissionMode'),
+        ...(Array.isArray(msg.capabilities) ? { capabilities: msg.capabilities.filter((value): value is string => typeof value === 'string') } : {}),
+        ...(failures.length ? { initializationFailures: failures } : {}),
+      }];
     }
     if (msg.subtype === 'compact_boundary') return [{ kind: 'compact' }];
     if (msg.subtype === 'api_retry') {

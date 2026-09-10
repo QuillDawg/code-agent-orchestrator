@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeCodexFailure } from '../../src/runners/codex/failure.js';
+import { codexFailureMetadata, normalizeCodexFailure } from '../../src/runners/codex/failure.js';
 
 describe('Codex typed failures', () => {
   it('marks transport, rate-limit and server failures retryable', () => {
@@ -12,5 +12,9 @@ describe('Codex typed failures', () => {
     for (const code of ['unauthorized', 'usageLimitExceeded', 'contextWindowExceeded', 'badRequest', 'sandboxError']) {
       expect(normalizeCodexFailure(code), code).toMatchObject({ providerCode: code, retryable: false });
     }
+  });
+
+  it('preserves provider request and retry timing metadata when available', () => {
+    expect(codexFailureMetadata({ data: { requestId: 'req-1', retryAfterSeconds: 2.5 } })).toEqual({ requestId: 'req-1', retryAfterMs: 2500 });
   });
 });

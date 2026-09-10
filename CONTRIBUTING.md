@@ -25,10 +25,11 @@ npm run dev -- validate examples/sequential-issues.yaml
 npm run dev -- run examples/sequential-issues.yaml --dry-run
 ```
 
-## The fake agent
+## The fake agents
 
-Nothing in this repository ever calls a real model. `test/fixtures/fake-claude.mjs` is a scripted stand-in
-that speaks the same `stream-json` protocol as `claude -p`, and every test drives it. You can too:
+Nothing in this repository ever calls a real model. `test/fixtures/fake-claude.mjs` speaks Claude's
+`stream-json` protocol; `test/fixtures/fake-codex.mjs` speaks both Codex exec JSONL and app-server JSON-RPC.
+The tests drive these stand-ins. You can use the Claude fixture for a whole workflow too:
 
 ```bash
 CAO_CLAUDE_COMMAND="node test/fixtures/fake-claude.mjs" npm run dev -- run examples/sequential-issues.yaml
@@ -74,7 +75,7 @@ The layout:
   capture, `run-store.test.ts` covers persistence and resume, `interactive.test.ts` the permission protocol,
   `process-manager.test.ts` spawning and tree-kill.
 - **`test/helpers/index.ts`** — temporary repositories, workflow builders and the assertions shared by both.
-- **`test/fixtures/`** — the fake agent and the expected report document.
+- **`test/fixtures/`** — the fake Claude/Codex agents and the expected report document.
 
 New behaviour needs a test. Prefer the unit suites; reach for an integration suite when the thing being
 proved is the interaction with git, the filesystem or a child process. Assert on what a user sees — the

@@ -32,7 +32,7 @@ src/
     render/diff.ts            reads a captured diff.patch: section lookup by path (git's quoting undone), stat and colour
   config/                     schema.ts (zod), loader.ts (YAML, repository/launch dir, env), normalize.ts (defaults, templates, foreach, DAG rules)
   workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts
-  runners/                    task-runner.ts (TaskRunner, RunnerRegistry); claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (codex-runner, detect)
+  runners/                    task-runner.ts (TaskRunner, RunnerRegistry, typed failure contract), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
   conditions/evaluator.ts     safe `when` expression grammar
@@ -52,6 +52,7 @@ src/
 test/
   fixtures/fake-claude.mjs    scripted stream-json Claude stand-in (permission prompts, questions, cancellation, usage, transient errors,
                               subagents, thinking, shell-only and binary changes)
+  fixtures/fake-codex.mjs     scripted Codex exec and app-server stand-in
   helpers/index.ts            temporary git repositories, workflow builders, CLI capture
   unit/, integration/         vitest suites
 ```
@@ -141,7 +142,8 @@ unclosed code fence is closed, a heading is demoted under the task's own.
 
 `cli/commands/doctor.ts` answers the environment half of the same question. It reuses the detectors the
 runners use (`runners/*/detect.ts`) and the paths `FileRunStore` writes, grades each check
-(fail only for Node, git, and having no agent CLI at all), and prints the command that fixes what it found.
+(failing for Node, git, an unusable installed CLI, or a capability required by a supplied workflow), and
+prints the command that fixes what it found. `cao doctor [workflow]` scopes agent probes to that workflow.
 It reads only: it will name a `cao clean` invocation but never run one.
 
 ## Process management and Ctrl+C

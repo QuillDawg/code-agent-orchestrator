@@ -111,7 +111,11 @@ if (process.env.CAO_ATTEMPT_KIND === 'merge') effectiveMode = process.env.FAKE_C
 // The real CLI reports the mode it actually runs in; FAKE_CLAUDE_PERMISSION_MODE simulates a model it downgrades.
 const permissionModeIdx = args.indexOf('--permission-mode');
 const permissionMode = process.env.FAKE_CLAUDE_PERMISSION_MODE ?? (permissionModeIdx >= 0 ? args[permissionModeIdx + 1] : 'default');
-emit({ type: 'system', subtype: 'init', session_id: sessionId, model: process.env.FAKE_CLAUDE_MODEL ?? 'fake-model', cwd: process.cwd(), permissionMode });
+emit({
+  type: 'system', subtype: 'init', session_id: sessionId, model: process.env.FAKE_CLAUDE_MODEL ?? 'fake-model', cwd: process.cwd(), permissionMode,
+  capabilities: ['stream-json', 'structured-output'],
+  ...(process.env.FAKE_CLAUDE_INIT_FAILURE === '1' ? { mcp_server_errors: [{ name: 'required', error: 'connection refused' }] } : {}),
+});
 await sleep(delay);
 
 const result = (status, extra = {}) => ({

@@ -13,7 +13,7 @@ import {
   type DoctorFacts,
 } from '../../src/cli/commands/doctor.js';
 import { createRunPaths } from '../../src/persistence/paths.js';
-import { buildWorkflow, captureCli, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
+import { buildWorkflow, captureCli, FAKE_CODEX, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
 import { stripAnsi } from '../../src/cli/color.js';
 import type { WorkflowRun } from '../../src/types/run.js';
 
@@ -318,5 +318,15 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     expect(parsed.checks.map((c) => c.id)).toEqual(['node', 'git', 'agent:claude', 'agent:codex', 'locks', 'worktrees', 'branches', 'exclude']);
     expect(parsed.facts.agents[0]).toMatchObject({ runner: 'claude', found: true });
     expect(parsed.cao).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('scopes agent probes and capability checks to a supplied workflow', async () => {
+    const repo = await tmpGitRepo('cao-doctor-scoped-');
+    const config = path.join(repo, 'workflow.yaml');
+    await fs.writeFile(config, `name: scoped\ncodex:\n  command: ${JSON.stringify(FAKE_CODEX)}\n  transport: appServer\n  approvals: host\ntasks:\n  - id: review\n    agent: codex\n    prompt: review\n`);
+    const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, config, json: true }));
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
+    expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: expect.arrayContaining(['exec', 'appServer']) })]);
   });
 });

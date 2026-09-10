@@ -15,7 +15,7 @@ describe('Codex runner arguments', () => {
   });
 
   it('denies approvals in read-only mode and isolates ambient configuration when requested', () => {
-    const args = buildCodexArgs({ permissionMode: 'readOnly', configMode: 'isolated' }, 'schema.json', 'final.json');
+    const args = buildCodexArgs({ permissionMode: 'readOnly', configMode: 'isolated', sandbox: 'danger-full-access', approvalPolicy: 'on-request' }, 'schema.json', 'final.json');
     expect(args).toEqual(expect.arrayContaining(['--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '-c', 'approval_policy="never"']));
     expect(args).not.toContain('--approve-for-me');
   });
@@ -57,13 +57,17 @@ describe('Codex exec transport', () => {
 describe('Codex app-server transport', () => {
   beforeEach(() => clearCodexDetectionCache());
 
-  async function run(mode: string, experimentalUserInput = false) {
+  async function run(mode: string, experimentalUserInput = false, resumeSessionId?: string) {
     const root = await tmpDir('cao-codex-app-');
     const interactions: Interaction[] = [];
     const usage: unknown[] = [];
+    const warnings: string[] = [];
+    const rawOutput: string[] = [];
+    const controller = new AbortController();
     const hooks: RunnerHooks = {
-      onActivity: () => {}, onOutput: () => {}, onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {},
+      onActivity: () => {}, onOutput: (_stream, line) => rawOutput.push(line), onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {},
       onUsage: (value) => usage.push(value),
+      onWarning: (value) => warnings.push(value),
       onInteraction: async (interaction) => {
         interactions.push(interaction);
         return interaction.kind === 'question' ? { kind: 'answer', answers: { choice: 'A' } } : { kind: 'allow', scope: 'once' };
@@ -72,10 +76,10 @@ describe('Codex app-server transport', () => {
     const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
     const outcome = await runner.run({
       runId: 'r1', attempt: 1, prompt: 'do it', cwd: root, attemptDir: path.join(root, 'attempt'), env: { FAKE_CODEX_MODE: mode },
-      timeoutMs: 5000, signal: new AbortController().signal, canInteract: true,
+      timeoutMs: 5000, signal: controller.signal, canInteract: true, resumeSessionId,
       task: { id: 'a', model: 'fake-codex', effort: 'high', codex: { transport: 'appServer', approvals: 'host', experimentalUserInput }, claude: {} } as ResolvedTask,
     }, hooks);
-    return { outcome, interactions, usage };
+    return { outcome, interactions, usage, warnings, rawOutput };
   }
 
   it('runs a schema-constrained turn and reports usage', async () => {
@@ -89,10 +93,51 @@ describe('Codex app-server transport', () => {
     expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success' } });
   });
 
+  it('fails closed when the server omits or changes resolved security/model settings', async () => {
+    expect((await run('missing-policy')).outcome).toMatchObject({ kind: 'error', outcome: 'crash', message: expect.stringMatching(/did not report.*approval policy/i) });
+    expect((await run('wrong-model')).outcome).toMatchObject({ kind: 'error', outcome: 'crash', message: expect.stringMatching(/resolved model/i) });
+  });
+
   it('routes stable command approvals through the shared interaction seam', async () => {
     const { outcome, interactions } = await run('approval');
     expect(outcome.kind).toBe('result');
     expect(interactions).toEqual([expect.objectContaining({ kind: 'permission', agent: 'codex', toolName: 'command', title: expect.stringContaining('npm test') })]);
+  });
+
+  it('routes file approvals and resumes the requested thread', async () => {
+    const file = await run('file-approval');
+    expect(file.outcome.kind).toBe('result');
+    expect(file.interactions[0]).toMatchObject({ kind: 'permission', toolName: 'fileChange' });
+
+    const resumed = await run('success', false, 'resume-thread');
+    expect(resumed.outcome).toMatchObject({ kind: 'result', usage: { sessionId: 'resume-thread' } });
+  });
+
+  it('tolerates malformed lines and unknown additive notifications', async () => {
+    const result = await run('malformed');
+    expect(result.outcome.kind).toBe('result');
+    expect(result.rawOutput).toContain('not-json');
+  });
+
+  it('classifies interruption, invalid output and required MCP failure', async () => {
+    expect((await run('interrupted')).outcome).toMatchObject({ kind: 'error', outcome: 'crash', failure: { partialWork: true, retryable: false } });
+    expect((await run('invalid')).outcome).toMatchObject({ kind: 'error', outcome: 'invalid_result' });
+    const mcp = await run('mcp-failure');
+    expect(mcp.outcome).toMatchObject({ kind: 'error', failure: { providerCode: 'badRequest', retryable: false } });
+    expect(mcp.warnings).toEqual([expect.stringMatching(/required.*failed to start/i)]);
+  });
+
+  it('interrupts and cancels a hanging turn', async () => {
+    const root = await tmpDir('cao-codex-cancel-');
+    const controller = new AbortController();
+    const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
+    setTimeout(() => controller.abort(), 50);
+    const outcome = await runner.run({
+      runId: 'r1', attempt: 1, prompt: 'wait', cwd: root, attemptDir: path.join(root, 'attempt'), env: { FAKE_CODEX_MODE: 'hang' },
+      timeoutMs: 5000, signal: controller.signal, canInteract: true,
+      task: { id: 'a', model: 'fake-codex', codex: { transport: 'appServer', approvals: 'host' }, claude: {} } as ResolvedTask,
+    }, { onActivity: () => {}, onOutput: () => {}, onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {}, onUsage: () => {}, onInteraction: async () => ({ kind: 'deny', message: 'no' }) });
+    expect(outcome).toMatchObject({ kind: 'error', outcome: 'cancelled' });
   });
 
   it('gates experimental questions and preserves typed retry diagnostics', async () => {

@@ -37,6 +37,12 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   if (run.state === 'cancelled') throw new OrchestratorError(`Run ${runId} was cancelled and cannot be resumed`);
   if (!(await pathExists(run.repositoryRoot))) throw new OrchestratorError(`Repository for run ${runId} no longer exists: ${run.repositoryRoot}`);
 
+  // Probe workers before acquiring the run lock or killing/reclassifying orphaned attempts. A bad CLI
+  // should leave the persisted run and any recoverable worker exactly as they were.
+  const runners = await detectRunnersForWorkflow(run.workflow);
+  const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
+  if (unavailable) throw new OrchestratorError(unavailable);
+
   const lock = await store.acquireLock(runId);
   if (!lock.ok) throw new OrchestratorError(`Run ${runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
@@ -65,9 +71,6 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
     out(warnLine(`Could not reload environment from ${run.configPath}: ${(err as Error).message}`));
   }
 
-  const runners = await detectRunnersForWorkflow(run.workflow);
-  const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
-  if (unavailable) throw new OrchestratorError(unavailable);
   const layers = buildGraph(run.workflow).layers();
   out(renderHeader({ workflow: run.workflow, runId, runners, layers, resumed: true, verbose: opts.verbose }));
   if (reconciliation.rerun.length) out(`Re-running: ${reconciliation.rerun.join(', ')}\n`);

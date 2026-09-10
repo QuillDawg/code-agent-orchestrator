@@ -73,6 +73,15 @@ export function validateWorkflow(
         const compatible = t.codex.approvals === 'deny' ? t.codex.approvalPolicy === 'never' : t.codex.approvalPolicy === 'on-request';
         if (!compatible) error(`Task "${t.id}": Codex approvalPolicy "${t.codex.approvalPolicy}" conflicts with approvals "${t.codex.approvals}"`, t.id);
       }
+      if (t.codex.permissionMode === 'readOnly' && t.codex.sandbox && t.codex.sandbox !== 'read-only') {
+        error(`Task "${t.id}": Codex permissionMode "readOnly" cannot be combined with sandbox "${t.codex.sandbox}"`, t.id);
+      }
+      if (t.codex.permissionMode === 'readOnly' && t.codex.approvalPolicy && t.codex.approvalPolicy !== 'never') {
+        error(`Task "${t.id}": Codex permissionMode "readOnly" cannot be combined with approvalPolicy "${t.codex.approvalPolicy}"`, t.id);
+      }
+      if (t.codex.permissionMode === 'fullAccess' && t.codex.sandbox && t.codex.sandbox !== 'danger-full-access') {
+        error(`Task "${t.id}": Codex permissionMode "fullAccess" cannot be combined with sandbox "${t.codex.sandbox}"`, t.id);
+      }
     }
     if (t.agent === 'claude' && (t.effort === 'none' || t.effort === 'minimal')) {
       warn(`Task "${t.id}": effort "${t.effort}" is Codex-only; Claude accepts low, medium, high, xhigh or max, so it will be ignored`, t.id);

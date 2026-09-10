@@ -1,17 +1,8 @@
 import { execa } from 'execa';
 import { splitCommand } from '../claude/detect.js';
-import { MINIMUM_AGENT_VERSIONS, versionAtLeast } from '../capabilities.js';
+import { MINIMUM_AGENT_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
 
-export interface CodexDetection {
-  command: string;
-  version?: string;
-  found: boolean;
-  error?: string;
-  authenticated?: boolean;
-  supportedVersion?: boolean;
-  minimumVersion?: string;
-  capabilities?: string[];
-}
+export type CodexDetection = AgentRuntimeDetection;
 
 const cache = new Map<string, CodexDetection>();
 
@@ -40,7 +31,8 @@ async function inspectCodex(file: string, prefix: string[], command: string, ver
   const [rootHelp, execHelp, appHelp, auth] = await Promise.all([run(['--help']), run(['exec', '--help']), run(['app-server', '--help']), run(['login', 'status'])]);
   const root = `${rootHelp?.stdout ?? ''}\n${rootHelp?.stderr ?? ''}`;
   const exec = `${execHelp?.stdout ?? ''}\n${execHelp?.stderr ?? ''}`;
-  const capabilities = ['exec'];
+  const capabilities: AgentCapability[] = [];
+  if (execHelp?.exitCode === 0) capabilities.push('exec');
   if (appHelp?.exitCode === 0) capabilities.push('appServer');
   if (root.includes('--approve-for-me')) capabilities.push('autoReview');
   if (exec.includes('--ignore-user-config') && exec.includes('--ignore-rules')) capabilities.push('isolatedConfig');

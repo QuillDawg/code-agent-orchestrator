@@ -22,10 +22,14 @@ import { mark } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
 import { packageInfo } from '../../util/package-info.js';
 import { findStoreRoot } from '../util.js';
+import type { AgentCapability } from '../../runners/capabilities.js';
+import { detectRunnersForWorkflow, prepareWorkflow, requireValid, type RunnerDetection } from '../app.js';
+import { resolveWorkflowPath } from '../util.js';
 
 export interface DoctorOptions {
   repository?: string;
   json?: boolean;
+  config?: string;
 }
 
 /** The parts of the environment a test wants to speak for. */
@@ -62,7 +66,8 @@ export interface AgentFacts {
   authenticated?: boolean;
   supportedVersion?: boolean;
   minimumVersion?: string;
-  capabilities?: string[];
+  capabilities?: AgentCapability[];
+  requiredCapabilities?: AgentCapability[];
 }
 
 export interface StaleLockFacts {
@@ -175,7 +180,7 @@ async function readRuns(runsDir: string): Promise<WorkflowRun[]> {
 }
 
 /** Everything `evaluate` judges, read from this machine. */
-export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<DoctorDeps> = {}): Promise<DoctorFacts> {
+export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<DoctorDeps> = {}, scopedAgents?: RunnerDetection[]): Promise<DoctorFacts> {
   const deps: DoctorDeps = {
     detectClaude,
     detectCodex,
@@ -204,10 +209,21 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
     exclude: { status: 'unknown', reason: 'not a git repository' },
   };
 
-  const claude = await deps.detectClaude();
-  facts.agents.push({ runner: 'claude', command: claude.command, found: claude.found, ...(claude.version ? { version: claude.version } : {}), ...(claude.error ? { error: claude.error } : {}), ...(claude.authenticated !== undefined ? { authenticated: claude.authenticated } : {}), ...(claude.supportedVersion !== undefined ? { supportedVersion: claude.supportedVersion } : {}), ...(claude.minimumVersion ? { minimumVersion: claude.minimumVersion } : {}), ...(claude.capabilities ? { capabilities: claude.capabilities } : {}) });
-  const codex = await deps.detectCodex();
-  facts.agents.push({ runner: 'codex', command: codex.command, found: codex.found, ...(codex.version ? { version: codex.version } : {}), ...(codex.error ? { error: codex.error } : {}), ...(codex.authenticated !== undefined ? { authenticated: codex.authenticated } : {}), ...(codex.supportedVersion !== undefined ? { supportedVersion: codex.supportedVersion } : {}), ...(codex.minimumVersion ? { minimumVersion: codex.minimumVersion } : {}), ...(codex.capabilities ? { capabilities: codex.capabilities } : {}) });
+  const detected: RunnerDetection[] = scopedAgents ?? await Promise.all([
+    deps.detectClaude().then((value) => ({ runner: 'claude' as const, ...value } as RunnerDetection)),
+    deps.detectCodex().then((value) => ({ runner: 'codex' as const, ...value } as RunnerDetection)),
+  ]);
+  for (const agent of detected) {
+    facts.agents.push({
+      runner: agent.runner, command: agent.command, found: agent.found,
+      ...(agent.version ? { version: agent.version } : {}), ...(agent.error ? { error: agent.error } : {}),
+      ...(agent.authenticated !== undefined ? { authenticated: agent.authenticated } : {}),
+      ...(agent.supportedVersion !== undefined ? { supportedVersion: agent.supportedVersion } : {}),
+      ...(agent.minimumVersion ? { minimumVersion: agent.minimumVersion } : {}),
+      ...(agent.capabilities ? { capabilities: agent.capabilities } : {}),
+      ...(agent.requiredCapabilities ? { requiredCapabilities: agent.requiredCapabilities } : {}),
+    });
+  }
 
   // Runs: which of them an orchestrator still owns, and which locks are left over from one that is gone.
   const runs = storeRoot ? await readRuns(createRunPaths(storeRoot).runsDir) : [];
@@ -326,21 +342,29 @@ export function evaluate(facts: DoctorFacts): DoctorCheck[] {
   // agent. With neither, nothing can run at all, so both checks fail and the command exits 1.
   const anyAgent = facts.agents.some((a) => a.found);
   for (const agent of facts.agents) {
+    const unknownVersion = agent.found && Boolean(agent.minimumVersion) && agent.supportedVersion === undefined;
     const unsupported = agent.found && agent.supportedVersion === false;
     const loggedOut = agent.found && agent.authenticated === false;
-    const status: CheckStatus = unsupported || loggedOut ? 'fail' : agent.found ? 'ok' : anyAgent ? 'warn' : 'fail';
+    const missingCapabilities = (agent.requiredCapabilities ?? []).filter((capability) => !agent.capabilities?.includes(capability));
+    const status: CheckStatus = unknownVersion || unsupported || loggedOut || missingCapabilities.length > 0 ? 'fail' : agent.found ? 'ok' : anyAgent ? 'warn' : 'fail';
     const detail = !agent.found
       ? `not found  (${agent.command})${agent.error ? `: ${agent.error.split('\n')[0]}` : ''}`
-      : unsupported
+      : unknownVersion
+        ? `could not verify ${agent.version ?? 'unknown version'} against minimum ${agent.minimumVersion}  (${agent.command})`
+        : unsupported
         ? `${agent.version ?? 'installed'} is below supported minimum ${agent.minimumVersion ?? 'unknown'}  (${agent.command})`
         : loggedOut
           ? `${agent.version ?? 'installed'}, not authenticated  (${agent.command})`
-          : `${agent.version ?? 'installed'}${agent.capabilities?.length ? ` [${agent.capabilities.join(', ')}]` : ''}  (${agent.command})`;
-    const hint = unsupported
+          : missingCapabilities.length
+            ? `${agent.version ?? 'installed'} is missing ${missingCapabilities.join(', ')}  (${agent.command})`
+            : `${agent.version ?? 'installed'}${agent.capabilities?.length ? ` [${agent.capabilities.join(', ')}]` : ''}  (${agent.command})`;
+    const hint = unknownVersion
+      ? `upgrade ${agent.runner} or configure a CLI that reports a semantic version`
+      : unsupported
       ? `upgrade ${agent.runner} to ${agent.minimumVersion} or newer`
       : loggedOut
         ? agent.runner === 'claude' ? 'authenticate with `claude auth login` or provide supported CI credentials' : 'authenticate with `codex login` or provide OPENAI_API_KEY/CODEX_API_KEY for CI'
-        : !agent.found ? agentHint(agent.runner) : undefined;
+        : missingCapabilities.length ? `upgrade ${agent.runner} or change the workflow transport/configuration` : !agent.found ? agentHint(agent.runner) : undefined;
     checks.push({
       id: `agent:${agent.runner}`,
       label: agent.runner,
@@ -452,7 +476,13 @@ export function renderChecks(checks: DoctorCheck[]): string {
 
 export async function doctorCommand(opts: DoctorOptions, overrides: Partial<DoctorDeps> = {}): Promise<number> {
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
-  const facts = await gatherFacts(opts, overrides);
+  let scopedAgents: RunnerDetection[] | undefined;
+  if (opts.config) {
+    const prepared = await prepareWorkflow(await resolveWorkflowPath(opts.config), { repository: opts.repository });
+    requireValid(prepared);
+    scopedAgents = await detectRunnersForWorkflow(prepared.workflow);
+  }
+  const facts = await gatherFacts(opts, overrides, scopedAgents);
   const checks = evaluate(facts);
   const failed = checks.filter((c) => c.status === 'fail');
   const warned = checks.filter((c) => c.status === 'warn');

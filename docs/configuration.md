@@ -142,7 +142,7 @@ codex:
   configMode: inherit            # inherit | isolated
   experimentalUserInput: false   # appServer only; opts into an experimental Codex API
   permissionMode: auto           # auto | readOnly | fullAccess
-  # Optional raw overrides; these win over the preset:
+  # Optional raw overrides for auto mode (safety presets cannot be widened):
   sandbox: workspace-write       # read-only | workspace-write | danger-full-access
   approvalPolicy: on-request     # on-request | never
   command: codex
@@ -154,7 +154,7 @@ codex:
 
 `appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. Free-form Codex questions remain disabled unless `experimentalUserInput: true`; when disabled, a question ends the task as `needs_input` instead of hanging.
 
-`configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors.
+`configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors. The `readOnly` and `fullAccess` presets are security envelopes: raw sandbox/policy values cannot widen or contradict them.
 
 ## `claude` (workflow, template or task level)
 

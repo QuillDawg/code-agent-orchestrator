@@ -211,11 +211,11 @@ export function buildProgram(): Command {
     .action((run: string | undefined, opts) => exitWith(() => cleanCommand(run, opts)));
 
   program
-    .command('doctor')
+    .command('doctor [config]')
     .description('Check this machine: Node, git, the agent CLIs, and what past runs left behind')
     .option('--repository <dir>', 'repository to check (default: launch directory / git root)')
     .option('--json', 'machine-readable output')
-    .action((opts) => exitWith(() => doctorCommand(opts)));
+    .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
 
   // A short description says what a command is for; these say what to type, for the arguments that are not
   // obvious from the usage line alone (which run, which task, what happens when you name neither).

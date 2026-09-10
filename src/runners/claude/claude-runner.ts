@@ -100,9 +100,10 @@ export function resolvePromptMode(options: ClaudeOptions, canInteract: boolean):
   return options.permissionPrompts ?? (canInteract ? 'ask' : 'deny');
 }
 
-function claudeFailure(message: string, retryable: boolean, sessionId: string | undefined, providerCode?: string): RunnerFailure {
+function claudeFailure(message: string, retryable: boolean, sessionId: string | undefined, extras: Partial<RunnerFailure> = {}): RunnerFailure {
   const status = /\b(?:HTTP\s*)?(\d{3})\b/i.exec(message)?.[1];
-  return { retryable, sessionId, ...(providerCode ? { providerCode } : {}), ...(status ? { httpStatus: Number(status) } : {}) };
+  const requestId = /\brequest[_ -]?id[:= ]+([\w-]+)/i.exec(message)?.[1];
+  return { retryable, sessionId, ...(status ? { httpStatus: Number(status) } : {}), ...(requestId ? { requestId } : {}), ...extras };
 }
 
 export class ClaudeRunner implements TaskRunner {
@@ -147,6 +148,8 @@ export class ClaudeRunner implements TaskRunner {
     let model: string | undefined = options.model;
     const stderrTail: string[] = [];
     let hadStdout = false;
+    const initializationFailures: string[] = [];
+    let lastApiRetry: { httpStatus?: number; retryDelayMs: number; message?: string } | undefined;
 
     // Live usage: per-message token counts are de-duplicated by message id (stream-json repeats a
     // message once per content block); the context size is that of the latest model call.
@@ -217,6 +220,12 @@ export class ClaudeRunner implements TaskRunner {
               usage.contextWindow = contextWindowFor(model);
               hooks.onProcess({ pid: proc?.pid ?? -1, sessionId: ev.sessionId ?? sessionId });
               entry({ kind: 'system', ts, text: `session ${ev.sessionId ?? sessionId}${model ? ` (${model})` : ''}` });
+              if (ev.capabilities?.length) entry({ kind: 'system', ts, text: `Claude capabilities: ${ev.capabilities.join(', ')}` });
+              for (const failure of ev.initializationFailures ?? []) {
+                initializationFailures.push(failure);
+                entry({ kind: 'error', ts, text: `Claude initialization failure: ${failure}` });
+                hooks.onWarning?.(`Claude initialization failure: ${failure}`);
+              }
               {
                 const downgrade = permissionModeDowngrade(options.permissionMode ?? 'auto', ev.permissionMode, model);
                 if (downgrade) {
@@ -272,6 +281,7 @@ export class ClaudeRunner implements TaskRunner {
               hooks.onUsage({ ...usage });
               break;
             case 'api_retry': {
+              lastApiRetry = { retryDelayMs: ev.retryDelayMs, ...(ev.httpStatus !== undefined ? { httpStatus: ev.httpStatus } : {}), ...(ev.message ? { message: ev.message } : {}) };
               const detail = `Claude API retry ${ev.attempt}/${ev.maxRetries}${ev.httpStatus ? ` (HTTP ${ev.httpStatus})` : ''} in ${ev.retryDelayMs}ms${ev.message ? `: ${ev.message}` : ''}`;
               hooks.onActivity(detail);
               entry({ kind: 'system', ts, text: detail });
@@ -336,6 +346,12 @@ export class ClaudeRunner implements TaskRunner {
       }
       if (exit.spawnError) return { kind: 'error', outcome: 'crash', message: `failed to start Claude: ${exit.spawnError}`, exitCode: exit.code, usage: finalUsage };
 
+      if (initializationFailures.length) {
+        const message = `Claude initialization failed: ${initializationFailures.join('; ')}`;
+        finishEntry({ kind: 'error', text: message });
+        return { kind: 'error', outcome: 'crash', message, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(message, false, finalUsage.sessionId, { providerCode: 'initializationFailed' }) };
+      }
+
       if (resultEvent) {
         const candidate = resultEvent.structuredOutput ?? extractJsonObject(resultEvent.resultText ?? '');
         if (candidate !== undefined) {
@@ -355,7 +371,7 @@ export class ClaudeRunner implements TaskRunner {
           // A 5xx/overloaded/network failure ends the print-mode process; the session itself is intact and resumable.
           const outcome = isTransientApiError(detail) || isTransientApiError(stderrTail.join('\n')) ? 'api_error' : 'crash';
           finishEntry({ kind: 'result', status: resultEvent.subtype ?? 'error', costUsd: finalUsage.costUsd, isError: true, error: `${detail}${denials}` });
-          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, resultEvent.subtype) };
+          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, { providerCode: lastApiRetry?.message ?? resultEvent.subtype, ...(lastApiRetry?.httpStatus !== undefined ? { httpStatus: lastApiRetry.httpStatus } : {}), ...(lastApiRetry ? { retryAfterMs: lastApiRetry.retryDelayMs } : {}) }) };
         }
         const message = `Claude finished without a machine-readable result (subtype: ${resultEvent.subtype ?? 'n/a'}, stop: ${resultEvent.stopReason ?? 'n/a'})`;
         finishEntry({ kind: 'error', text: message });

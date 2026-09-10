@@ -235,7 +235,9 @@ cao run workflow.yaml --from implement-102        # this task and everything dow
 
 ### Survive transient API errors for free
 
-When Claude Code exits on a 5xx, overload, rate limit or dropped connection, the session transcript is still on disk. `cao` waits with exponential backoff and relaunches with `--resume`, so completed work is kept. These recoveries do not consume `retry.attempts`.
+When an agent reports a retryable 408/409/429/5xx, overload, or connection/stream failure, `cao` waits with
+exponential backoff (never shorter than the provider's retry delay) and relaunches with the same session when
+that provider says continuation is safe. These recoveries do not consume `retry.attempts`.
 
 ```yaml
 retry:
@@ -346,6 +348,24 @@ claude:
 With a dashboard attached, anything needing a human decision is shown to you and the worker waits (see *Answer a worker while it runs*). Headless, workers run with `--permission-prompts none` and every prompt is denied rather than hanging forever.
 
 `permissionMode` is passed to the CLI unchanged and defaults to `auto`, which is Claude Code's classifier: it allows what it judges safe and asks for the rest, so `auto` does not mean "never ask". It also exists only for Sonnet 5, Opus 4.7 and later, and Fable: a Haiku task asked for `auto` is silently run in the ordinary prompting mode and asks before every file write and command. Use `bypassPermissions` in an isolated environment, `dontAsk` with `allowedTools`, or at least `acceptEdits` for such tasks; the full table is in [configuration.md](configuration.md#claude-workflow-template-or-task-level).
+
+Both agents can explicitly ignore ambient customization:
+
+```yaml
+claude:
+  configMode: isolated       # --safe-mode; inherit is the default
+codex:
+  transport: exec            # stable default; appServer is experimental
+  approvals: auto            # automatic review headlessly, dashboard review on appServer
+  configMode: isolated       # exec only: --ignore-user-config --ignore-rules
+```
+
+Codex `exec` is the unattended production path. It never waits on a terminal: read-only denies approvals,
+while the default workspace-write mode uses Codex automatic review. `appServer` creates a private JSONL
+process for one attempt and can send command/file approvals to the same dashboard used by Claude. Free-form
+questions require `experimentalUserInput: true`. CAO never falls back between transports, and rejects
+`appServer` plus isolated configuration because that Codex protocol has no supported isolation switch that
+preserves saved authentication. See [configuration.md](configuration.md#codex-workflow-template-or-task-level).
 
 ---
 
@@ -637,7 +657,7 @@ What it checks, and how it grades what it finds:
 |---|---|---|
 | `node` | the running Node is below `engines.node` | — |
 | `git` | `git` is not on PATH | it is too old for `git worktree`, or this repository cannot use it |
-| `claude`, `codex` | **neither** agent CLI was found — nothing could run | one was not found while the other was |
+| `claude`, `codex` | an installed CLI is logged out, below its minimum version, or lacks a required workflow capability; without a workflow, **neither** CLI was found | without a workflow, one CLI was not found while the other was usable |
 | `run locks` | — | a `lock.json` names a process that is gone; `cao clean` refuses to touch such a run |
 | `worktrees` | — | a worktree of a finished run is still on disk |
 | `branches` | — | an `orchestrator/*` branch has no worktree holding it |
@@ -649,7 +669,9 @@ anything — is printed with a `-` and grades nothing. `--json` carries the same
 behind them (versions, lock files, worktree paths, branch names), which is what a bug report should have
 attached to it.
 
-`cao doctor` never changes anything: it will tell you to run `cao clean` but never runs it for you.
+Pass a workflow path (`cao doctor workflow.yaml --json`) to probe only its referenced providers and required
+transports/configuration. Without one, doctor checks both installed CLIs. It never changes anything: it will
+tell you to run `cao clean` but never runs it for you.
 
 ---
 

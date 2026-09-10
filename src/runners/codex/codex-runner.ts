@@ -18,7 +18,8 @@ import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { runCodexAppServer } from './app-server.js';
-import { normalizeCodexFailure } from './failure.js';
+import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
+import { resolveCodexPermissions } from './permissions.js';
 
 export interface CodexRunnerOptions {
   processManager: ProcessManager;
@@ -29,30 +30,14 @@ export interface CodexRunnerOptions {
 const ENV_TO_STRIP = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_CHILD_SESSION'];
 const MAX_OUTPUT_CHARS = 2000;
 
-function resolvedPermissions(options: CodexOptions): { sandbox: NonNullable<CodexOptions['sandbox']>; approval: NonNullable<CodexOptions['approvalPolicy']>; autoReview: boolean } {
-  const preset = options.permissionMode ?? 'auto';
-  const base = preset === 'readOnly'
-    ? { sandbox: 'read-only' as const, approval: 'never' as const }
-    : preset === 'fullAccess'
-      ? { sandbox: 'danger-full-access' as const, approval: 'never' as const }
-      : { sandbox: 'workspace-write' as const, approval: 'on-request' as const };
-  const approvals = options.approvals ?? 'auto';
-  const approval = options.approvalPolicy ?? (approvals === 'deny' ? 'never' : base.approval);
-  return {
-    sandbox: options.sandbox ?? base.sandbox,
-    approval,
-    autoReview: approval === 'on-request' && (approvals === 'auto' || approvals === 'autoReview'),
-  };
-}
-
 /**
  * `codex exec` rejects `--ask-for-approval` (it is a TUI-only flag), so the approval policy travels as a
  * config override, which is also what the official Codex SDK does. Model/effort come before extraArgs so
  * extraArgs can override them, like the Claude runner.
  */
 export function buildCodexArgs(options: CodexOptions, schemaPath: string, outputPath: string, resumeSessionId?: string, model?: string, effort?: string): string[] {
-  const permissions = resolvedPermissions(options);
-  const args = ['--sandbox', permissions.sandbox, '-c', `approval_policy="${permissions.approval}"`];
+  const permissions = resolveCodexPermissions(options, false);
+  const args = ['--sandbox', permissions.sandbox, '-c', `approval_policy="${permissions.approvalPolicy}"`];
   if (permissions.autoReview) args.unshift('--approve-for-me');
   if (options.profile) args.push('--profile', options.profile);
   for (const dir of options.addDirs ?? []) args.push('--add-dir', dir);
@@ -189,7 +174,7 @@ export class CodexRunner implements TaskRunner {
         if (event.type === 'error' || event.type === 'turn.failed') {
           const message = String(event.message ?? event.error?.message ?? event.error ?? line);
           const info = event.error?.codexErrorInfo ?? event.error?.codex_error_info ?? event.codexErrorInfo ?? event.codex_error_info;
-          if (info !== undefined && info !== null) typedFailure = normalizeCodexFailure(info, { sessionId });
+          if (info !== undefined && info !== null) typedFailure = normalizeCodexFailure(info, { ...codexFailureMetadata(event.error), sessionId });
           entry({ kind: 'error', ts, text: message });
         }
       },

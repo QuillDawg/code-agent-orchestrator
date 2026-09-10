@@ -73,6 +73,15 @@ codex: { transport: appServer, configMode: isolated }
 tasks: [{ id: a, agent: codex, prompt: p }]
 `);
     expect(errors(isolation.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/isolated.*appServer/i)]));
+
+    const widenedReadOnly = await buildWorkflow(`
+name: invalid-read-only
+codex: { permissionMode: readOnly, sandbox: danger-full-access, approvalPolicy: on-request }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(widenedReadOnly.validation.diagnostics)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/readOnly.*sandbox/i), expect.stringMatching(/readOnly.*approvalPolicy/i),
+    ]));
   });
 
   it('resolves generic agent, model, effort and Codex permissions per task', async () => {

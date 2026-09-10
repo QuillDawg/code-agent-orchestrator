@@ -11,6 +11,7 @@ import { ClaudeRunner } from '../runners/claude/claude-runner.js';
 import { detectClaude } from '../runners/claude/detect.js';
 import { CodexRunner } from '../runners/codex/codex-runner.js';
 import { detectCodex } from '../runners/codex/detect.js';
+import type { AgentCapability, AgentRuntimeDetection } from '../runners/capabilities.js';
 import { GitWorkspaceManager, SharedOnlyWorkspaceManager, type WorkspaceManager } from '../workspace/workspace-manager.js';
 import { WorkflowEventBus } from '../events/event-bus.js';
 import { ShellHookRunner } from '../execution/hooks.js';
@@ -131,22 +132,15 @@ export async function detectClaudeForWorkflow(workflow: ResolvedWorkflow): Promi
   return { version: d.version, command: d.command, found: d.found, error: d.error };
 }
 
-export interface RunnerDetection {
+export interface RunnerDetection extends AgentRuntimeDetection {
   runner: 'claude' | 'codex';
-  version?: string;
-  command: string;
-  found: boolean;
-  error?: string;
-  authenticated?: boolean;
-  supportedVersion?: boolean;
-  minimumVersion?: string;
-  capabilities?: string[];
-  requiredCapabilities?: string[];
+  requiredCapabilities?: AgentCapability[];
 }
 
 export function runnerReadinessError(runner: RunnerDetection): string | undefined {
   if (!runner.found) return `${runner.runner} CLI not found (${runner.command}): ${runner.error ?? 'unknown error'}`;
   if (runner.authenticated === false) return `${runner.runner} CLI is not authenticated (${runner.command})`;
+  if (runner.minimumVersion && runner.supportedVersion === undefined) return `could not verify ${runner.runner} version "${runner.version ?? 'unknown'}"; minimum ${runner.minimumVersion}`;
   if (runner.supportedVersion === false) return `${runner.runner} ${runner.version ?? 'version'} is unsupported; minimum ${runner.minimumVersion ?? 'version is unknown'}`;
   const available = new Set(runner.capabilities ?? []);
   const missing = (runner.requiredCapabilities ?? []).filter((capability) => !available.has(capability));
@@ -156,8 +150,8 @@ export function runnerReadinessError(runner: RunnerDetection): string | undefine
 /** Detect only runners that can be launched by this workflow. */
 export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow): Promise<RunnerDetection[]> {
   const active = workflow.tasks.filter((task) => !task.completed);
-  const claudeCommands = new Map<string | undefined, Set<string>>();
-  const codexCommands = new Map<string | undefined, Set<string>>();
+  const claudeCommands = new Map<string | undefined, Set<AgentCapability>>();
+  const codexCommands = new Map<string | undefined, Set<AgentCapability>>();
   for (const task of active) {
     if (task.agent === 'claude') {
       const required = claudeCommands.get(task.claude.command) ?? new Set(['streamJson', 'structuredOutput']);
@@ -168,7 +162,7 @@ export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow): Prom
       if ((task.codex.transport ?? 'exec') === 'appServer') required.add('appServer');
       if (task.codex.configMode === 'isolated') required.add('isolatedConfig');
       const approvals = task.codex.approvals ?? 'auto';
-      if ((task.codex.transport ?? 'exec') === 'exec' && approvals !== 'deny' && (task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
+      if (approvals !== 'deny' && approvals !== 'host' && (task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
       codexCommands.set(task.codex.command, required);
     }
   }

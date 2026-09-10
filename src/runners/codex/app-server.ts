@@ -8,9 +8,10 @@ import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
 import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA, validateTaskResult } from '../claude/contract.js';
-import { normalizeCodexFailure } from './failure.js';
+import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
+import { resolveCodexPermissions } from './permissions.js';
 
 export interface CodexAppServerOptions {
   processManager: ProcessManager;
@@ -21,14 +22,6 @@ export interface CodexAppServerOptions {
 
 type JsonObject = Record<string, any>;
 const MAX_OUTPUT_CHARS = 2000;
-
-function permissions(options: CodexOptions, canInteract: boolean): { sandbox: NonNullable<CodexOptions['sandbox']>; approvalPolicy: 'on-request' | 'never'; reviewer: 'user' | 'auto_review'; host: boolean } {
-  const preset = options.permissionMode ?? 'auto';
-  const sandbox = options.sandbox ?? (preset === 'readOnly' ? 'read-only' : preset === 'fullAccess' ? 'danger-full-access' : 'workspace-write');
-  const selected = options.approvals === 'auto' || options.approvals === undefined ? (canInteract ? 'host' : 'autoReview') : options.approvals;
-  const approvalPolicy = options.approvalPolicy ?? (preset === 'readOnly' || preset === 'fullAccess' || selected === 'deny' ? 'never' : 'on-request');
-  return { sandbox, approvalPolicy, reviewer: selected === 'autoReview' ? 'auto_review' : 'user', host: selected === 'host' };
-}
 
 function sandboxPolicy(mode: NonNullable<CodexOptions['sandbox']>, cwd: string, addDirs: string[]): JsonObject {
   if (mode === 'danger-full-access') return { type: 'dangerFullAccess' };
@@ -72,7 +65,7 @@ function emptyNeedsInput(message: string): TaskResult {
 export async function runCodexAppServer(config: CodexAppServerOptions, input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
   await ensureDir(input.attemptDir);
   const options = config.options;
-  const resolved = permissions(options, Boolean(input.canInteract));
+  const resolved = resolveCodexPermissions(options, Boolean(input.canInteract));
   if (resolved.host && !input.canInteract) return { kind: 'error', outcome: 'invalid_result', message: 'Codex host approvals require an interactive handler' };
   if (options.configMode === 'isolated') {
     return { kind: 'error', outcome: 'invalid_result', message: 'Codex app-server cannot isolate ambient configuration while preserving saved authentication; use transport "exec" or configMode "inherit"' };
@@ -113,7 +106,8 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     const pendingRequest = inflightRequests.get(message.id);
     if (!pendingRequest || pendingRequest.overloads >= 3) return false;
     pendingRequest.overloads += 1;
-    const delay = Math.min(1000, 25 * (2 ** (pendingRequest.overloads - 1))) + Math.floor(Math.random() * 25);
+    const jitter = ((message.id as number) * 17 + pendingRequest.overloads * 13) % 25;
+    const delay = Math.min(1000, 25 * (2 ** (pendingRequest.overloads - 1))) + jitter;
     hooks.onWarning?.(`Codex app-server queue overloaded; retrying ${pendingRequest.method} in ${delay}ms`);
     setTimeout(() => request(message.id as number, pendingRequest.method, pendingRequest.params), delay);
     return true;
@@ -179,25 +173,47 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         const result = message.result ?? {};
         const actualSandbox = String(result.sandbox?.type ?? '').replace(/[A-Z]/g, (letter: string) => `-${letter.toLowerCase()}`);
         const expectedSandbox = resolved.sandbox;
-        if (actualSandbox && actualSandbox !== expectedSandbox) {
+        if (!actualSandbox) {
+          protocolError = 'Codex app-server did not report its resolved sandbox';
+          void proc.kill('graceful');
+          return;
+        }
+        if (actualSandbox !== expectedSandbox) {
           protocolError = `Codex app-server resolved sandbox "${actualSandbox}", not requested "${expectedSandbox}"`;
           void proc.kill('graceful');
           return;
         }
-        if (result.approvalPolicy && result.approvalPolicy !== resolved.approvalPolicy) {
+        if (!result.approvalPolicy) {
+          protocolError = 'Codex app-server did not report its resolved approval policy';
+          void proc.kill('graceful');
+          return;
+        }
+        if (result.approvalPolicy !== resolved.approvalPolicy) {
           protocolError = `Codex app-server resolved approval policy "${JSON.stringify(result.approvalPolicy)}", not requested "${resolved.approvalPolicy}"`;
           void proc.kill('graceful');
           return;
         }
-        if (result.approvalsReviewer && result.approvalsReviewer !== resolved.reviewer) {
+        if (!result.approvalsReviewer) {
+          protocolError = 'Codex app-server did not report its resolved approval reviewer';
+          void proc.kill('graceful');
+          return;
+        }
+        if (result.approvalsReviewer !== resolved.reviewer) {
           protocolError = `Codex app-server resolved approval reviewer "${result.approvalsReviewer}", not requested "${resolved.reviewer}"`;
           void proc.kill('graceful');
           return;
         }
-        if (input.task.model && result.model && result.model !== input.task.model) {
-          hooks.onWarning?.(`Codex app-server resolved model "${result.model}", not requested "${input.task.model}"`);
+        if (input.task.model && result.model !== input.task.model) {
+          protocolError = `Codex app-server resolved model "${String(result.model ?? 'unknown')}", not requested "${input.task.model}"`;
+          void proc.kill('graceful');
+          return;
         }
-        if (Array.isArray(result.instructionSources) && result.instructionSources.length) {
+        if (!Array.isArray(result.instructionSources)) {
+          protocolError = 'Codex app-server did not report its instruction sources';
+          void proc.kill('graceful');
+          return;
+        }
+        if (result.instructionSources.length) {
           entry({ kind: 'system', ts: nowIso(), text: `Codex loaded instructions from ${result.instructionSources.join(', ')}` });
         }
         threadId = result.thread?.id ?? input.resumeSessionId;
@@ -243,6 +259,10 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         usage.contextWindow = typeof token.modelContextWindow === 'number' ? token.modelContextWindow : usage.contextWindow;
         hooks.onUsage({ ...usage }); return;
       }
+      if (message.method === 'mcpServer/startupStatus/updated' && params.status === 'failed') {
+        const text = `Codex MCP server "${String(params.name ?? 'unknown')}" failed to start${params.error ? `: ${String(params.error)}` : ''}`;
+        hooks.onWarning?.(text); entry({ kind: 'error', ts: nowIso(), text }); return;
+      }
       if (message.method === 'turn/completed') {
         terminal = params.turn ?? {}; usage.numTurns = (usage.numTurns ?? 0) + 1; hooks.onUsage({ ...usage }); proc.endStdin(); return;
       }
@@ -267,7 +287,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   else if (protocolError) outcome = { kind: 'error', outcome: 'crash', message: protocolError, exitCode: exit.code, usage };
   else if (!terminal) outcome = { kind: 'error', outcome: 'crash', message: `Codex app-server exited before turn completion (code ${exit.code ?? 'null'})`, exitCode: exit.code, usage };
   else if (terminal.status === 'failed') {
-    const failure = normalizeCodexFailure(terminal.error?.codexErrorInfo, { sessionId: threadId });
+    const failure = normalizeCodexFailure(terminal.error?.codexErrorInfo, { ...codexFailureMetadata(terminal.error), sessionId: threadId });
     outcome = { kind: 'error', outcome: failure.retryable ? 'api_error' : 'crash', message: String(terminal.error?.message ?? 'Codex turn failed'), exitCode: exit.code, usage, failure };
   } else if (terminal.status !== 'completed') {
     outcome = { kind: 'error', outcome: 'crash', message: `Codex turn ended with status ${String(terminal.status ?? 'unknown')}`, exitCode: exit.code, usage, failure: { retryable: false, sessionId: threadId, partialWork: true } };

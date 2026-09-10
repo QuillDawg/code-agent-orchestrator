@@ -127,7 +127,7 @@ codex [--approve-for-me] --sandbox <read-only|workspace-write|danger-full-access
 
 ### Permissions and app-server
 
-`codex.permissionMode` is a preset over sandbox and approval controls. An unattended workspace-write `exec` uses `--approve-for-me`; read-only execution uses `approval_policy="never"`. The low-level `approvalPolicy` key remains for compatibility but is deprecated in favor of `approvals`.
+`codex.permissionMode` is a preset over sandbox and approval controls. An unattended workspace-write `exec` uses `--approve-for-me`; read-only execution always uses the read-only sandbox with `approval_policy="never"`, even if a runner is invoked directly with contradictory raw options. Workflow validation rejects those contradictions. The low-level `approvalPolicy` key remains for compatibility but is deprecated in favor of `approvals`.
 
 Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protocol. CAO initializes the server, starts or resumes a thread, starts a schema-constrained turn, records items and cumulative token usage, and waits for the authoritative `turn/completed` event. The process is private to one attempt. Cancellation sends `turn/interrupt` before process-tree termination.
 

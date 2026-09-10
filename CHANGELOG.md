@@ -8,6 +8,24 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+### Added
+
+- Codex now has a production-default `exec` backend with explicit auto-review and configuration isolation,
+  plus an opt-in experimental `appServer` backend for dashboard-mediated command/file approvals, typed
+  failures, token usage, interruption, and gated user questions.
+- Agent preflight now verifies the installed Claude/Codex version, authentication, and workflow-required
+  capabilities before a run mutates its workspace. `cao doctor [workflow] --json` can report only the
+  providers and transports that workflow needs.
+- Mixed-provider examples cover both Claude implementation with Codex review and Codex implementation with
+  Claude review.
+
+### Changed
+
+- Runner failures now preserve provider codes, HTTP/request metadata, retry timing, session identity, and
+  partial-work state. The scheduler honours provider delays and does not retry permanent failures.
+- Claude supports explicit inherited or isolated configuration and treats reported MCP/plugin startup
+  failures as failures even if the CLI process exits successfully.
+
 ### Fixed
 
 - A task id longer than the task column pushed every column after it out of line on the dashboard and the

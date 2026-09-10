@@ -1,19 +1,11 @@
 import { execa } from 'execa';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { MINIMUM_AGENT_VERSIONS, versionAtLeast } from '../capabilities.js';
+import { MINIMUM_AGENT_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
 
-export interface ClaudeDetection {
-  command: string;
-  version?: string;
-  found: boolean;
-  error?: string;
+export interface ClaudeDetection extends AgentRuntimeDetection {
   /** True when `--help` lists `--forward-subagent-text`; older CLIs reject the flag, so it is only passed when advertised. */
   forwardSubagentText?: boolean;
-  authenticated?: boolean;
-  supportedVersion?: boolean;
-  minimumVersion?: string;
-  capabilities?: string[];
 }
 
 const cache = new Map<string, ClaudeDetection>();
@@ -21,7 +13,7 @@ const cache = new Map<string, ClaudeDetection>();
 const FORWARD_SUBAGENT_TEXT = '--forward-subagent-text';
 
 /** One `--help` probe per command: the flag is new, and passing it to a CLI that does not know it fails the run. */
-async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: string[] }> {
+async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: AgentCapability[] }> {
   try {
     const { file, args } = splitCommand(cmd);
     const [help, auth] = await Promise.all([
@@ -36,7 +28,7 @@ async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean
       authenticated = false;
     }
     authenticated ||= Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
-    const capabilities = [];
+    const capabilities: AgentCapability[] = [];
     if (text.includes('stream-json')) capabilities.push('streamJson');
     if (text.includes('--json-schema')) capabilities.push('structuredOutput');
     if (text.includes('--safe-mode')) capabilities.push('isolatedConfig');

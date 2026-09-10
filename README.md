@@ -142,6 +142,8 @@ Everything below writes `cao` for brevity.
 
 ```bash
 cao doctor
+# or check only what one workflow will use
+cao doctor workflow.yaml --json
 ```
 
 `doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities, stale lock files and leftover worktrees, and prints a fix hint
@@ -680,7 +682,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
-| `cao doctor` | Check Node, git, the agent CLIs, stale locks and leftover worktrees, with a fix hint under each failing check. `--repository <dir>`, `--json` |
+| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, with a fix hint under each failing check. `--repository <dir>`, `--json` |
 
 **Exit codes**
 

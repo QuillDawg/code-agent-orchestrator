@@ -1,5 +1,18 @@
 export const MINIMUM_AGENT_VERSIONS = { claude: '2.1.259', codex: '0.153.0' } as const;
 
+export type AgentCapability = 'streamJson' | 'structuredOutput' | 'isolatedConfig' | 'exec' | 'appServer' | 'autoReview';
+
+export interface AgentRuntimeDetection {
+  command: string;
+  version?: string;
+  found: boolean;
+  error?: string;
+  authenticated?: boolean;
+  supportedVersion?: boolean;
+  minimumVersion?: string;
+  capabilities?: AgentCapability[];
+}
+
 function numericVersion(text: string): number[] | undefined {
   const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(text);
   return match ? [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)] : undefined;
