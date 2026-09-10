@@ -20,30 +20,57 @@ export const taskResultSchema = z
   })
   .passthrough();
 
+const RESULT_PROPERTIES = {
+  status: { type: 'string', enum: [...TASK_RESULT_STATUSES] },
+  summary: { type: 'string', description: 'Concise summary of what was done and the outcome' },
+  filesChanged: { type: 'array', items: { type: 'string' } },
+  commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs or messages created' },
+  decisions: { type: 'array', items: { type: 'string' } },
+  warnings: { type: 'array', items: { type: 'string' } },
+  followUp: { type: 'array', items: { type: 'string' } },
+  error: { type: 'string', description: 'Why the task failed or is blocked (when status is not success)' },
+} as const;
+
+const RESULT_FIELDS = ['status', 'summary', 'filesChanged', 'commits', 'decisions', 'warnings', 'followUp', 'error', 'data'] as const;
+
 /** JSON Schema string passed to `claude --json-schema`. Kept compact to stay well under argv limits. */
 export const TASK_RESULT_JSON_SCHEMA = {
   type: 'object',
-  properties: {
-    status: { type: 'string', enum: [...TASK_RESULT_STATUSES] },
-    summary: { type: 'string', description: 'Concise summary of what was done and the outcome' },
-    filesChanged: { type: 'array', items: { type: 'string' } },
-    commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs or messages created' },
-    decisions: { type: 'array', items: { type: 'string' } },
-    warnings: { type: 'array', items: { type: 'string' } },
-    followUp: { type: 'array', items: { type: 'string' } },
-    error: { type: 'string', description: 'Why the task failed or is blocked (when status is not success)' },
-    data: { type: 'object', additionalProperties: true },
-  },
+  properties: { ...RESULT_PROPERTIES, data: { type: 'object', additionalProperties: true } },
   required: ['status', 'summary'],
   additionalProperties: true,
 } as const;
 
 export const TASK_RESULT_JSON_SCHEMA_STRING = JSON.stringify(TASK_RESULT_JSON_SCHEMA);
 
+/**
+ * Codex uses OpenAI strict structured outputs: every object is closed and every declared field is required.
+ * Free-form object keys cannot be expressed in that subset, so `data` crosses the runner boundary as JSON text
+ * and is decoded before the shared completion validator sees it.
+ */
+export const CODEX_TASK_RESULT_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...RESULT_PROPERTIES,
+    error: { type: ['string', 'null'], description: RESULT_PROPERTIES.error.description },
+    data: { type: ['string', 'null'], description: 'A free-form result object encoded as JSON, or null when there is no data' },
+  },
+  required: [...RESULT_FIELDS],
+  additionalProperties: false,
+} as const;
+
 export const CONTRACT_SYSTEM_PROMPT = [
   'You are an autonomous worker inside an orchestrated workflow. Ask with AskUserQuestion only when you are truly blocked on a decision only the user can make; a human may take a while to answer or may be unavailable. If a permission or question is denied, do not retry it: finish with status "needs_input" (or "blocked") and explain exactly what you need.',
   'When your work is complete, your FINAL response must be a single JSON object (no surrounding prose) matching this shape:',
   '{"status":"success|failed|blocked|needs_input|skipped","summary":"...","filesChanged":["..."],"commits":["..."],"decisions":["..."],"warnings":["..."],"followUp":["..."],"error":"..."}',
+  'Use "success" only if the requested work is actually done and verified. Use "failed" when you could not complete it.',
+].join('\n');
+
+export const CODEX_CONTRACT_SYSTEM_PROMPT = [
+  'You are an autonomous worker inside an orchestrated workflow. Do not request permissions or user input: if either is required, finish with status "needs_input" (or "blocked") and explain exactly what you need.',
+  'When your work is complete, your FINAL response must be a single JSON object (no surrounding prose) matching this shape; every field is required:',
+  '{"status":"success|failed|blocked|needs_input|skipped","summary":"...","filesChanged":["..."],"commits":["..."],"decisions":["..."],"warnings":["..."],"followUp":["..."],"error":null,"data":null}',
+  'Use null for error when there is no error. Use null for data when there is no structured data; otherwise data must be a JSON-encoded object string, for example "{\\"key\\":\\"value\\"}".',
   'Use "success" only if the requested work is actually done and verified. Use "failed" when you could not complete it.',
 ].join('\n');
 
@@ -110,6 +137,19 @@ export function validateTaskResult(value: unknown): ParsedResult | ParseFailure 
   if (error) result.error = error;
   if (data) result.data = data;
   return { ok: true, result };
+}
+
+export function validateCodexTaskResult(value: unknown): ParsedResult | ParseFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return validateTaskResult(value);
+  const candidate = { ...(value as Record<string, unknown>) };
+  if (typeof candidate.data === 'string') {
+    try {
+      candidate.data = JSON.parse(candidate.data) as unknown;
+    } catch {
+      // Leave malformed JSON as a string so the shared validator reports `data` as invalid.
+    }
+  }
+  return validateTaskResult(candidate);
 }
 
 function parseObject(text: string): Record<string, unknown> | undefined {

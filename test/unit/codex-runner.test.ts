@@ -59,6 +59,21 @@ describe('Codex exec transport', () => {
     expect(usage.at(-1)).toMatchObject({ sessionId: 'codex-exec-thread-1', numTurns: 1 });
   });
 
+  it('sends a strict output schema and decodes free-form result data', async () => {
+    const root = await tmpDir('cao-codex-schema-');
+    const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
+    const outcome = await runner.run({
+      runId: 'r1', attempt: 1, prompt: 'do it', cwd: root, attemptDir: path.join(root, 'attempt'), env: { FAKE_CODEX_MODE: 'strict-schema' }, timeoutMs: 5000,
+      signal: new AbortController().signal, canInteract: false,
+      task: { id: 'a', model: 'fake-codex', effort: 'high', codex: { transport: 'exec' }, claude: {} } as ResolvedTask,
+    }, {
+      onActivity: () => {}, onOutput: () => {}, onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {}, onUsage: () => {},
+      onInteraction: async () => ({ kind: 'deny', message: 'headless test' }),
+    });
+
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', data: { risk: 'low', nested: { count: 2 } } } });
+  });
+
   it('rejects raw arguments that could override the security envelope', () => {
     expect(() => buildCodexArgs({ permissionMode: 'readOnly', extraArgs: ['--sandbox', 'danger-full-access'] }, 'schema.json', 'final.json')).toThrow(/cannot override security/i);
     expect(() => buildCodexArgs({ extraArgs: ['-c', 'approval_policy="never"'] }, 'schema.json', 'final.json')).toThrow(/approval_policy/i);
@@ -99,6 +114,11 @@ describe('Codex app-server transport', () => {
     const { outcome, usage } = await run('success');
     expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', summary: 'fake app-server completed' } });
     expect(usage.at(-1)).toMatchObject({ sessionId: 'codex-thread-1', inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, contextWindow: 200000 });
+  });
+
+  it('sends a strict output schema and decodes free-form result data', async () => {
+    const { outcome } = await run('strict-schema');
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', data: { risk: 'low', nested: { count: 2 } } } });
   });
 
   it('retries bounded app-server queue overloads without changing transport', async () => {

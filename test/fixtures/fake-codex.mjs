@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const print = (text) => process.stdout.write(`${text}\n`);
@@ -18,12 +18,54 @@ if (args.includes('--help')) {
 const mode = process.env.FAKE_CODEX_MODE ?? 'success';
 const emit = (value) => print(JSON.stringify(value));
 const result = { status: 'success', summary: 'fake app-server completed', filesChanged: [], commits: [], decisions: [], warnings: [], followUp: [] };
+const strictResult = { ...result, error: null, data: JSON.stringify({ risk: 'low', nested: { count: 2 } }) };
+
+function strictSchemaError(schema, context = '()') {
+  if (!schema || typeof schema !== 'object') return null;
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.includes('object')) {
+    if (schema.additionalProperties !== false) {
+      return `Invalid schema for response_format 'codex_output_schema': In context=${context}, 'additionalProperties' is required to be supplied and to be false.`;
+    }
+    const properties = Object.keys(schema.properties ?? {});
+    const required = new Set(schema.required ?? []);
+    const missing = properties.filter((key) => !required.has(key));
+    if (missing.length) return `Invalid schema for response_format 'codex_output_schema': In context=${context}, 'required' must include every key in properties.`;
+    for (const [key, value] of Object.entries(schema.properties ?? {})) {
+      const error = strictSchemaError(value, `${context}.${key}`);
+      if (error) return error;
+    }
+  }
+  if (schema.items) {
+    const error = strictSchemaError(schema.items, `${context}[]`);
+    if (error) return error;
+  }
+  for (const value of [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])]) {
+    const error = strictSchemaError(value, context);
+    if (error) return error;
+  }
+  return null;
+}
+
 if (args.includes('exec')) {
   const outputFlag = args.indexOf('--output-last-message');
+  const schemaFlag = args.indexOf('--output-schema');
+  let exitCode = 0;
   await new Promise((resolve) => {
     process.stdin.resume();
     process.stdin.on('end', () => {
-      const execResult = { ...result, summary: 'fake exec completed' };
+      const schema = schemaFlag >= 0 && args[schemaFlag + 1] ? JSON.parse(readFileSync(args[schemaFlag + 1], 'utf8')) : undefined;
+      const schemaError = mode === 'strict-schema' ? strictSchemaError(schema) : null;
+      if (schemaError) {
+        exitCode = 1;
+        emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
+        emit({ type: 'turn.started' });
+        emit({ type: 'error', message: schemaError });
+        emit({ type: 'turn.failed', error: { message: schemaError } });
+        resolve();
+        return;
+      }
+      const execResult = { ...(mode === 'strict-schema' ? strictResult : result), summary: 'fake exec completed' };
       if (outputFlag >= 0 && args[outputFlag + 1]) writeFileSync(args[outputFlag + 1], mode === 'invalid' ? '{"status":"success"}' : JSON.stringify(execResult), 'utf8');
       emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
       emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test' } });
@@ -33,7 +75,7 @@ if (args.includes('exec')) {
       resolve();
     });
   });
-  process.exit(0);
+  process.exit(exitCode);
 }
 if (!args.includes('app-server')) process.exit(2);
 
@@ -57,6 +99,11 @@ rl.on('line', (line) => {
       sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null,
     } });
   } else if (message.method === 'turn/start') {
+    const schemaError = mode === 'strict-schema' ? strictSchemaError(message.params?.outputSchema) : null;
+    if (schemaError) {
+      emit({ id: message.id, error: { code: -32602, message: schemaError } });
+      return;
+    }
     emit({ id: message.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null } } });
     if (mode === 'approval') {
       emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), proposedExecpolicyAmendment: { command: ['npm', 'test'] } } });
@@ -79,7 +126,7 @@ rl.on('line', (line) => {
       finish({ unrelated: true });
     } else if (mode === 'hang') {
       // Wait for the orchestrator to interrupt and terminate this process.
-    } else finish();
+    } else finish(mode === 'strict-schema' ? strictResult : result);
   } else if (message.id === 98 || message.id === 99 || message.id === 100) {
     if (process.env.FAKE_CODEX_TRACE) process.stderr.write(`response:${JSON.stringify(message)}\n`);
     finish();

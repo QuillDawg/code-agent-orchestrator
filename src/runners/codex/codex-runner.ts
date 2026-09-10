@@ -13,7 +13,7 @@ import type { TranscriptEntry, TranscriptEntryInput, FileOp } from '../../types/
 import { ProcessManager } from '../../execution/process-manager.js';
 import { detectCodex } from './detect.js';
 import { splitCommand } from '../claude/detect.js';
-import { TASK_RESULT_JSON_SCHEMA, validateTaskResult, CONTRACT_SYSTEM_PROMPT } from '../claude/contract.js';
+import { CODEX_TASK_RESULT_JSON_SCHEMA, validateCodexTaskResult, CODEX_CONTRACT_SYSTEM_PROMPT } from '../claude/contract.js';
 import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -85,10 +85,10 @@ export class CodexRunner implements TaskRunner {
     await ensureDir(input.attemptDir);
     const schemaPath = path.join(input.attemptDir, 'result.schema.json');
     const outputPath = path.join(input.attemptDir, 'final.json');
-    await fs.writeFile(schemaPath, JSON.stringify(TASK_RESULT_JSON_SCHEMA), 'utf8');
+    await fs.writeFile(schemaPath, JSON.stringify(CODEX_TASK_RESULT_JSON_SCHEMA), 'utf8');
     const { file, args: prefixArgs } = splitCommand(detection.command);
     const args = [...prefixArgs, ...buildCodexArgs(options, schemaPath, outputPath, input.resumeSessionId, input.task.model, input.task.effort)];
-    const prompt = [CONTRACT_SYSTEM_PROMPT, input.systemPromptAddendum, input.prompt].filter(Boolean).join('\n\n');
+    const prompt = [CODEX_CONTRACT_SYSTEM_PROMPT, input.systemPromptAddendum, input.prompt].filter(Boolean).join('\n\n');
     const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
     const entry = (e: TranscriptEntry): void => {
       eventsLog.write(`${JSON.stringify(e)}\n`);
@@ -213,7 +213,7 @@ export class CodexRunner implements TaskRunner {
       const final = await fs.readFile(outputPath, 'utf8').catch(() => '');
       if (final) {
         try {
-          const parsed = validateTaskResult(JSON.parse(final));
+          const parsed = validateCodexTaskResult(JSON.parse(final));
           if (parsed.ok) {
             finish({ kind: 'result', status: parsed.result.status, summary: parsed.result.summary, isError: false, error: parsed.result.error });
             return { kind: 'result', result: parsed.result, exitCode: exit.code, usage: finalUsage, rawResultText: final };

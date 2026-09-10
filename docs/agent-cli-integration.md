@@ -170,7 +170,7 @@ Use `fullAccess` only in an appropriately isolated environment.
 
 ## The completion contract (both agents)
 
-Workers are told in the system prompt to finish with a single JSON object. Claude gets `--json-schema`, Codex gets `--output-schema`; both validate the same shape:
+Workers are told in the system prompt to finish with a single JSON object. Claude gets `--json-schema` and Codex gets `--output-schema`; both produce the same completion result:
 
 ```json
 {
@@ -183,6 +183,11 @@ Workers are told in the system prompt to finish with a single JSON object. Claud
 ```
 
 `status` and `summary` are required. These fields are exactly what downstream tasks can receive through `context.include` ([configuration.md](configuration.md#context)).
+
+Codex strict structured output requires a closed object with every declared field present. Its wire schema
+therefore requires all fields, uses `null` for absent `error`/`data`, and carries free-form `data` as a
+JSON-encoded string. The Codex runner decodes that string before applying the shared completion validator,
+so stored results and downstream context retain the object shape above.
 
 ---
 

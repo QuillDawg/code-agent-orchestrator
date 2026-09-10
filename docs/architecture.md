@@ -98,7 +98,7 @@ Worktree selection is static: a task uses the `parallel` workspace when it sits 
 
 ## Agent session isolation
 
-Each attempt: a new session id, a new process, the prompt on stdin, the completion contract in the system prompt, a JSON schema for structured output, and no interactive permission prompts. Nothing from a previous session is reused; the only carry-over is the explicit context section built from stored results. The resolved `model`/`effort` for the task are passed to whichever CLI runs it (see [models.md](models.md)).
+Each attempt: a new session id, a new process, the prompt on stdin, the completion contract in the system prompt, a provider-compatible JSON schema for structured output, and no interactive permission prompts. Codex receives a closed schema with every field required; its runner decodes JSON-encoded free-form `data` before applying the shared result validator. Nothing from a previous session is reused; the only carry-over is the explicit context section built from stored results. The resolved `model`/`effort` for the task are passed to whichever CLI runs it (see [models.md](models.md)).
 
 The one deliberate exception is transient-API-error recovery, which relaunches the *same* session id so the interrupted transcript and its completed work are kept.
 

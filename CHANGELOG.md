@@ -30,6 +30,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- Codex tasks no longer fail at turn start with `invalid_json_schema`. Both Codex transports now use the
+  closed, fully required schema that strict structured output expects, while preserving free-form result
+  data through a JSON-encoded runner boundary.
 - Codex `exec` workflows using automatic review no longer pass mutually exclusive approval and sandbox
   flags that made the Codex CLI exit before starting the task.
 - A task id longer than the task column pushed every column after it out of line on the dashboard and the
