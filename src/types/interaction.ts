@@ -98,9 +98,11 @@ export const NEEDS_INPUT_HINT = 'finish with status needs_input if you cannot co
  *
  * The hint is usually appended to a sentence with `; `, and sometimes has a sentence of its own after it, so
  * the seam is closed up rather than left as the dangling `; ` and double space that taking the middle out of
- * a sentence would otherwise leave behind.
+ * a sentence would otherwise leave behind. Text that never carried the hint is returned as it was, down to
+ * its final full stop: this runs over every operator-facing message, not only the ones an interaction wrote.
  */
 export function withoutWorkerInstructions(text: string): string {
+  if (!text.includes(NEEDS_INPUT_HINT)) return text;
   const parts = text.split(NEEDS_INPUT_HINT);
   let out = parts[0] ?? '';
   for (const part of parts.slice(1)) {

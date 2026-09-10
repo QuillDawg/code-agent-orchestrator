@@ -176,7 +176,8 @@ describe('codex app-server: requests and answers on the wire', () => {
     expect(withoutWorkerInstructions(`No human is available to answer Which?; ${NEEDS_INPUT_HINT}`)).toBe('No human is available to answer Which?');
     expect(withoutWorkerInstructions(`No human is available to answer Which?; ${NEEDS_INPUT_HINT} Run it with the dashboard`)).toBe('No human is available to answer Which? Run it with the dashboard');
     expect(withoutWorkerInstructions(`Questions cannot be answered; ${NEEDS_INPUT_HINT}. Set experimentalUserInput`)).toBe('Questions cannot be answered. Set experimentalUserInput');
-    expect(withoutWorkerInstructions('Nothing to strip here')).toBe('Nothing to strip here');
+    // Text that never carried the hint is untouched, down to the full stop that ends it.
+    expect(withoutWorkerInstructions('Nothing to strip here. Set codex.transport: appServer.')).toBe('Nothing to strip here. Set codex.transport: appServer.');
   });
 
   it('has no title to lose when the request carries neither a command nor a reason', () => {

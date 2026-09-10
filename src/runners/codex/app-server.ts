@@ -178,7 +178,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     blocked ??= { questions, reason, fix };
     entry({ kind: 'question', ts: nowIso(), id: String(message.id), questions, answer: `declined: ${reason}` });
     hooks.onActivity(`? declined: ${quoteQuestions(questions)}`);
-    hooks.onWarning?.(`Codex asked ${quoteQuestions(questions)}; ${withoutWorkerInstructions(reason)}`);
+    hooks.onWarning?.(`Codex asked ${quoteQuestions(questions)}; ${asSentence(withoutWorkerInstructions(reason))}`);
     send({ id: message.id, error: { code, message: reason } });
   };
 
