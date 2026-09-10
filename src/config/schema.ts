@@ -1,6 +1,6 @@
 /** Zod schema for the workflow YAML (version 1). Raw shape only; semantic validation lives in workflow/validator.ts. */
 import { z } from 'zod';
-import { CONTEXT_FIELDS } from '../types/result.js';
+import { CONTEXT_FIELDS } from 'code-agent-orchestrator-protocol';
 
 export const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 

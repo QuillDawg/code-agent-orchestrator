@@ -5,10 +5,13 @@ import { buildClaudeArgs, ClaudeRunner, permissionModeDowngrade, resolveClaudeOp
 import { clearDetectionCache, detectClaude } from '../../src/runners/claude/detect.js';
 import { parseClaudeEvents } from '../../src/runners/claude/event-parser.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
-import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
-import type { RunnerUsage } from '../../src/types/result.js';
+import {
+  parseTranscriptLine,
+  type TranscriptEntry,
+  type RunnerUsage,
+  type ResolvedTask,
+} from 'code-agent-orchestrator-protocol';
 import type { RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.js';
-import type { ResolvedTask } from '../../src/types/workflow.js';
 import { renderTranscript } from '../../src/tui/transcript.js';
 import { FAKE_CLAUDE, tmpDir } from '../helpers/index.js';
 import { splitCompletionObject } from '../../src/runners/completion-text.js';

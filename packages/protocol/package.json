@@ -1,0 +1,51 @@
+{
+  "name": "code-agent-orchestrator-protocol",
+  "version": "0.1.0",
+  "description": "The wire contract shared by the code-agent-orchestrator CLI and CAO Desktop: run-directory layout, workflow/run/event types, transcript entries and planning, and the registry, request, interaction and presence file schemas. Zero runtime dependencies, no Node builtins, browser-safe.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Luxaviation Development (https://github.com/Luxaviation-Development)",
+  "homepage": "https://github.com/QuillDawg/code-agent-orchestrator/tree/main/packages/protocol#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QuillDawg/code-agent-orchestrator.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/QuillDawg/code-agent-orchestrator/issues"
+  },
+  "keywords": [
+    "code-agent-orchestrator",
+    "cao",
+    "protocol",
+    "types",
+    "contract"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

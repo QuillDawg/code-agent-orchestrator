@@ -1,4 +1,4 @@
-import type { RunnerFailure } from '../task-runner.js';
+import type { RunnerFailure } from 'code-agent-orchestrator-protocol';
 import type { ConfigRejection } from '../outcomes.js';
 
 const RETRYABLE_CODES = new Set([

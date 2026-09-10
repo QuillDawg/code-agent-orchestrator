@@ -1,4 +1,4 @@
-import type { CodexOptions } from '../../types/workflow.js';
+import type { CodexOptions } from 'code-agent-orchestrator-protocol';
 
 export interface ResolvedCodexPermissions {
   sandbox: NonNullable<CodexOptions['sandbox']>;

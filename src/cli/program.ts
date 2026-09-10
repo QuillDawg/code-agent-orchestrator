@@ -15,7 +15,7 @@ import { doctorCommand } from './commands/doctor.js';
 import { DEFAULT_WORKFLOW_FILES } from './util.js';
 import { OrchestratorError } from '../util/errors.js';
 import { packageInfo } from '../util/package-info.js';
-import type { PermissionMode } from '../types/workflow.js';
+import type { PermissionMode } from 'code-agent-orchestrator-protocol';
 
 const pkg = packageInfo();
 

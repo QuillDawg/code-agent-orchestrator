@@ -10,10 +10,14 @@ import { ReviewView, type LoadedDiff, type ReviewTaskInput, type ReviewViewProps
 import { taskFiles } from '../../src/tui/dashboard/files.js';
 import { activityCell, lastAction, retryLabel, IDLE_AFTER_MS } from '../../src/tui/dashboard/activity.js';
 import { openInEditor } from '../../src/tui/dashboard/editor.js';
-import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
-import type { TranscriptEntry } from '../../src/types/transcript.js';
-import type { TaskRunState, TaskAttempt } from '../../src/types/run.js';
-import type { ResolvedTask } from '../../src/types/workflow.js';
+import type {
+  Interaction,
+  InteractionAnswer,
+  TranscriptEntry,
+  TaskRunState,
+  TaskAttempt,
+  ResolvedTask,
+} from 'code-agent-orchestrator-protocol';
 import { stripAnsi } from '../../src/cli/color.js';
 
 const NL = String.fromCharCode(10);

@@ -5,7 +5,7 @@ import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { reconcileForResume } from '../../src/workflow/run-factory.js';
-import type { WorkflowRun } from '../../src/types/run.js';
+import type { WorkflowRun } from 'code-agent-orchestrator-protocol';
 
 const YAML = 'name: t\ntasks:\n  - id: a\n    prompt: p\n  - id: b\n    prompt: p\n  - id: c\n    prompt: p\n  - id: d\n    prompt: p\n';
 

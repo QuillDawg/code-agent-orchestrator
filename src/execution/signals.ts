@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { WorkflowScheduler } from '../workflow/scheduler.js';
 import type { ProcessManager } from './process-manager.js';
 import type { Logger } from '../logging/logger.js';
-import type { RunPaths } from '../persistence/paths.js';
+import type { RunPaths } from 'code-agent-orchestrator-protocol';
 import { pathExists, readJsonIfExists, writeFileAtomic } from '../util/fs.js';
 import { nowIso } from '../util/misc.js';
 

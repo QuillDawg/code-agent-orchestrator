@@ -1,4 +1,6 @@
-export * from './types/index.js';
+// The shared contract, re-exported so that `code-agent-orchestrator`'s published surface is unchanged by
+// the move to the protocol package (spec §4.1). A consumer importing this module sees what it saw before.
+export * from 'code-agent-orchestrator-protocol';
 export { loadWorkflow, parseWorkflowText } from './config/loader.js';
 export { normalizeWorkflow } from './config/normalize.js';
 export type { Diagnostic } from './config/normalize.js';
@@ -18,14 +20,14 @@ export { FileRunStore } from './persistence/run-store.js';
 export type { RunStore } from './persistence/run-store.js';
 export { ProcessManager, killTree } from './execution/process-manager.js';
 export { RunnerRegistry } from './runners/task-runner.js';
-export type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from './runners/task-runner.js';
+export type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from './runners/task-runner.js';
 export { ClaudeRunner, buildClaudeArgs, resolveClaudeOptions } from './runners/claude/claude-runner.js';
 export { CodexRunner, buildCodexArgs } from './runners/codex/codex-runner.js';
 export { normalizeCodexFailure } from './runners/codex/failure.js';
 export { parseClaudeLine, parseClaudeEvents, describeToolUse } from './runners/claude/event-parser.js';
 export { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, permissionResult, PendingInteractions } from './runners/claude/protocol.js';
-export { renderTranscript, renderEntry, planTranscript } from './tui/transcript.js';
-export type { PlannedEntry, EntryContext, TranscriptRenderOptions } from './tui/transcript.js';
+export { renderTranscript, renderEntry } from './tui/transcript.js';
+export type { EntryContext, TranscriptRenderOptions } from './tui/transcript.js';
 export { renderMarkdown } from './tui/markdown.js';
 export { validateTaskResult, extractJsonObject, TASK_RESULT_JSON_SCHEMA, CONTRACT_SYSTEM_PROMPT } from './runners/contract.js';
 export { GitWorkspaceManager, SharedOnlyWorkspaceManager } from './workspace/workspace-manager.js';
@@ -38,3 +40,6 @@ export { ConsoleLogger, silentLogger } from './logging/logger.js';
 export type { Logger } from './logging/logger.js';
 export { prepareWorkflow, createRuntime } from './cli/app.js';
 export { parseDuration, formatDuration } from './util/duration.js';
+// Stayed behind when the interaction types moved to the protocol package: these shape operator-facing text,
+// which is presentation rather than contract. Exported from here as they always were.
+export { NEEDS_INPUT_HINT, withoutWorkerInstructions, asSentence } from './util/text.js';

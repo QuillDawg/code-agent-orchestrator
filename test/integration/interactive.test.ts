@@ -7,6 +7,7 @@ import path from 'node:path';
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { prepareWorkflow, createRuntime, requireValid } from '../../src/cli/app.js';
 import { createRun } from '../../src/workflow/run-factory.js';
+import { reconcileForResume } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { silentLogger } from '../../src/logging/logger.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
@@ -14,12 +15,14 @@ import { tmpGitRepo, captureCli, waitFor, FAKE_CLAUDE } from '../helpers/index.j
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { statusCommand } from '../../src/cli/commands/status.js';
 import { resumeCommand } from '../../src/cli/commands/resume.js';
-import { reconcileForResume } from '../../src/workflow/run-factory.js';
 import { pausedNeeds } from '../../src/workflow/run-view.js';
-import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
-import { canAllowAlways } from '../../src/types/interaction.js';
+import {
+  type Interaction,
+  type InteractionAnswer,
+  canAllowAlways,
+  parseTranscriptLine,
+} from 'code-agent-orchestrator-protocol';
 import type { SchedulerDeps } from '../../src/workflow/scheduler.js';
-import { parseTranscriptLine } from '../../src/types/transcript.js';
 
 interface Trace { taskId: string; args: string[]; streamInput?: boolean }
 

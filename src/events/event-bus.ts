@@ -1,4 +1,4 @@
-import type { WorkflowEvent, WorkflowEventBody, WorkflowEventType, EventOf } from '../types/events.js';
+import type { WorkflowEvent, WorkflowEventBody, WorkflowEventType, EventOf } from 'code-agent-orchestrator-protocol';
 
 type AnyHandler = (event: WorkflowEvent) => void;
 

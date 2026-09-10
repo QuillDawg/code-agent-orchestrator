@@ -3,8 +3,7 @@
  * as a user message, keeps stdin open, and answers `control_request` / `can_use_tool` lines (permission
  * prompts and AskUserQuestion) with `control_response` lines. Pure functions plus a settle-once tracker.
  */
-import type { Interaction, InteractionAnswer, InteractionQuestion } from '../../types/interaction.js';
-import type { AgentName } from '../../types/workflow.js';
+import type { Interaction, InteractionAnswer, InteractionQuestion, AgentName } from 'code-agent-orchestrator-protocol';
 import { describeToolUse } from './event-parser.js';
 import { nowIso } from '../../util/misc.js';
 

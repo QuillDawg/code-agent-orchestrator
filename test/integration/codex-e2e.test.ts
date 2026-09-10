@@ -15,10 +15,14 @@ import { createRun, reconcileForResume } from '../../src/workflow/run-factory.js
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { silentLogger } from '../../src/logging/logger.js';
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
-import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
-import type { EnrichedTaskResult } from '../../src/types/result.js';
-import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
-import { canAllowAlways } from '../../src/types/interaction.js';
+import {
+  parseTranscriptLine,
+  type TranscriptEntry,
+  type EnrichedTaskResult,
+  type Interaction,
+  type InteractionAnswer,
+  canAllowAlways,
+} from 'code-agent-orchestrator-protocol';
 import type { SchedulerDeps } from '../../src/workflow/scheduler.js';
 import { tmpGitRepo, gitAvailable, waitFor, FAKE_CODEX } from '../helpers/index.js';
 

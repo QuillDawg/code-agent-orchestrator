@@ -11,9 +11,14 @@
  */
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { AttemptDiff, DiffFileRecord, DiffFileStatus } from '../types/result.js';
+import {
+  type AttemptDiff,
+  type DiffFileRecord,
+  type DiffFileStatus,
+  ORCHESTRATOR_DIR,
+  safeSegment,
+} from 'code-agent-orchestrator-protocol';
 import type { Git } from './git.js';
-import { ORCHESTRATOR_DIR, safeSegment } from '../persistence/paths.js';
 
 /** An `AttemptDiff` together with the unified patch written to `diff.patch`. */
 export interface CapturedDiff extends AttemptDiff {

@@ -2,8 +2,7 @@
 import { loadWorkflow, type LoadedWorkflow } from '../config/loader.js';
 import { normalizeWorkflow, type Diagnostic } from '../config/normalize.js';
 import { validateWorkflow, assertValid, type ValidationResult } from '../workflow/validator.js';
-import type { ResolvedWorkflow } from '../types/workflow.js';
-import type { WorkflowRun } from '../types/run.js';
+import type { ResolvedWorkflow, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { FileRunStore } from '../persistence/run-store.js';
 import { ProcessManager } from '../execution/process-manager.js';
 import { RunnerRegistry } from '../runners/task-runner.js';

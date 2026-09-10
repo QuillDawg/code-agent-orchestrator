@@ -13,7 +13,7 @@ import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { tmpGitRepo, gitOut, gitExit, extractTree, captureCli, FAKE_CLAUDE, waitFor, gitAvailable } from '../helpers/index.js';
 import { isProcessAlive } from '../../src/util/misc.js';
 import { pathExists } from '../../src/util/fs.js';
-import type { AttemptDiff } from '../../src/types/result.js';
+import type { AttemptDiff } from 'code-agent-orchestrator-protocol';
 import { diffCommand } from '../../src/cli/commands/diff.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { logsCommand } from '../../src/cli/commands/logs.js';

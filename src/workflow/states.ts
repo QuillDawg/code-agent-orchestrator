@@ -1,5 +1,5 @@
 import { useUnicode } from '../util/glyphs.js';
-import type { RunState, RunSummary, TaskState, WorkflowRun } from '../types/run.js';
+import type { RunState, RunSummary, TaskState, WorkflowRun } from 'code-agent-orchestrator-protocol';
 
 const RUNNING_EXITS: TaskState[] = ['success', 'failed', 'ready', 'blocked', 'skipped', 'needs_input', 'cancelled', 'pending', 'awaiting_approval'];
 

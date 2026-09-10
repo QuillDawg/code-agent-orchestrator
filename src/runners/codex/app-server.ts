@@ -1,11 +1,15 @@
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
 import type { ProcessManager, ManagedProcess } from '../../execution/process-manager.js';
-import type { CodexOptions } from '../../types/workflow.js';
-import { asSentence, withoutWorkerInstructions, type InteractionQuestion } from '../../types/interaction.js';
+import type {
+  CodexOptions,
+  InteractionQuestion,
+  RunnerUsage,
+  TaskResult,
+  TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
+import { asSentence, withoutWorkerInstructions } from '../../util/text.js';
 import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js';
-import type { RunnerUsage, TaskResult } from '../../types/result.js';
-import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../contract.js';
 import { agentTextEvents, completionTranscript } from '../completion-text.js';

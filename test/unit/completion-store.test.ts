@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WorkflowCompletionStore } from '../../src/workflow/completion-store.js';
-import type { ResolvedTask } from '../../src/types/workflow.js';
+import type { ResolvedTask } from 'code-agent-orchestrator-protocol';
 
 const task = (id: string, sourceId = id) => ({ id, sourceId }) as ResolvedTask;
 

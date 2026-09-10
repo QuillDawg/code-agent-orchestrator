@@ -1,5 +1,5 @@
 /** Execution plan rendering for --dry-run and the startup header. */
-import type { ResolvedWorkflow } from '../types/workflow.js';
+import type { ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
 import { effectiveWorkspace } from './validator.js';
 import { glyph } from '../util/glyphs.js';
 

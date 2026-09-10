@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, permissionResult, sessionRules, summarizeAnswer, PendingInteractions } from '../../src/runners/claude/protocol.js';
-import { canAllowAlways } from '../../src/types/interaction.js';
+import { canAllowAlways } from 'code-agent-orchestrator-protocol';
 import { parseClaudeEvents, parseClaudeLine, describeToolUse } from '../../src/runners/claude/event-parser.js';
 
 const ctx = { taskId: 't1', attempt: 1, agent: 'claude' as const };

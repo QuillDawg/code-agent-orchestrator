@@ -9,7 +9,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   // The fake CLI fixture is a standalone .mjs outside tsconfig; there is nothing for a type-aware rule to read.
-  { ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'test/fixtures/**'] },
+  { ignores: ['dist/**', 'packages/*/dist/**', 'node_modules/**', 'coverage/**', 'test/fixtures/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

@@ -8,21 +8,23 @@ import path from 'node:path';
 import picomatch from 'picomatch';
 import type { LoadedWorkflow } from './loader.js';
 import type { TaskBody, TaskFile, ContextFile } from './schema.js';
-import { CONTEXT_FIELDS, type ContextField } from '../types/result.js';
-import type {
-  ClaudeOptions,
-  CodexOptions,
-  ContextSource,
-  ExecutionConfig,
-  GitConfig,
-  HooksConfig,
-  ResolvedContextSpec,
-  ResolvedTask,
-  ResolvedWorkflow,
-  RetryPolicy,
-  WhenSpec,
-  WorktreeConfig,
-} from '../types/workflow.js';
+import {
+  CONTEXT_FIELDS,
+  ORCHESTRATOR_DIR,
+  type ContextField,
+  type ClaudeOptions,
+  type CodexOptions,
+  type ContextSource,
+  type ExecutionConfig,
+  type GitConfig,
+  type HooksConfig,
+  type ResolvedContextSpec,
+  type ResolvedTask,
+  type ResolvedWorkflow,
+  type RetryPolicy,
+  type WhenSpec,
+  type WorktreeConfig,
+} from 'code-agent-orchestrator-protocol';
 import { parseDuration } from '../util/duration.js';
 import { renderTemplate } from '../templates/engine.js';
 import { isInside } from '../util/fs.js';
@@ -120,7 +122,7 @@ function buildExecution(file: LoadedWorkflow['file']): ExecutionConfig {
   }
   const wt = ex.worktree ?? {};
   const worktree: WorktreeConfig = {
-    directory: wt.directory ?? '.orchestrator/worktrees',
+    directory: wt.directory ?? `${ORCHESTRATOR_DIR}/worktrees`,
     branchPrefix: wt.branchPrefix ?? 'orchestrator/',
     base: wt.base ?? 'runStart',
     branchConflict: wt.branchConflict ?? 'suffix',

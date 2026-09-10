@@ -1,13 +1,12 @@
 import path from 'node:path';
 import { FileRunStore } from '../persistence/run-store.js';
-import { ORCHESTRATOR_DIR } from '../persistence/paths.js';
+import { ORCHESTRATOR_DIR, type WorkflowRun, type TaskRunState } from 'code-agent-orchestrator-protocol';
 import { pathExists } from '../util/fs.js';
 import { Git } from '../workspace/git.js';
 import { UsageError } from '../util/errors.js';
 import { isProcessAlive } from '../util/misc.js';
 import { sanitizeText, stripAnsi } from '../util/text.js';
 import { glyph, rule } from '../util/glyphs.js';
-import type { WorkflowRun, TaskRunState } from '../types/run.js';
 import { currentAttempt, elapsedCell } from '../tui/history.js';
 
 /** Tried in order when `cao run` / `cao validate` is given no workflow path. */

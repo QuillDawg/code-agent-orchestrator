@@ -5,10 +5,13 @@
  * used to mask the tool that produced it), whether a silent worker is still alive (the idle marker), and
  * why a row that is neither running nor finished is sitting there (a retry backoff).
  */
-import type { TaskRunState } from '../../types/run.js';
-import { ACTIVE_TASK_STATES } from '../../types/run.js';
-import type { ResolvedTask } from '../../types/workflow.js';
-import { transcriptLine, type TranscriptEntry } from '../../types/transcript.js';
+import {
+  type TaskRunState,
+  ACTIVE_TASK_STATES,
+  type ResolvedTask,
+  transcriptLine,
+  type TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
 import { budgetedFailures } from '../../workflow/scheduler.js';
 import { formatDurationShort } from '../../util/duration.js';
 import { paint, sanitizeText } from '../../cli/color.js';

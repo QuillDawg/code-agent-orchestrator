@@ -12,7 +12,7 @@ import { buildCodexArgs } from '../../src/runners/codex/codex-runner.js';
 import { buildCodexAppServerArgs } from '../../src/runners/codex/app-server.js';
 import { buildClaudeArgs } from '../../src/runners/claude/claude-runner.js';
 import { CODEX_COMPLETION_CONTRACT } from '../../src/runners/contract.js';
-import type { CodexOptions } from '../../src/types/workflow.js';
+import type { CodexOptions } from 'code-agent-orchestrator-protocol';
 import { tmpDir } from '../helpers/index.js';
 
 const FAKE_CODEX_SCRIPT = path.resolve('test/fixtures/fake-codex.mjs');

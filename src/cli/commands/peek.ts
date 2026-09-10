@@ -6,7 +6,7 @@ import { eventLineRenderer, jsonEntryLines } from './logs.js';
 import { warnLine } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
 import { STATE_LABEL } from '../../workflow/states.js';
-import { ACTIVE_TASK_STATES } from '../../types/run.js';
+import { ACTIVE_TASK_STATES } from 'code-agent-orchestrator-protocol';
 import { pathExists } from '../../util/fs.js';
 import { agentLabel, formatCost, formatTokens } from '../../tui/format.js';
 import { sanitizeText, type ColorMode } from '../color.js';

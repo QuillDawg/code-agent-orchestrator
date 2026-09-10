@@ -9,8 +9,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { TaskState } from '../../types/run.js';
-import type { AttemptDiff, DiffFileStatus } from '../../types/result.js';
+import type { TaskState, AttemptDiff, DiffFileStatus } from 'code-agent-orchestrator-protocol';
 import { STATE_COLOR, stateGlyph, STATE_LABEL } from '../../workflow/states.js';
 import { paint, type Style } from '../../cli/color.js';
 import { summarizeDiff } from '../../cli/render/diff.js';

@@ -9,7 +9,7 @@
  * The two go together: a coloured rendering is already not the captured patch, and it is the one a human
  * looks at, while an uncoloured one is what a pipe gets and has to stay byte for byte what git wrote.
  */
-import type { AttemptDiff, DiffFileRecord } from '../../types/result.js';
+import type { AttemptDiff, DiffFileRecord } from 'code-agent-orchestrator-protocol';
 import { paint, sanitizeText, type Style } from '../color.js';
 
 /** Metadata lines of a unified patch. Painted like git's `color.diff.meta`, not as additions or removals. */

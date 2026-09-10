@@ -7,9 +7,7 @@
  * were touched but not how many lines changed; a captured record knows both, so it wins whenever it exists.
  */
 import { sanitizeText } from '../../util/text.js';
-import type { TaskRunState } from '../../types/run.js';
-import type { DiffFileRecord, DiffFileStatus } from '../../types/result.js';
-import type { FileOp } from '../../types/transcript.js';
+import type { TaskRunState, DiffFileRecord, DiffFileStatus, FileOp } from 'code-agent-orchestrator-protocol';
 
 export interface ReviewFile {
   path: string;

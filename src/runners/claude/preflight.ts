@@ -3,7 +3,7 @@
  * Claude attempt streams events and every one enforces the completion contract with a JSON schema, so a CLI
  * without them cannot run any task at all.
  */
-import type { ClaudeOptions } from '../../types/workflow.js';
+import type { ClaudeOptions } from 'code-agent-orchestrator-protocol';
 import type { CapabilityNeed } from '../preflight.js';
 
 export function claudeCapabilityNeeds(options: ClaudeOptions): CapabilityNeed[] {

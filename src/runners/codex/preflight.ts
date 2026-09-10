@@ -3,7 +3,7 @@
  * each of them. Both `cao run`'s readiness check and the scheduler's per-run preflight read this, so the
  * message an operator gets names the option and the YAML key rather than a bare capability name.
  */
-import type { CodexOptions } from '../../types/workflow.js';
+import type { CodexOptions } from 'code-agent-orchestrator-protocol';
 import type { CapabilityNeed } from '../preflight.js';
 
 export function codexCapabilityNeeds(options: CodexOptions): CapabilityNeed[] {

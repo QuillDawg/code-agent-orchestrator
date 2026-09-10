@@ -14,7 +14,7 @@ import { buildCodexArgs } from '../../src/runners/codex/codex-runner.js';
 import { buildCodexAppServerArgs } from '../../src/runners/codex/app-server.js';
 import { buildClaudeArgs, resolveClaudeOptions, type PromptMode } from '../../src/runners/claude/claude-runner.js';
 import { MINIMUM_AGENT_VERSIONS, versionAtLeast } from '../../src/runners/capabilities.js';
-import type { ClaudeOptions, CodexOptions, PermissionMode } from '../../src/types/workflow.js';
+import type { ClaudeOptions, CodexOptions, PermissionMode } from 'code-agent-orchestrator-protocol';
 
 /** One `--help` output, reduced to the flags it advertises and the values they accept. */
 interface Surface {

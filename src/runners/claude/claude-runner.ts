@@ -10,13 +10,19 @@
  */
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../task-runner.js';
+import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
 import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
 import { claudeCapabilityNeeds } from './preflight.js';
-import type { ClaudeOptions, ResolvedTask } from '../../types/workflow.js';
-import type { RunnerUsage, TaskResult } from '../../types/result.js';
-import type { TranscriptEntry, TranscriptEntryInput } from '../../types/transcript.js';
-import type { InteractionAnswer } from '../../types/interaction.js';
+import type {
+  RunnerFailure,
+  ClaudeOptions,
+  ResolvedTask,
+  RunnerUsage,
+  TaskResult,
+  TranscriptEntry,
+  TranscriptEntryInput,
+  InteractionAnswer,
+} from 'code-agent-orchestrator-protocol';
 import { ProcessManager } from '../../execution/process-manager.js';
 import { detectClaude, splitCommand } from './detect.js';
 import { parseClaudeEvents, activityFromText, type ClaudeResultEvent } from './event-parser.js';

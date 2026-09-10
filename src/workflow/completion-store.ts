@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
-import type { ResolvedTask } from '../types/workflow.js';
+import type { ResolvedTask } from 'code-agent-orchestrator-protocol';
 
 export interface CompletionMetadata { completedAt: string; runId: string }
 

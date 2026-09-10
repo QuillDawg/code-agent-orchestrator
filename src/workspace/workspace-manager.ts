@@ -4,9 +4,16 @@
  */
 import path from 'node:path';
 import { promises as fs, realpathSync } from 'node:fs';
-import type { ResolvedTask, ResolvedWorkflow, WorkspaceMode } from '../types/workflow.js';
-import type { WorkflowRun, WorkspaceInfo, AttemptOutcome } from '../types/run.js';
-import type { GitInfo } from '../types/result.js';
+import {
+  ORCHESTRATOR_DIR,
+  type ResolvedTask,
+  type ResolvedWorkflow,
+  type WorkspaceMode,
+  type WorkflowRun,
+  type WorkspaceInfo,
+  type AttemptOutcome,
+  type GitInfo,
+} from 'code-agent-orchestrator-protocol';
 import { Git } from './git.js';
 import { captureDiff, removeSnapshotIndexDir, snapshotIndexPath, snapshotTree, type CapturedDiff } from './diff.js';
 import { KeyedMutex } from '../util/async-queue.js';
@@ -105,8 +112,8 @@ export class GitWorkspaceManager implements WorkspaceManager {
     const baseBranch = await this.git.currentBranch();
     const baseCommit = await this.git.headSha();
     try {
-      if (await this.git.ensureExcluded('.orchestrator/')) {
-        warnings.push('Added ".orchestrator/" to .git/info/exclude (consider adding it to .gitignore)');
+      if (await this.git.ensureExcluded(`${ORCHESTRATOR_DIR}/`)) {
+        warnings.push(`Added "${ORCHESTRATOR_DIR}/" to .git/info/exclude (consider adding it to .gitignore)`);
       }
     } catch (err) {
       warnings.push(`Could not update .git/info/exclude: ${(err as Error).message}`);

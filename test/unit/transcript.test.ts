@@ -2,10 +2,19 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { renderMarkdown, wrapLine } from '../../src/tui/markdown.js';
-import { renderTranscript, renderEntry, planTranscript, createTranscriptStream, filterEntries, nextFilter, stampWidth, FILTER_LABEL, TRANSCRIPT_FILTERS } from '../../src/tui/transcript.js';
+import { renderTranscript, renderEntry, createTranscriptStream, stampWidth } from '../../src/tui/transcript.js';
+import {
+  planTranscript,
+  filterEntries,
+  nextFilter,
+  FILTER_LABEL,
+  TRANSCRIPT_FILTERS,
+  parseTranscriptLine,
+  transcriptLine,
+  type TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
 import { entriesBefore, entryKey, readOlderAcrossAttempts, readOlderEntries, readTranscriptFile } from '../../src/persistence/transcript-log.js';
 import { tmpDir } from '../helpers/index.js';
-import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import { paint, sanitizeText, stripAnsi, useColor, visibleLength } from '../../src/cli/color.js';
 import { formatCost, formatElapsed, formatTokens, bar, contextRatio } from '../../src/tui/format.js';
 import { agentTextEvents, completionTranscript, splitCompletionObject } from '../../src/runners/completion-text.js';

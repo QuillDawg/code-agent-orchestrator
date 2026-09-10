@@ -8,13 +8,36 @@
  *  - a process exit code is never a result; only a validated TaskResult produces `success`
  */
 import path from 'node:path';
-import type { WorkflowRun, TaskRunState, TaskAttempt, TaskState, TaskReason, AttemptOutcome, RunSummary, LiveStatus, WorkspaceInfo } from '../types/run.js';
-import { TERMINAL_TASK_STATES, ACTIVE_TASK_STATES } from '../types/run.js';
-import type { ResolvedTask, ResolvedWorkflow, WorkspaceMode } from '../types/workflow.js';
-import type { AttemptDiff, EnrichedTaskResult, GitInfo, TaskResult, RunnerUsage } from '../types/result.js';
-import { transcriptLine, type TranscriptEntry } from '../types/transcript.js';
-import { describeAnswer, toInteractionRecord, NEEDS_INPUT_HINT, type Interaction, type InteractionAnswer, type InteractionAnswerSource, type InteractionRecord } from '../types/interaction.js';
-import { sanitizeText } from '../util/text.js';
+import {
+  type WorkflowRun,
+  type TaskRunState,
+  type TaskAttempt,
+  type TaskState,
+  type TaskReason,
+  type AttemptOutcome,
+  type RunSummary,
+  type LiveStatus,
+  type WorkspaceInfo,
+  TERMINAL_TASK_STATES,
+  ACTIVE_TASK_STATES,
+  type ResolvedTask,
+  type ResolvedWorkflow,
+  type WorkspaceMode,
+  type AttemptDiff,
+  type EnrichedTaskResult,
+  type GitInfo,
+  type TaskResult,
+  type RunnerUsage,
+  transcriptLine,
+  type TranscriptEntry,
+  describeAnswer,
+  toInteractionRecord,
+  type Interaction,
+  type InteractionAnswer,
+  type InteractionAnswerSource,
+  type InteractionRecord,
+} from 'code-agent-orchestrator-protocol';
+import { NEEDS_INPUT_HINT, sanitizeText } from '../util/text.js';
 import { formatDuration } from '../util/duration.js';
 import type { RunStore } from '../persistence/run-store.js';
 import { OLDER_PAGE, readOlderAcrossAttempts, readOlderEntries, readTranscriptFile } from '../persistence/transcript-log.js';

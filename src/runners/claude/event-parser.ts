@@ -3,8 +3,7 @@
  * Everything Claude-specific about the transport lives here.
  */
 import { firstLine, truncate } from '../../util/misc.js';
-import type { RunnerUsage } from '../../types/result.js';
-import type { FileOp } from '../../types/transcript.js';
+import type { RunnerUsage, FileOp } from 'code-agent-orchestrator-protocol';
 
 export interface ClaudeInitEvent {
   kind: 'init';

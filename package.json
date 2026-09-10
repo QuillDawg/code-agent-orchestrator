@@ -30,6 +30,9 @@
   "engines": {
     "node": ">=22"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "code-agent-orchestrator": "dist/bin.js",
     "cao": "dist/bin.js"
@@ -56,16 +59,18 @@
     "tag": "beta"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "npm run build:protocol && tsup",
+    "build:protocol": "tsc -p packages/protocol/tsconfig.json",
     "dev": "tsx src/bin.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:agents": "vitest run --config vitest.agents.config.ts",
-    "lint": "eslint src test",
+    "typecheck": "npm run build:protocol && tsc --noEmit",
+    "test": "npm run build:protocol && vitest run",
+    "test:watch": "npm run build:protocol && vitest",
+    "test:agents": "npm run build:protocol && vitest run --config vitest.agents.config.ts",
+    "lint": "npm run build:protocol && eslint src test packages",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
+    "code-agent-orchestrator-protocol": "^0.1.0",
     "commander": "^12.1.0",
     "execa": "^9.5.2",
     "ink": "^5.1.0",
@@ -80,6 +85,7 @@
     "@types/node": "^22.10.2",
     "@types/picomatch": "^3.0.1",
     "@types/react": "^18.3.18",
+    "esbuild": "^0.28.1",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "ink-testing-library": "^4.0.0",

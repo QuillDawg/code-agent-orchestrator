@@ -7,19 +7,28 @@ import type { LoadedWorkflow } from '../../src/config/loader.js';
 import { parseWorkflowText } from '../../src/config/loader.js';
 import { normalizeWorkflow, type Diagnostic } from '../../src/config/normalize.js';
 import { validateWorkflow, type ValidationResult } from '../../src/workflow/validator.js';
-import type { ResolvedWorkflow } from '../../src/types/workflow.js';
-import type { WorkflowRun, TaskAttempt, LiveStatus } from '../../src/types/run.js';
-import type { AttemptDiff, EnrichedTaskResult, GitInfo, TaskResult } from '../../src/types/result.js';
-import type { WorkflowEvent } from '../../src/types/events.js';
+import type {
+  ResolvedWorkflow,
+  WorkflowRun,
+  TaskAttempt,
+  LiveStatus,
+  AttemptDiff,
+  EnrichedTaskResult,
+  GitInfo,
+  TaskResult,
+  WorkflowEvent,
+  RunnerFailure,
+  Interaction,
+  InteractionAnswer,
+  ResolvedTask,
+  WorkspaceInfo,
+} from 'code-agent-orchestrator-protocol';
+import { createNativeRunPaths } from '../../src/persistence/paths.js';
 import type { RunStore, RunLock, RunListEntry } from '../../src/persistence/run-store.js';
-import { createRunPaths } from '../../src/persistence/paths.js';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../../src/runners/task-runner.js';
+import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.js';
 import type { PreflightProblem } from '../../src/runners/preflight.js';
-import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
 import type { WorkspaceManager, RunPreparation, FinalizeResult } from '../../src/workspace/workspace-manager.js';
 import type { CapturedDiff } from '../../src/workspace/diff.js';
-import type { ResolvedTask } from '../../src/types/workflow.js';
-import type { WorkspaceInfo } from '../../src/types/run.js';
 import { Git } from '../../src/workspace/git.js';
 import { KeyedMutex } from '../../src/util/async-queue.js';
 import { nowIso } from '../../src/util/misc.js';
@@ -141,7 +150,7 @@ export function makeRun(workflow: ResolvedWorkflow, runId = '2026-01-01-001'): W
 
 /** In-memory RunStore capturing everything the scheduler persists. */
 export class MemoryRunStore implements RunStore {
-  readonly paths = createRunPaths(path.join(os.tmpdir(), 'cao-memory-store'));
+  readonly paths = createNativeRunPaths(path.join(os.tmpdir(), 'cao-memory-store'));
   snapshots: WorkflowRun[] = [];
   events: WorkflowEvent[] = [];
   attempts: TaskAttempt[] = [];

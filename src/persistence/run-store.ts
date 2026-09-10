@@ -1,12 +1,18 @@
 /** File-backed run persistence under <repository>/.orchestrator/runs/<run-id>/. */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { WorkflowRun, TaskAttempt, LiveStatus } from '../types/run.js';
-import type { AttemptDiff, EnrichedTaskResult } from '../types/result.js';
+import {
+  type WorkflowRun,
+  type TaskAttempt,
+  type LiveStatus,
+  type AttemptDiff,
+  type EnrichedTaskResult,
+  type WorkflowEvent,
+  toInteractionRecord,
+  type RunPaths,
+} from 'code-agent-orchestrator-protocol';
+import { createNativeRunPaths } from './paths.js';
 import type { CapturedDiff } from '../workspace/diff.js';
-import type { WorkflowEvent } from '../types/events.js';
-import { toInteractionRecord } from '../types/interaction.js';
-import { createRunPaths, type RunPaths } from './paths.js';
 import { allocateRunId } from './run-id.js';
 import { appendLine, ensureDir, pathExists, readJson, readJsonIfExists, writeFileAtomic, writeFileAtomicSync } from '../util/fs.js';
 import { Redactor } from '../logging/redact.js';
@@ -60,7 +66,7 @@ export class FileRunStore implements RunStore {
   private redactor: Redactor;
 
   constructor(repositoryRoot: string, redactor = new Redactor()) {
-    this.paths = createRunPaths(repositoryRoot);
+    this.paths = createNativeRunPaths(repositoryRoot);
     this.redactor = redactor;
   }
 

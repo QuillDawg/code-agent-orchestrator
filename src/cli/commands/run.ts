@@ -1,8 +1,8 @@
-import path from 'node:path';
 import readline from 'node:readline';
 import { prepareWorkflow, requireValid, createRuntime, detectRunnersForWorkflow, runnerReadinessError } from '../app.js';
 import { createRun } from '../../workflow/run-factory.js';
 import { FileRunStore } from '../../persistence/run-store.js';
+import { createNativeRunPaths } from '../../persistence/paths.js';
 import { formatDiagnostics } from '../../workflow/validator.js';
 import { warnLine } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
@@ -13,10 +13,8 @@ import { Redactor } from '../../logging/redact.js';
 import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflowPath } from '../util.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { ConfigError, OrchestratorError, UsageError } from '../../util/errors.js';
-import type { WorkflowRun } from '../../types/run.js';
 import type { Runtime } from '../app.js';
-import type { PermissionMode } from '../../types/workflow.js';
-import type { Interaction, InteractionAnswer } from '../../types/interaction.js';
+import type { WorkflowRun, PermissionMode, Interaction, InteractionAnswer } from 'code-agent-orchestrator-protocol';
 import { appendLine } from '../../util/fs.js';
 import { BELL } from '../../util/misc.js';
 import type { DashboardController } from '../../tui/app.js';
@@ -99,7 +97,9 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   const { run } = opts;
   const useTui = (opts.tui ?? true) && isInteractive();
   const redactor = new Redactor(opts.secrets);
-  const logFile = path.join(run.repositoryRoot, '.orchestrator', 'runs', run.runId, 'orchestrator.log');
+  // Through the layout accessor, not a hand-built string: the run directory is described in exactly one
+  // place, and that place is the protocol package (spec §4.1, §6.4.1).
+  const logFile = createNativeRunPaths(run.repositoryRoot).runLogFile(run.runId);
   const fileSink = (line: string): void => {
     void appendLine(logFile, line).catch(() => undefined);
   };
@@ -114,7 +114,7 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
     },
   });
 
-  const approvalHandler = useTui ? async (task: import('../../types/workflow.js').ResolvedTask) => (dashboard ? dashboard.requestApproval(task) : ('defer' as const)) : undefined;
+  const approvalHandler = useTui ? async (task: import('code-agent-orchestrator-protocol').ResolvedTask) => (dashboard ? dashboard.requestApproval(task) : ('defer' as const)) : undefined;
   const interactionHandler = useTui
     ? async (interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer> =>
         dashboard ? dashboard.requestInteraction(interaction, signal) : { kind: 'deny', message: 'No dashboard is attached; finish with status needs_input if you cannot continue' }

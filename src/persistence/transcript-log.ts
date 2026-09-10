@@ -7,7 +7,7 @@
  * makes "the entries just before this one" answerable without any bookkeeping.
  */
 import { promises as fs } from 'node:fs';
-import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from '../types/transcript.js';
+import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from 'code-agent-orchestrator-protocol';
 
 /** How many older entries one page brings in. Roughly a screenful of scrolling at a time. */
 export const OLDER_PAGE = 200;

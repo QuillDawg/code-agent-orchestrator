@@ -21,10 +21,15 @@ import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
 import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
-import { RunnerRegistry } from '../../src/runners/task-runner.js';
-import type { RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.js';
-import type { ResolvedTask, ResolvedWorkflow, CodexOptions, ClaudeOptions } from '../../src/types/workflow.js';
-import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
+import { RunnerRegistry, type RunnerHooks, type RunnerOutcome } from '../../src/runners/task-runner.js';
+import {
+  type ResolvedTask,
+  type ResolvedWorkflow,
+  type CodexOptions,
+  type ClaudeOptions,
+  parseTranscriptLine,
+  type TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
 import { buildWorkflow, makeRun, MemoryRunStore, MockRunner, MockWorkspace, FAKE_CLAUDE, FAKE_CODEX, tmpDir, waitFor } from '../helpers/index.js';
 
 const NL = String.fromCharCode(10);

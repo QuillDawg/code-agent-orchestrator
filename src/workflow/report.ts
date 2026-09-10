@@ -9,16 +9,25 @@
  * Times are rendered in UTC. A report exists to be pasted somewhere else — a pull request, an issue, a chat
  * — where the reader's clock is not the one the run was on, and where a bare `10:12` is a guess.
  */
-import type { AttemptOutcome, RunState, RunSummary, TaskAttempt, TaskReason, TaskState, WorkflowRun } from '../types/run.js';
-import type { DiffFileStatus, EnrichedTaskResult, RunnerUsage } from '../types/result.js';
-import { addUsage } from '../types/result.js';
+import {
+  type AttemptOutcome,
+  type RunState,
+  type RunSummary,
+  type TaskAttempt,
+  type TaskReason,
+  type TaskState,
+  type WorkflowRun,
+  type DiffFileStatus,
+  type EnrichedTaskResult,
+  type RunnerUsage,
+  addUsage,
+} from 'code-agent-orchestrator-protocol';
+import { withoutWorkerInstructions, sanitizeText } from '../util/text.js';
 import type { RunStore } from '../persistence/run-store.js';
 import { parseDiffStat } from '../workspace/diff.js';
 import { formatCost, formatTokens } from '../tui/format.js';
 import { attemptReason, attemptElapsedMs, interactionRows, taskElapsed, totalWaitedMs, OUTCOME_LABEL, TRIGGER_LABEL } from '../tui/history.js';
 import { formatDuration } from '../util/duration.js';
-import { sanitizeText } from '../util/text.js';
-import { withoutWorkerInstructions } from '../types/interaction.js';
 import { STATE_LABEL, summarize } from './states.js';
 import { executionOrder, findCapturedDiff, pausedNeeds, type CapturedAttemptDiff, type PausedNeed } from './run-view.js';
 

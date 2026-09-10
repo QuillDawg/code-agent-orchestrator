@@ -1,7 +1,6 @@
 /** The attempt and interaction history helpers behind `cao task` and the dashboard detail view. */
 import { describe, it, expect } from 'vitest';
-import type { TaskAttempt, TaskRunState, TaskState } from '../../src/types/run.js';
-import type { InteractionRecord } from '../../src/types/interaction.js';
+import type { TaskAttempt, TaskRunState, TaskState, InteractionRecord } from 'code-agent-orchestrator-protocol';
 import { attemptElapsedMs, attemptReason, attemptRows, elapsedCell, elapsedParts, interactionRows, resultNotes, taskElapsed, totalWaitedMs, waitedMs } from '../../src/tui/history.js';
 
 /** 10:00:00Z plus `s` seconds, so every expectation below is a plain arithmetic difference. */

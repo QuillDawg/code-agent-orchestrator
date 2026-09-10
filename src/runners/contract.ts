@@ -5,7 +5,7 @@
  * agent's directory.
  */
 import { z } from 'zod';
-import { TASK_RESULT_STATUSES, type TaskResult, type TaskResultStatus } from '../types/result.js';
+import { TASK_RESULT_STATUSES, type TaskResult, type TaskResultStatus } from 'code-agent-orchestrator-protocol';
 
 const stringArray = z
   .array(z.union([z.string(), z.number(), z.boolean(), z.null()]))

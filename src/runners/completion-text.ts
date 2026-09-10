@@ -11,8 +11,7 @@
  * it sits in `src/runners/` rather than under one agent's directory.
  */
 import { findJsonObject, validateTaskResult, type ParseFailure, type ParsedResult } from './contract.js';
-import { transcriptLine, type TranscriptEntry } from '../types/transcript.js';
-import type { TaskResult } from '../types/result.js';
+import { transcriptLine, type TranscriptEntry, type TaskResult } from 'code-agent-orchestrator-protocol';
 import { truncate } from '../util/misc.js';
 
 /** The contract validator to judge a candidate with: the shared one, or a runner's own decoding of it. */

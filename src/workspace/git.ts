@@ -1,7 +1,7 @@
 import { execa, type Options as ExecaOptions } from 'execa';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import type { GitInfo } from '../types/result.js';
+import type { GitInfo } from 'code-agent-orchestrator-protocol';
 
 export interface GitResult {
   stdout: string;

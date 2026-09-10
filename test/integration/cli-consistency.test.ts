@@ -15,7 +15,8 @@ import { captureCli, FAKE_CLAUDE, tmpDir, tmpGitRepo, waitFor } from '../helpers
 import { pathExists } from '../../src/util/fs.js';
 import { findActiveRun, readOrchestrator } from '../../src/cli/util.js';
 import { nowIso } from '../../src/util/misc.js';
-import { createRunPaths } from '../../src/persistence/paths.js';
+import { type WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { createNativeRunPaths } from '../../src/persistence/paths.js';
 import { clearStopRequest, readStopRequest, requestStop, watchStopRequests } from '../../src/execution/signals.js';
 import { listCommand } from '../../src/cli/commands/list.js';
 import { logsCommand } from '../../src/cli/commands/logs.js';
@@ -25,7 +26,6 @@ import { statusCommand } from '../../src/cli/commands/status.js';
 import { stopCommand } from '../../src/cli/commands/stop.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { diffCommand } from '../../src/cli/commands/diff.js';
-import type { WorkflowRun } from '../../src/types/run.js';
 
 const NL = String.fromCharCode(10);
 const YAML = ['name: consistency', 'tasks:', '  - id: implement-api', '    prompt: p', '  - id: implement-ui', '    prompt: p'].join(NL) + NL;
@@ -274,7 +274,7 @@ describe('CLI consistency', () => {
 
   it('the stop watcher consumes each request, so a second stop forces the kill', async () => {
     const dir = await tmpDir('cao-stop-watch-');
-    const paths = createRunPaths(dir);
+    const paths = createNativeRunPaths(dir);
     const runId = '2026-01-01-001';
     await fs.mkdir(paths.runDir(runId), { recursive: true });
     const seen: string[] = [];

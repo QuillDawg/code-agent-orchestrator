@@ -7,9 +7,12 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { ResolvedTask } from '../../types/workflow.js';
-import type { Interaction, InteractionAnswer } from '../../types/interaction.js';
-import { canAllowAlways } from '../../types/interaction.js';
+import {
+  type ResolvedTask,
+  type Interaction,
+  type InteractionAnswer,
+  canAllowAlways,
+} from 'code-agent-orchestrator-protocol';
 import { paint, sanitizeText } from '../../cli/color.js';
 
 export type PendingItem =

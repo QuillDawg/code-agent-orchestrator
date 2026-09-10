@@ -8,11 +8,17 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { TaskState } from '../types/run.js';
-import type { TranscriptEntry } from '../types/transcript.js';
-import type { RunnerUsage } from '../types/result.js';
 import { STATE_COLOR, stateGlyph, STATE_LABEL } from '../workflow/states.js';
-import { renderTranscript, filterEntries, nextFilter, FILTER_LABEL, type TranscriptFilter } from './transcript.js';
+import { renderTranscript } from './transcript.js';
+import {
+  filterEntries,
+  nextFilter,
+  FILTER_LABEL,
+  type TranscriptFilter,
+  type TaskState,
+  type TranscriptEntry,
+  type RunnerUsage,
+} from 'code-agent-orchestrator-protocol';
 import { entryKey } from '../persistence/transcript-log.js';
 import { paint, sanitizeText, stripAnsi } from '../cli/color.js';
 import { formatCost, formatTokens } from './format.js';

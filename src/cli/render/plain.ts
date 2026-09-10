@@ -1,9 +1,7 @@
 /** Line-based renderer for non-TTY environments and --no-tui. One line per meaningful transition. */
 import type { EventBus } from '../../events/event-bus.js';
-import type { WorkflowRun } from '../../types/run.js';
-import type { ResolvedWorkflow } from '../../types/workflow.js';
-import { addUsage } from '../../types/result.js';
-import { withoutWorkerInstructions } from '../../types/interaction.js';
+import { type WorkflowRun, type ResolvedWorkflow, addUsage } from 'code-agent-orchestrator-protocol';
+import { withoutWorkerInstructions } from '../../util/text.js';
 import { formatDuration } from '../../util/duration.js';
 import { stateGlyph, STATE_COLOR, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { renderExecutionPlan } from '../../workflow/plan.js';

@@ -8,7 +8,7 @@ import { OrchestratorError, UsageError } from '../../util/errors.js';
 import { pathExists } from '../../util/fs.js';
 import { applyWorkflowOverrides, detectRunnersForWorkflow, runnerReadinessError } from '../app.js';
 import { warnLine } from '../../util/marks.js';
-import type { PermissionMode } from '../../types/workflow.js';
+import type { PermissionMode } from 'code-agent-orchestrator-protocol';
 
 export interface ResumeOptions {
   repository?: string;

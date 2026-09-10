@@ -1,6 +1,5 @@
 /** Creates new runs and reconciles persisted runs for `cao resume`. */
-import type { WorkflowRun, RunSelection, TaskRunState } from '../types/run.js';
-import type { ResolvedWorkflow } from '../types/workflow.js';
+import type { WorkflowRun, RunSelection, TaskRunState, ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
 import type { RunStore } from '../persistence/run-store.js';
 import { sha256, nowIso, isProcessAlive } from '../util/misc.js';
 import { killTree } from '../execution/process-manager.js';

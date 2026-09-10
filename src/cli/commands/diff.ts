@@ -6,7 +6,7 @@
 import { openStore, resolveRunAndOptionalTask, executionOrder, findCapturedDiff } from '../util.js';
 import { useColor, type ColorMode } from '../color.js';
 import { diffHeader, paintPatch, patchForFile, recordMatchesFile, renderNameOnly, renderStat, summarizeDiff } from '../render/diff.js';
-import type { AttemptDiff, DiffFileRecord } from '../../types/result.js';
+import type { AttemptDiff, DiffFileRecord } from 'code-agent-orchestrator-protocol';
 
 export interface DiffOptions {
   repository?: string;

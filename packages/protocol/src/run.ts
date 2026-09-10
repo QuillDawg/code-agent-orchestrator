@@ -1,7 +1,7 @@
 import type { EnrichedTaskResult, RunnerUsage, TaskResult } from './result.js';
 import type { ResolvedWorkflow, WorkspaceMode } from './workflow.js';
 import type { InteractionRecord } from './interaction.js';
-import type { RunnerFailure } from '../runners/task-runner.js';
+import type { RunnerFailure } from './runner.js';
 import type { FileOp } from './transcript.js';
 
 export const TASK_STATES = [

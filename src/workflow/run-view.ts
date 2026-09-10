@@ -2,9 +2,8 @@
  * Read-only derivations over a persisted run, shared by every surface that reads the run directory rather
  * than the live scheduler: the order the tasks actually executed in, and the diff an attempt captured.
  */
-import type { WorkflowRun, TaskAttempt, TaskRunState } from '../types/run.js';
-import type { AttemptDiff } from '../types/result.js';
-import { withoutWorkerInstructions } from '../types/interaction.js';
+import type { WorkflowRun, TaskAttempt, TaskRunState, AttemptDiff } from 'code-agent-orchestrator-protocol';
+import { withoutWorkerInstructions } from '../util/text.js';
 import type { RunStore } from '../persistence/run-store.js';
 
 /**

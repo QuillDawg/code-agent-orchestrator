@@ -10,8 +10,8 @@ import path from 'node:path';
 import { buildWorkflow, makeRun, MemoryRunStore } from '../helpers/index.js';
 import { buildReport, renderReportMarkdown, type RunReport } from '../../src/workflow/report.js';
 import { parseDiffStat } from '../../src/workspace/diff.js';
-import type { TaskAttempt, WorkflowRun } from '../../src/types/run.js';
 import type { CapturedDiff } from '../../src/workspace/diff.js';
+import type { TaskAttempt, WorkflowRun } from 'code-agent-orchestrator-protocol';
 
 const YAML = `
 name: beta improvements

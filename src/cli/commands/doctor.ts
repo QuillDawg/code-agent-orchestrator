@@ -13,22 +13,22 @@ import { execa } from 'execa';
 import { detectClaude, type ClaudeDetection } from '../../runners/claude/detect.js';
 import { detectCodex, type CodexDetection } from '../../runners/codex/detect.js';
 import { Git } from '../../workspace/git.js';
-import { createRunPaths, ORCHESTRATOR_DIR } from '../../persistence/paths.js';
+import { ORCHESTRATOR_DIR, type WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { createNativeRunPaths } from '../../persistence/paths.js';
 import type { RunLock } from '../../persistence/run-store.js';
-import type { WorkflowRun } from '../../types/run.js';
 import { pathExists, readJsonIfExists, isInside } from '../../util/fs.js';
 import { isProcessAlive } from '../../util/misc.js';
 import { mark } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
 import { packageInfo } from '../../util/package-info.js';
 import { DEFAULT_WORKFLOW_FILES, findStoreRoot } from '../util.js';
+import { resolveWorkflowPath } from '../util.js';
 import type { AgentCapability, AgentRuntimeDetection } from '../../runners/capabilities.js';
 import { ProcessManager } from '../../execution/process-manager.js';
 import { probeClaude } from '../../runners/claude/probe.js';
 import { probeCodex } from '../../runners/codex/probe.js';
 import type { AgentProbe } from '../../runners/probe.js';
 import { detectRunnersForWorkflow, prepareWorkflow, requireValid, type RunnerDetection } from '../app.js';
-import { resolveWorkflowPath } from '../util.js';
 
 export interface DoctorOptions {
   repository?: string;
@@ -268,10 +268,10 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
   if (probes.length) facts.probes = probes;
 
   // Runs: which of them an orchestrator still owns, and which locks are left over from one that is gone.
-  const runs = storeRoot ? await readRuns(createRunPaths(storeRoot).runsDir) : [];
+  const runs = storeRoot ? await readRuns(createNativeRunPaths(storeRoot).runsDir) : [];
   const active = new Set<string>();
   if (storeRoot) {
-    const paths = createRunPaths(storeRoot);
+    const paths = createNativeRunPaths(storeRoot);
     for (const run of runs) {
       const lock = await readJsonIfExists<RunLock>(paths.lockFile(run.runId)).catch(() => null);
       if (!lock || typeof lock.pid !== 'number') continue;

@@ -1,8 +1,14 @@
-import type { TaskResult, RunnerUsage } from '../types/result.js';
-import type { ResolvedTask } from '../types/workflow.js';
-import type { AttemptOutcome } from '../types/run.js';
-import type { TranscriptEntry, FileOp } from '../types/transcript.js';
-import type { Interaction, InteractionAnswer } from '../types/interaction.js';
+import type {
+  TaskResult,
+  RunnerUsage,
+  ResolvedTask,
+  AttemptOutcome,
+  TranscriptEntry,
+  FileOp,
+  Interaction,
+  InteractionAnswer,
+  RunnerFailure,
+} from 'code-agent-orchestrator-protocol';
 import type { PreflightProblem } from './preflight.js';
 
 export interface RunnerInput {
@@ -44,18 +50,6 @@ export interface RunnerHooks {
    * runner withdraws the request (worker cancelled it, process exited); the promise must still settle.
    */
   onInteraction(interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer>;
-}
-
-/** Provider-neutral diagnostics used for retry policy and operator-facing reports. */
-export interface RunnerFailure {
-  providerCode?: string;
-  httpStatus?: number;
-  requestId?: string;
-  retryAfterMs?: number;
-  retryable: boolean;
-  sessionId?: string;
-  /** The provider may have applied tools before the transport failed. */
-  partialWork?: boolean;
 }
 
 export type RunnerOutcome =

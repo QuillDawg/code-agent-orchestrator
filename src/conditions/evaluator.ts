@@ -8,7 +8,7 @@
  *   value  := STRING | NUMBER | true | false | null | list | path | '(' expr ')'
  *   path   := IDENT ('.' IDENT | '[' STRING ']')*   with `.length` on arrays/strings
  */
-import type { WhenSpec } from '../types/workflow.js';
+import type { WhenSpec } from 'code-agent-orchestrator-protocol';
 
 type Token =
   | { kind: 'op'; value: string }

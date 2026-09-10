@@ -20,7 +20,7 @@
  * `decline` lets the agent carry on with the turn; `cancel` interrupts it. A refused request is not a
  * reason to throw a turn's work away, so a denial declines and only a failure to answer at all cancels.
  */
-import type { Interaction, InteractionAnswer, InteractionQuestion } from '../../types/interaction.js';
+import type { Interaction, InteractionAnswer, InteractionQuestion } from 'code-agent-orchestrator-protocol';
 import { nowIso, truncate } from '../../util/misc.js';
 import { sanitizeText } from '../../util/text.js';
 

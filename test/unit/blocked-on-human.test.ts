@@ -15,8 +15,8 @@ import {
 } from '../../src/runners/codex/app-server-protocol.js';
 import { needsInputResult } from '../../src/runners/codex/app-server.js';
 import { describeDenials } from '../../src/runners/claude/protocol.js';
-import { NEEDS_INPUT_HINT, canAllowAlways, withoutWorkerInstructions, type Interaction } from '../../src/types/interaction.js';
-import { ESC } from '../../src/util/text.js';
+import { canAllowAlways, type Interaction } from 'code-agent-orchestrator-protocol';
+import { NEEDS_INPUT_HINT, withoutWorkerInstructions, ESC } from '../../src/util/text.js';
 
 const ctx = { taskId: 'a', attempt: 1 };
 const thread = 'codex-exec-thread-1';

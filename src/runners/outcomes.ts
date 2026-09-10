@@ -10,8 +10,8 @@
  * agent-specific (which stderr means a rejected flag, which YAML key produced a flag) stays in
  * `codex/failure.ts` and `claude/transient.ts`; this module owns the shape and the wording.
  */
-import type { AttemptOutcome } from '../types/run.js';
-import type { RunnerFailure, RunnerOutcome } from './task-runner.js';
+import type { AttemptOutcome, RunnerFailure } from 'code-agent-orchestrator-protocol';
+import type { RunnerOutcome } from './task-runner.js';
 import { firstLine, truncate } from '../util/misc.js';
 import { sanitizeText } from '../util/text.js';
 

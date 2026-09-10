@@ -10,7 +10,7 @@ import readline from 'node:readline';
 import { execa } from 'execa';
 import { RingBuffer } from '../util/async-queue.js';
 import { isProcessAlive, nowIso, sleep, type Clock, systemClock } from '../util/misc.js';
-import type { ActiveProcess } from '../types/run.js';
+import type { ActiveProcess } from 'code-agent-orchestrator-protocol';
 import type { Logger } from '../logging/logger.js';
 import { silentLogger } from '../logging/logger.js';
 

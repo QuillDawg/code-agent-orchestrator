@@ -2,11 +2,10 @@ import { openStore, readOrchestrator, questionLines, table, taskDuration, curren
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { stateGlyph, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
-import { ACTIVE_TASK_STATES } from '../../types/run.js';
-import { addUsage } from '../../types/result.js';
+import { ACTIVE_TASK_STATES, addUsage } from 'code-agent-orchestrator-protocol';
+import { withoutWorkerInstructions } from '../../util/text.js';
 import { agentLabel, formatCost, formatTokens } from '../../tui/format.js';
 import { sanitizeText } from '../color.js';
-import { withoutWorkerInstructions } from '../../types/interaction.js';
 import { runUsage } from '../render/plain.js';
 
 export interface StatusOptions {

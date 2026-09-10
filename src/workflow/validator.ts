@@ -1,5 +1,5 @@
 /** Semantic validation of a ResolvedWorkflow. Never lets a broken workflow reach a Claude session. */
-import type { ResolvedWorkflow, ResolvedTask } from '../types/workflow.js';
+import type { ResolvedWorkflow, ResolvedTask } from 'code-agent-orchestrator-protocol';
 import type { Diagnostic } from '../config/normalize.js';
 import { TaskGraph } from './graph.js';
 import { compileWhen } from '../conditions/evaluator.js';

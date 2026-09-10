@@ -1,12 +1,11 @@
 import path from 'node:path';
 import { openStore, resolveRunAndTask, currentAttempt, findCapturedDiff, questionLines, taskDuration, headingRule } from '../util.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
-import { withoutWorkerInstructions } from '../../types/interaction.js';
-import { ACTIVE_TASK_STATES } from '../../types/run.js';
+import { ACTIVE_TASK_STATES, addUsage } from 'code-agent-orchestrator-protocol';
+import { withoutWorkerInstructions } from '../../util/text.js';
 import { renderStat, summarizeDiff } from '../render/diff.js';
 import { stateGlyph, STATE_LABEL } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
-import { addUsage } from '../../types/result.js';
 import { formatCost, formatTokens } from '../../tui/format.js';
 import { attemptRows, interactionRows, resultNotes, totalWaitedMs } from '../../tui/history.js';
 import { sanitizeText, useColor } from '../color.js';

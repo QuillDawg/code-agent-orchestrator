@@ -3,9 +3,15 @@
  * human. All of it is already persisted on the attempt; these render it. Shared by `cao task` and the
  * dashboard detail view so both tell the same story about a task that was retried, resumed or kept waiting.
  */
-import { ACTIVE_TASK_STATES, type AttemptOutcome, type TaskAttempt, type TaskRunState } from '../types/run.js';
-import type { InteractionAnswerSource, InteractionRecord } from '../types/interaction.js';
-import type { TaskResult } from '../types/result.js';
+import {
+  ACTIVE_TASK_STATES,
+  type AttemptOutcome,
+  type TaskAttempt,
+  type TaskRunState,
+  type InteractionAnswerSource,
+  type InteractionRecord,
+  type TaskResult,
+} from 'code-agent-orchestrator-protocol';
 import { formatClock, formatDuration, formatDurationShort } from '../util/duration.js';
 import { firstLine, truncate } from '../util/misc.js';
 import { sanitizeText } from '../util/text.js';

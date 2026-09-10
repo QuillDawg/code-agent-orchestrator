@@ -6,7 +6,7 @@ import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { pausedNeeds } from '../../src/workflow/run-view.js';
-import type { ResolvedWorkflow } from '../../src/types/workflow.js';
+import type { ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
 
 interface Harness {
   scheduler: WorkflowScheduler;

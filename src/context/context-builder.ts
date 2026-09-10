@@ -2,9 +2,13 @@
  * Builds the "# Previous Task Context" markdown that is prepended to a task prompt from the
  * structured results of explicitly selected upstream tasks. Never concatenates conversations.
  */
-import type { ResolvedTask } from '../types/workflow.js';
-import type { TaskRunState, TaskAttempt } from '../types/run.js';
-import type { ContextField, EnrichedTaskResult } from '../types/result.js';
+import type {
+  ResolvedTask,
+  TaskRunState,
+  TaskAttempt,
+  ContextField,
+  EnrichedTaskResult,
+} from 'code-agent-orchestrator-protocol';
 import { formatDiffStat } from '../workspace/diff.js';
 
 export interface ContextBuildInput {

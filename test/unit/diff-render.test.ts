@@ -12,8 +12,7 @@ import {
 } from '../../src/cli/render/diff.js';
 import { executionOrder } from '../../src/cli/util.js';
 import { stripAnsi } from '../../src/cli/color.js';
-import type { DiffFileRecord } from '../../src/types/result.js';
-import type { WorkflowRun } from '../../src/types/run.js';
+import type { DiffFileRecord, WorkflowRun } from 'code-agent-orchestrator-protocol';
 
 const PATCH = [
   'diff --git a/src/a.ts b/src/a.ts',

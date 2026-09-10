@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildWorkflow, makeRun } from '../helpers/index.js';
 import { ContextBuilder } from '../../src/context/context-builder.js';
-import type { EnrichedTaskResult } from '../../src/types/result.js';
+import type { EnrichedTaskResult } from 'code-agent-orchestrator-protocol';
 
 const YAML = `
 name: t

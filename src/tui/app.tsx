@@ -5,16 +5,20 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { render, Box, Text, useInput, useApp, useStdout, type Instance } from 'ink';
-import type { WorkflowRun, TaskRunState } from '../types/run.js';
-import { ACTIVE_TASK_STATES } from '../types/run.js';
-import type { ResolvedTask } from '../types/workflow.js';
+import {
+  type WorkflowRun,
+  type TaskRunState,
+  ACTIVE_TASK_STATES,
+  type ResolvedTask,
+  type Interaction,
+  type InteractionAnswer,
+  addUsage,
+  type TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
 import type { EventBus } from '../events/event-bus.js';
 import type { WorkflowScheduler } from '../workflow/scheduler.js';
-import type { Interaction, InteractionAnswer } from '../types/interaction.js';
-import { addUsage } from '../types/result.js';
 import { stateGlyph, STATE_LABEL, STATE_COLOR, summarize } from '../workflow/states.js';
 import { formatDuration, formatDurationShort, formatClock } from '../util/duration.js';
-import type { TranscriptEntry } from '../types/transcript.js';
 import { renderTranscript } from './transcript.js';
 import { TranscriptViewer, type ViewerTask } from './viewer.js';
 import { Modal, type PendingItem } from './dashboard/modal.js';

@@ -9,9 +9,14 @@ import { promises as fs, createWriteStream } from 'node:fs';
 import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
 import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
 import { codexCapabilityNeeds } from './preflight.js';
-import type { CodexOptions, ResolvedTask } from '../../types/workflow.js';
-import type { RunnerUsage } from '../../types/result.js';
-import type { TranscriptEntry, TranscriptEntryInput, FileOp } from '../../types/transcript.js';
+import type {
+  CodexOptions,
+  ResolvedTask,
+  RunnerUsage,
+  TranscriptEntry,
+  TranscriptEntryInput,
+  FileOp,
+} from 'code-agent-orchestrator-protocol';
 import { ProcessManager } from '../../execution/process-manager.js';
 import { detectCodex } from './detect.js';
 import { splitCommand } from '../claude/detect.js';

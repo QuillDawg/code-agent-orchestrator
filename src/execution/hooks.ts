@@ -1,6 +1,6 @@
 /** Lifecycle hooks: shell commands declared explicitly in the workflow YAML. Never driven by worker output. */
 import { execa } from 'execa';
-import type { HooksConfig, ResolvedWorkflow } from '../types/workflow.js';
+import type { HooksConfig, ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
 import type { EventBus } from '../events/event-bus.js';
 import type { Logger } from '../logging/logger.js';
 import { silentLogger } from '../logging/logger.js';

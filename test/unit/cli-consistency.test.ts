@@ -11,7 +11,7 @@ import { stateGlyph } from '../../src/workflow/states.js';
 import { attachPlainRenderer, formatAgents } from '../../src/cli/render/plain.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { renderExecutionPlan } from '../../src/workflow/plan.js';
-import type { TaskState } from '../../src/types/run.js';
+import type { TaskState } from 'code-agent-orchestrator-protocol';
 import { buildWorkflow, makeRun, tmpDir } from '../helpers/index.js';
 import { paint, stripAnsi } from '../../src/cli/color.js';
 

@@ -16,7 +16,7 @@
  * Rejections of things no human could answer either (auth token refresh, attestation, the current time,
  * dynamic tool calls) are deliberately *not* matched: they are capability gaps, not questions.
  */
-import type { TaskResult } from '../../types/result.js';
+import type { TaskResult } from 'code-agent-orchestrator-protocol';
 import { truncate } from '../../util/misc.js';
 import { sanitizeText } from '../../util/text.js';
 

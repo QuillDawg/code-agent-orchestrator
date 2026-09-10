@@ -5,10 +5,13 @@ import { buildCodexArgs, CodexRunner } from '../../src/runners/codex/codex-runne
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
 import type { RunnerHooks } from '../../src/runners/task-runner.js';
-import type { ResolvedTask } from '../../src/types/workflow.js';
-import type { Interaction } from '../../src/types/interaction.js';
+import {
+  type ResolvedTask,
+  type Interaction,
+  parseTranscriptLine,
+  type TranscriptEntry,
+} from 'code-agent-orchestrator-protocol';
 import { FAKE_CODEX, tmpDir } from '../helpers/index.js';
-import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import { splitCompletionObject } from '../../src/runners/completion-text.js';
 import { eventLineRenderer } from '../../src/cli/commands/logs.js';
 

@@ -1,13 +1,12 @@
 import path from 'node:path';
 import { openStore, readOrchestrator, resolveRunAndTask, currentAttempt } from '../util.js';
+import { isInteractive } from '../util.js';
 import { followFile, readTail } from '../../tui/follow.js';
 import { pathExists } from '../../util/fs.js';
 import { UsageError } from '../../util/errors.js';
-import { isInteractive } from '../util.js';
 import { useColor, type ColorMode } from '../color.js';
-import { ACTIVE_TASK_STATES, type WorkflowRun } from '../../types/run.js';
+import { ACTIVE_TASK_STATES, type WorkflowRun, type TranscriptEntry } from 'code-agent-orchestrator-protocol';
 import { createTranscriptStream } from '../../tui/transcript.js';
-import type { TranscriptEntry } from '../../types/transcript.js';
 import type { FileRunStore } from '../../persistence/run-store.js';
 
 export interface LogsOptions {

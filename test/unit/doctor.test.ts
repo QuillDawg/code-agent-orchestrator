@@ -12,7 +12,8 @@ import {
   type DoctorDeps,
   type DoctorFacts,
 } from '../../src/cli/commands/doctor.js';
-import { createRunPaths } from '../../src/persistence/paths.js';
+import { type WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { createNativeRunPaths } from '../../src/persistence/paths.js';
 import { buildWorkflow, captureCli, FAKE_CLAUDE, FAKE_CODEX, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
 import { probeCodexAppServer, probeCodexExec } from '../../src/runners/codex/probe.js';
@@ -20,7 +21,6 @@ import { probeClaudePromptMode } from '../../src/runners/claude/probe.js';
 import { probeInstalledAgents } from '../../src/cli/commands/doctor.js';
 import type { AgentProbe } from '../../src/runners/probe.js';
 import { stripAnsi } from '../../src/cli/color.js';
-import type { WorkflowRun } from '../../src/types/run.js';
 
 const NL = String.fromCharCode(10);
 
@@ -209,7 +209,7 @@ async function writeRun(repo: string, runId: string, wtPath: string, branch: str
     retryWindowStart: 1,
     attempts: [{ number: 1, kind: 'task', triggeredBy: 'initial', startedAt: new Date().toISOString(), cwd: wtPath, workspace: { kind: 'worktree', path: wtPath, cwd: wtPath, branch } }],
   };
-  const paths = createRunPaths(repo);
+  const paths = createNativeRunPaths(repo);
   await fs.mkdir(paths.runDir(runId), { recursive: true });
   await fs.writeFile(paths.workflowFile(runId), JSON.stringify(run, null, 2));
   await fs.writeFile(paths.latestFile, runId);
@@ -258,7 +258,7 @@ describe.skipIf(!HAS_GIT)('gathering the facts', () => {
 
   it('finds a lock whose orchestrator process is gone, and leaves a live one alone', async () => {
     const repo = await tmpGitRepo('cao-doctor-');
-    const paths = createRunPaths(repo);
+    const paths = createNativeRunPaths(repo);
     await writeRun(repo, '2026-01-01-001', path.join(repo, '.orchestrator', 'worktrees', 'build'), 'orchestrator/build');
     await fs.writeFile(paths.lockFile('2026-01-01-001'), JSON.stringify({ pid: 4242, startedAt: '2026-01-01T00:00:00.000Z', heartbeatAt: '2026-01-01T00:00:00.000Z' }));
 

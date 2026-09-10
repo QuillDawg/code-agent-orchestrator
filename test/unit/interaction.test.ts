@@ -3,11 +3,9 @@ import { buildWorkflow, makeRun, MemoryRunStore, MockRunner, MockWorkspace, stat
 import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
-import type { ResolvedWorkflow } from '../../src/types/workflow.js';
-import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
+import type { ResolvedWorkflow, Interaction, InteractionAnswer, TaskState } from 'code-agent-orchestrator-protocol';
 import type { HookRunner } from '../../src/execution/hooks.js';
 import type { Clock } from '../../src/util/misc.js';
-import type { TaskState } from '../../src/types/run.js';
 
 function harness(workflow: ResolvedWorkflow, runner: MockRunner, extra: Partial<ConstructorParameters<typeof WorkflowScheduler>[0]> = {}) {
   const run = makeRun(workflow);
