@@ -94,6 +94,8 @@ export class CodexRunner implements TaskRunner {
       eventsLog.write(`${JSON.stringify(e)}\n`);
       hooks.onTranscript(e);
     };
+    // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
+    if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
     let sessionId = input.resumeSessionId;
     const model = input.task.model;
     const usage: RunnerUsage = { sessionId, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };

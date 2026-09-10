@@ -48,6 +48,18 @@ interface JsonObject extends Record<string, unknown> {
 }
 const MAX_OUTPUT_CHARS = 2000;
 
+/**
+ * The app-server command line. The security envelope travels in the `thread/start` params rather than in
+ * argv, so only the profile (a global flag) and raw passthrough appear here.
+ */
+export function buildCodexAppServerArgs(options: CodexOptions): string[] {
+  const args: string[] = [];
+  if (options.profile) args.push('--profile', options.profile);
+  args.push('app-server', '--stdio');
+  if (options.extraArgs?.length) args.push(...options.extraArgs);
+  return args;
+}
+
 function sandboxPolicy(mode: NonNullable<CodexOptions['sandbox']>, cwd: string, addDirs: string[]): JsonObject {
   if (mode === 'danger-full-access') return { type: 'dangerFullAccess' };
   if (mode === 'read-only') return { type: 'readOnly', networkAccess: false };
@@ -99,16 +111,15 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   }
 
   const { file, args: prefix } = splitCommand(config.command);
-  const args = [...prefix];
-  if (options.profile) args.push('--profile', options.profile);
-  args.push('app-server', '--stdio');
-  if (options.extraArgs?.length) args.push(...options.extraArgs);
+  const args = [...prefix, ...buildCodexAppServerArgs(options)];
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_CHILD_SESSION'].includes(key)) env[key] = value;
   Object.assign(env, input.env);
 
   const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
   const entry = (value: TranscriptEntry): void => { eventsLog.write(`${JSON.stringify(value)}\n`); hooks.onTranscript(value); };
+  // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
+  if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
   const usage: RunnerUsage = { sessionId: input.resumeSessionId, model: input.task.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };
   const pending = new Map<string, AbortController>();
   let proc: ManagedProcess;
