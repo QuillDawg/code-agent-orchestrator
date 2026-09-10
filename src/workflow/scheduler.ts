@@ -138,15 +138,11 @@ function oneLine(text: string): string {
 }
 
 /**
- * What a denied worker is told to do about it. Every deny reaches the worker through `handleInteraction`,
- * whoever produced it — the dashboard, a host handler, the timeout — so the instruction is added in one
- * place rather than trusted to each of them.
- */
-
-/**
- * A deny message the worker can act on: what was refused, and how to end the attempt. Without the title a
- * dashboard's "Denied by the user" reaches the operator again as a task result that says nothing about
- * which prompt it was.
+ * A deny message the worker can act on: what was refused, and how to end the attempt. Every deny reaches
+ * the worker through `handleInteraction`, whoever produced it — the dashboard, a host handler, the timeout
+ * — so the instruction is added here rather than trusted to each of them. Without the title a dashboard's
+ * "Denied by the user" reaches the operator again as a task result that says nothing about which prompt it
+ * was.
  */
 function denyMessage(message: string, title: string): string {
   const subject = oneLine(title);
@@ -1328,12 +1324,12 @@ export class WorkflowScheduler {
         : outcome === 'invalid_result'
           ? 'invalid_result'
           : outcome === 'config_error'
-          ? 'config_error'
-          : outcome === 'crash'
-            ? 'crash'
-            : outcome === 'api_error'
-              ? 'api_error'
-              : 'exhausted_retries';
+            ? 'config_error'
+            : outcome === 'crash'
+              ? 'crash'
+              : outcome === 'api_error'
+                ? 'api_error'
+                : 'exhausted_retries';
     const message = mergeFailed ? (attempt.error ?? 'merge conflict') : (result?.error ?? result?.summary ?? attempt.error ?? outcome);
     if (result && !state.result) {
       // keep the failed result for context/inspection (not marked as the final result)
