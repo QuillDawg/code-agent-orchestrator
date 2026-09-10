@@ -168,6 +168,40 @@ describe('scheduler: worker interactions', () => {
     expect(states(h.run)).toEqual({ a: 'success' });
   });
 
+
+  it('a stop that lets workers finish still settles an open prompt', async () => {
+    // Ctrl+C and `cao stop` ask for `cancel`, where aborting the attempt withdraws the request with it. A
+    // stop in `wait` mode lets a running worker finish instead - and a worker blocked on a human cannot
+    // finish without an answer, so without settling the request the run sits on it until
+    // execution.interactionTimeout: half an hour by default, with a modal still in front of the operator.
+    const runner = new MockRunner().when('a', { kind: 'interact', interaction: {}, then: { kind: 'success' } });
+    let handlerAborted = false;
+    const h = harness(await wf(ONE), runner, {
+      interactionHandler: (_i, signal) =>
+        new Promise((resolve) => {
+          signal.addEventListener('abort', () => {
+            handlerAborted = true;
+            resolve({ kind: 'deny', message: 'never answered' });
+          });
+        }),
+    });
+    const done = h.scheduler.execute();
+    for (let i = 0; i < 200 && h.run.tasks['a']!.state !== 'waiting'; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(h.run.tasks['a']!.state).toBe('waiting');
+
+    h.scheduler.requestStop('wait', 'on_failure');
+    const res = await done;
+    expect(handlerAborted).toBe(true);
+    const record = h.run.tasks['a']!.attempts[0]!.interactions![0]!;
+    expect(record.source).toBe('stopped');
+    expect(record.answer).toBe('deny');
+    // The worker was told what was refused and how to end, exactly as any other denial.
+    const answer = runner.calls[0]!.answers![0]! as { kind: string; message: string };
+    expect(answer.message).toContain('The run is stopping');
+    expect(answer.message).toContain('needs_input if you cannot continue');
+    expect(res.state).not.toBe('running');
+  });
+
   it('a stop request while waiting aborts the handler and cancels the task', async () => {
     const runner = new MockRunner().when('a', { kind: 'interact', interaction: {}, then: { kind: 'success' } });
     const h = harness(await wf(ONE), runner, {

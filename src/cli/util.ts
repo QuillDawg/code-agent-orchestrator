@@ -5,7 +5,7 @@ import { pathExists } from '../util/fs.js';
 import { Git } from '../workspace/git.js';
 import { UsageError } from '../util/errors.js';
 import { isProcessAlive } from '../util/misc.js';
-import { stripAnsi } from '../util/text.js';
+import { sanitizeText, stripAnsi } from '../util/text.js';
 import { glyph, rule } from '../util/glyphs.js';
 import type { WorkflowRun, TaskRunState } from '../types/run.js';
 import { currentAttempt, elapsedCell } from '../tui/history.js';
@@ -269,4 +269,19 @@ export function parseList(values: string[] | undefined): string[] {
 
 export function isInteractive(): boolean {
   return Boolean(process.stdout.isTTY && process.stdin.isTTY && !process.env.CI && process.env.TERM !== 'dumb');
+}
+
+/**
+ * A question a worker asked, ready to print under the task that asked it: agent-written text, so control
+ * characters and escapes are stripped, blank lines dropped, and the whole thing clipped to `maxLines` so a
+ * worker cannot push the command that answers it off the screen. Each line is prefixed so a multi-line
+ * question reads as a quotation rather than as more of the orchestrator talking.
+ */
+export function questionLines(question: string | undefined, maxLines = 4, width = 160): string[] {
+  const text = sanitizeText(question ?? '').trim();
+  if (!text) return [];
+  const all = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const shown = all.slice(0, maxLines).map((l) => `| ${truncateVisible(l, width)}`);
+  if (all.length > maxLines) shown.push(`| ... ${all.length - maxLines} more line(s); see cao task <id>`);
+  return shown;
 }

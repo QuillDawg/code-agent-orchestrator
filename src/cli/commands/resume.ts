@@ -48,6 +48,25 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
     out(warnLine(`Could not reload environment from ${run.configPath}: ${(err as Error).message}`));
   }
 
+  // Everything that can be decided from the arguments and the persisted run is decided before the lock is
+  // taken: a mistyped --task must not leave the run owned by a process that then exits.
+  const only = parseList(opts.task);
+  const from = parseList(opts.from);
+  const input = opts.input !== undefined ? { taskId: only[0] ?? '', text: opts.input } : undefined;
+  if (input && !input.taskId) throw new UsageError('--input requires --task <id> to name the task that needs input');
+  if (input) {
+    // Answers are delivered one task at a time: an answer belongs to the question one worker asked, and
+    // pairing several of them with several --task values on one line is guesswork the operator cannot see.
+    if (only.length > 1) throw new UsageError(`--input answers one task at a time; name a single --task (got ${only.join(', ')}) and resume again for the next one`);
+    const target = run.tasks[input.taskId];
+    if (!target) throw new UsageError(`Run ${runId} has no task "${input.taskId}"`);
+    if (target.state !== 'needs_input') {
+      const waiting = Object.values(run.tasks).filter((t) => t.state === 'needs_input').map((t) => t.id);
+      const alternative = waiting.length ? ` Waiting for an answer: ${waiting.join(', ')}.` : ' No task in this run is waiting for an answer.';
+      throw new UsageError(`Task "${input.taskId}" is ${target.state}, not needs_input, so there is no question for --input to answer.${alternative}`);
+    }
+  }
+
   // Probe workers before acquiring the run lock or killing/reclassifying orphaned attempts. A bad CLI
   // should leave the persisted run and any recoverable worker exactly as they were.
   const runners = await detectRunnersForWorkflow(run.workflow, environment);
@@ -57,10 +76,6 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   const lock = await store.acquireLock(runId);
   if (!lock.ok) throw new OrchestratorError(`Run ${runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
-  const only = parseList(opts.task);
-  const from = parseList(opts.from);
-  const input = opts.input !== undefined ? { taskId: only[0] ?? '', text: opts.input } : undefined;
-  if (input && !input.taskId) throw new UsageError('--input requires --task <id> to name the task that needs input');
   const selection = only.length || from.length ? { only: input ? [] : only, from } : undefined;
   if (run.state === 'completed' && !selection) {
     out(`Run ${runId} already completed. Use --task <id> or --from <id> to re-run specific tasks.`);

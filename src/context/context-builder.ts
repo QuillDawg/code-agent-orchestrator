@@ -15,6 +15,8 @@ export interface ContextBuildInput {
   previousAttempt?: TaskAttempt;
   previousOutputTail?: string[];
   userInput?: string;
+  /** What the previous attempt stopped to ask, so a restarted worker knows what the answer answers. */
+  userInputQuestion?: string;
 }
 
 export interface ContextBuildOutput {
@@ -143,7 +145,17 @@ export class ContextBuilder {
       blocks.push(lines.join('\n\n'));
     }
 
-    if (input.userInput) blocks.push(`# User Input\n\n${input.userInput}`);
+    if (input.userInput) {
+      // The question comes first: a restarted worker has no memory of having asked, and an answer on its
+      // own ("Use Postgres") is not something it can act on.
+      const asked = input.userInputQuestion?.trim();
+      const quoted = asked ? asked.split('\n').map((l) => `> ${l}`).join('\n') : '';
+      blocks.push(
+        asked
+          ? `# User Input\n\nA previous attempt of this task stopped and asked for a human decision:\n\n${quoted}\n\nThe operator answered:\n\n${input.userInput}`
+          : `# User Input\n\n${input.userInput}`,
+      );
+    }
 
     if (truncated) warnings.push('context was truncated to fit context.maxChars');
     return { markdown: blocks.join('\n\n'), sources, truncated, warnings };

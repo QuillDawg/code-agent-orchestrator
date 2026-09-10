@@ -50,7 +50,8 @@ export type InteractionAnswer =
   /** Question text -> chosen label(s) or free text; multi-select labels are comma-joined. */
   | { kind: 'answer'; answers: Record<string, string> };
 
-export type InteractionAnswerSource = 'handler' | 'no_handler' | 'timeout' | 'cancelled' | 'aborted';
+/** `cancelled` = the worker withdrew the request; `stopped` = the operator stopped the run while it was open. */
+export type InteractionAnswerSource = 'handler' | 'no_handler' | 'timeout' | 'cancelled' | 'stopped' | 'aborted';
 
 /** Persisted summary of an interaction (on the attempt and, while pending, on the task). */
 export interface InteractionRecord {
@@ -81,4 +82,22 @@ export function canAllowAlways(interaction: Interaction): boolean {
 /** The summary kept on the attempt, the task and the run event log; never carries the raw tool input. */
 export function toInteractionRecord(interaction: Interaction): InteractionRecord {
   return { id: interaction.id, kind: interaction.kind, toolName: interaction.toolName, title: interaction.title, requestedAt: interaction.requestedAt };
+}
+
+/**
+ * What every denied worker is told to do about it, appended to each deny message by the scheduler so the
+ * instruction is written in one place rather than trusted to each dashboard, handler and timeout.
+ *
+ * It is addressed to the agent. An operator reading the same text back out of a paused task gets nothing
+ * from it, so the surfaces that show them the question take it off again with `withoutWorkerInstructions`.
+ */
+export const NEEDS_INPUT_HINT = 'finish with status needs_input if you cannot continue';
+
+/** Agent-facing boilerplate removed, for text on its way to an operator rather than to a worker. */
+export function withoutWorkerInstructions(text: string): string {
+  return text
+    .split(NEEDS_INPUT_HINT)
+    .join('')
+    .replace(/[;,.\s]+$/, '')
+    .trim();
 }

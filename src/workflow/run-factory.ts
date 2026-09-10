@@ -59,6 +59,7 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
   const rerun: string[] = [];
   const orphansKilled: number[] = [];
   const retryFailed = opts.retryFailed ?? true;
+  const named = new Set([...(opts.selection?.only ?? []), ...(opts.selection?.from ?? [])]);
 
   for (const st of Object.values(run.tasks)) {
     switch (st.state) {
@@ -131,9 +132,17 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
           st.reason = undefined;
           st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
           rerun.push(st.id);
-        } else {
+        } else if (named.has(st.id)) {
+          // Named without an answer: the operator asked for the task itself again, so start it over.
           st.state = 'pending';
-          notes.push(`"${st.id}" still needs input (use --input "<text>" --task ${st.id})`);
+          st.reason = undefined;
+          st.message = undefined;
+          st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
+          rerun.push(st.id);
+        } else {
+          // Left holding its question. Restarting it unanswered would spend a whole attempt to arrive back
+          // at the same question, so the run stays paused on it and says how to answer it.
+          notes.push(`"${st.id}" still needs input: cao resume ${run.runId} --task ${st.id} --input "<your answer>"`);
         }
         break;
       default:

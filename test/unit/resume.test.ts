@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildWorkflow, makeRun, MemoryRunStore, MockRunner, MockWorkspace, states, waitFor } from '../helpers/index.js';
+import { attemptReason } from '../../src/tui/history.js';
 import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
@@ -103,18 +104,79 @@ describe('resume', () => {
     expect(states(run)).toEqual({ a: 'success', gate: 'success', b: 'success' });
   });
 
-  it('feeds user input back into a needs_input task', async () => {
+  it('answers a needs_input task by continuing the session that asked', async () => {
     const wf = await workflow();
     const run = makeRun(wf);
-    const runner = new MockRunner().when('b', { kind: 'status', status: 'needs_input', error: 'which?' });
+    const runner = new MockRunner().when('b', { kind: 'status', status: 'needs_input', error: 'Which database should I use?' });
     const first = schedule(run, runner);
     expect((await first.scheduler.execute()).state).toBe('paused');
+    const sessionId = run.tasks.b!.attempts[0]!.sessionId;
+    expect(sessionId).toBeDefined();
+
     await reconcileForResume(run, { input: { taskId: 'b', text: 'Use Postgres' } });
     const runner2 = new MockRunner();
     const res = await schedule(run, runner2, new MemoryRunStore(), true).scheduler.execute();
     expect(res.state).toBe('completed');
-    expect(runner2.calls[0]!.prompt).toContain('# User Input\n\nUse Postgres');
-    expect(run.tasks.b!.attempts[1]!.triggeredBy).toBe('user_input');
+    // The worker is not made to do the whole task again: its own session is continued with the answer, and
+    // the answer arrives next to the question it answers.
+    const call = runner2.calls.find((c) => c.taskId === 'b')!;
+    expect(call.resumeSessionId).toBe(sessionId);
+    expect(call.prompt).toContain('# Your Question Was Answered');
+    expect(call.prompt).toContain('> Which database should I use?');
+    expect(call.prompt).toContain('Use Postgres');
+    expect(call.prompt).not.toContain('# Task');
+    const attempt = run.tasks.b!.attempts[1]!;
+    expect(attempt.triggeredBy).toBe('user_input');
+    expect(attempt.resumedSessionId).toBe(sessionId);
+    expect(attemptReason(run.tasks.b!.attempts, 1)).toContain('continued with your answer');
+  });
+
+  it('restarts a task whose session cannot be resumed, and still tells it what it is answering', async () => {
+    const { workflow: wf } = await buildWorkflow(
+      'name: t\ntasks:\n  - id: b\n    prompt: p\n    retry:\n      resumeSession: false\n',
+      { gitRoot: process.cwd() },
+    );
+    const run = makeRun(wf);
+    const runner = new MockRunner().when('b', { kind: 'status', status: 'needs_input', error: 'Which database should I use?' });
+    expect((await schedule(run, runner).scheduler.execute()).state).toBe('paused');
+    await reconcileForResume(run, { input: { taskId: 'b', text: 'Use Postgres' } });
+    const runner2 = new MockRunner();
+    expect((await schedule(run, runner2, new MemoryRunStore(), true).scheduler.execute()).state).toBe('completed');
+    const call = runner2.calls[0]!;
+    expect(call.resumeSessionId).toBeUndefined();
+    // A fresh session redoes the task, so it has to be told what the answer is an answer to.
+    expect(call.prompt).toContain('# User Input');
+    expect(call.prompt).toContain('> Which database should I use?');
+    expect(call.prompt).toContain('Use Postgres');
+    expect(call.prompt).toContain('# Task');
+    expect(attemptReason(run.tasks.b!.attempts, 1)).toContain('restarted with your answer');
+  });
+
+  it('leaves the other paused tasks holding their questions instead of restarting them unanswered', async () => {
+    // Both have to be in flight when the first one pauses the run, so they run side by side.
+    const { workflow: wf } = await buildWorkflow(
+      'name: t\nexecution:\n  mode: dag\n  maxConcurrency: 2\ntasks:\n  - id: b\n    prompt: p\n  - id: c\n    prompt: p\n',
+      { gitRoot: process.cwd() },
+    );
+    const run = makeRun(wf);
+    const runner = new MockRunner()
+      .when('b', { kind: 'status', status: 'needs_input', error: 'Which database?' })
+      .when('c', { kind: 'status', status: 'needs_input', error: 'Which region?' });
+    expect((await schedule(run, runner).scheduler.execute()).state).toBe('paused');
+
+    const reconciled = await reconcileForResume(run, { input: { taskId: 'b', text: 'Use Postgres' } });
+    expect(run.tasks.c!.state).toBe('needs_input');
+    expect(reconciled.notes.join(' ')).toContain('--task c --input');
+    const runner2 = new MockRunner();
+    const res = await schedule(run, runner2, new MemoryRunStore(), true).scheduler.execute();
+    // Only the answered task ran again; the run is still paused on the one nobody has answered.
+    expect(res.state).toBe('paused');
+    expect(runner2.calls.map((call) => call.taskId)).toEqual(['b']);
+    expect(run.tasks.c!.attempts).toHaveLength(1);
+
+    // Naming the task without an answer is how an operator asks for it to be started over regardless.
+    await reconcileForResume(run, { selection: { only: ['c'] } });
+    expect(run.tasks.c!.state).toBe('pending');
   });
 
   it('re-runs explicitly selected successful tasks on resume', async () => {

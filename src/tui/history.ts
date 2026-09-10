@@ -55,6 +55,7 @@ const SOURCE_LABEL: Record<InteractionAnswerSource, string> = {
   no_handler: 'no dashboard attached',
   timeout: 'timed out',
   cancelled: 'withdrawn by the worker',
+  stopped: 'the run was stopped',
   aborted: 'the dashboard could not answer',
 };
 
@@ -123,6 +124,9 @@ export function attemptReason(attempts: TaskAttempt[], index: number): string | 
   if (!a || !prev || a.triggeredBy === 'initial') return undefined;
   const outcome = prev.outcome ? (OUTCOME_LABEL[prev.outcome] ?? prev.outcome) : 'no recorded outcome';
   const session = a.resumedSessionId ? `, continuing session ${a.resumedSessionId.slice(0, 8)}` : '';
+  // An answer delivered into the session that asked the question did not restart anything, so it must not
+  // be described as a restart: the two cost very different amounts and mean different things to a reader.
+  if (a.triggeredBy === 'user_input' && a.resumedSessionId) return `continued with your answer after attempt ${prev.number} ${outcome}${session}`;
   // A run written by an older build can carry a trigger or an outcome this one has no word for; the sentence
   // still has to read as a sentence rather than putting `undefined` in front of a reader.
   return `${TRIGGER_VERB[a.triggeredBy] ?? 'started again'} after attempt ${prev.number} ${outcome}${session}`;

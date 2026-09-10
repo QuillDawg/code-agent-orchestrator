@@ -19,7 +19,7 @@ import { attemptReason, attemptElapsedMs, interactionRows, taskElapsed, totalWai
 import { formatDuration } from '../util/duration.js';
 import { sanitizeText } from '../util/text.js';
 import { STATE_LABEL, summarize } from './states.js';
-import { executionOrder, findCapturedDiff, type CapturedAttemptDiff } from './run-view.js';
+import { executionOrder, findCapturedDiff, pausedNeeds, type CapturedAttemptDiff, type PausedNeed } from './run-view.js';
 
 export interface ReportAttempt {
   number: number;
@@ -131,6 +131,8 @@ export interface RunReport {
   };
   /** Ids of the tasks the run never got to, in workflow order. */
   notStarted: string[];
+  /** Tasks holding the run paused, with what they want and the command that answers it. */
+  needs: PausedNeed[];
   tasks: ReportTask[];
 }
 
@@ -234,6 +236,7 @@ export async function buildReport(store: Pick<RunStore, 'readDiff'>, run: Workfl
     models: [...models.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([model, count]) => ({ model, tasks: count })),
     changes: { files: paths.size, additions, deletions, complete },
     notStarted: run.workflow.tasks.map((t) => t.id).filter((id) => !tasks.some((t) => t.id === id && t.ran)),
+    needs: pausedNeeds(run),
     tasks,
   };
 }
@@ -427,8 +430,12 @@ export function renderReportMarkdown(report: RunReport): string {
   if (report.counts.cancelled) outcome.push(`${report.counts.cancelled} cancelled`);
   // `counts.pending` lumps a task that is running in with one that has not been reached; the two are not
   // the same news to a reader, so they are counted apart here.
-  const inFlight = report.tasks.filter((t) => t.ran && !TERMINAL_STATES.has(t.state)).length;
-  if (inFlight) outcome.push(`${inFlight} still running`);
+  // A task holding the run paused is not running: nothing is, and telling a reader otherwise sends them
+  // looking for a worker that exited.
+  const paused = report.tasks.filter((t) => t.state === 'needs_input' || t.state === 'awaiting_approval').length;
+  const inFlight = report.tasks.filter((t) => t.ran && !TERMINAL_STATES.has(t.state)).length - paused;
+  if (inFlight > 0) outcome.push(`${inFlight} still running`);
+  if (paused) outcome.push(`${paused} waiting for you`);
   if (report.notStarted.length) outcome.push(`${report.notStarted.length} never started`);
   lines.push(`- **Result:** ${RUN_STATE_LABEL[report.state]} — ${outcome.join(', ')}`);
 
@@ -453,6 +460,11 @@ export function renderReportMarkdown(report: RunReport): string {
   lines.push(`- **Changes:** ${plural(report.changes.files, 'file')} changed, +${report.changes.additions} -${report.changes.deletions}${across}${atLeast}`);
   // Named rather than sectioned: a task the run never reached has nothing to report but its own absence.
   if (report.notStarted.length) lines.push(`- **Never started:** ${report.notStarted.map((id) => code(id)).join(', ')}`);
+  // A paused report is read to find out what to do next, so what is wanted and how to give it comes first,
+  // above the per-task sections.
+  for (const need of report.needs) {
+    lines.push(`- **${need.kind === 'approval' ? 'Approval' : 'Answer'} required:** ${code(need.taskId)} \u2014 ${code(need.command)}`);
+  }
   lines.push('');
 
   const ran = report.tasks.filter((t) => t.ran);

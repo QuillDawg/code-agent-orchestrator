@@ -1,5 +1,7 @@
 import path from 'node:path';
-import { openStore, resolveRunAndTask, currentAttempt, findCapturedDiff, taskDuration, headingRule } from '../util.js';
+import { openStore, resolveRunAndTask, currentAttempt, findCapturedDiff, questionLines, taskDuration, headingRule } from '../util.js';
+import { pausedNeeds } from '../../workflow/run-view.js';
+import { withoutWorkerInstructions } from '../../types/interaction.js';
 import { ACTIVE_TASK_STATES } from '../../types/run.js';
 import { renderStat, summarizeDiff } from '../render/diff.js';
 import { stateGlyph, STATE_LABEL } from '../../workflow/states.js';
@@ -33,7 +35,7 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
   const a = currentAttempt(st);
   out(`Task: ${taskId}${def.name !== taskId ? ` ${glyph('dash')} ${def.name}` : ''}`);
   out(headingRule(50));
-  out(`Status:           ${STATE_LABEL[st.state]}${st.message ? `  (${st.message.split('\n')[0]})` : ''}`);
+  out(`Status:           ${STATE_LABEL[st.state]}${st.message ? `  (${sanitizeText(withoutWorkerInstructions(st.message)).split('\n')[0]})` : ''}`);
   const usage = live?.tasks[taskId]?.usage ?? addUsage(...st.attempts.map((x) => x.usage));
   const model = def.model ?? (usage.model ? `CLI default (${usage.model})` : 'CLI default');
   out(`Type:             ${def.type}   Agent: ${def.agent}   Model: ${model}   Effort: ${def.effort ?? 'CLI default'}`);
@@ -61,6 +63,14 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
     out('');
     out('Needs you:');
     out(`  ${st.pendingInteraction.kind}: ${sanitizeText(st.pendingInteraction.title)}  (since ${formatWhen(st.pendingInteraction.requestedAt)}; answer it in the dashboard)`);
+  }
+  // The attempt is over and the run is paused on this task: what it asked, and the command that answers it.
+  const need = pausedNeeds(run).find((n) => n.taskId === taskId);
+  if (need) {
+    out('');
+    out(need.kind === 'approval' ? 'Needs your approval:' : 'Needs your answer:');
+    for (const line of questionLines(need.question, 12)) out(`  ${line}`);
+    out(`  ${need.command}`);
   }
   if (st.lastActivity) {
     out('');
@@ -123,6 +133,9 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
     out('Result:');
     out(`  status: ${st.result.status}`);
     out(`  summary: ${sanitizeText(st.result.summary)}`);
+    // Without this the one command dedicated to a task is silent about why it failed, was blocked, or is
+    // waiting for a human - all three put their explanation in `error` and nothing else prints it.
+    if (st.result.error) out(`  error: ${sanitizeText(st.result.error)}`);
     if (st.result.filesChanged.length) out(`  filesChanged: ${st.result.filesChanged.map((f) => sanitizeText(f)).join(', ')}`);
     for (const group of resultNotes(st.result)) {
       out(`  ${group.label}:`);

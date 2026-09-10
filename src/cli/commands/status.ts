@@ -1,10 +1,12 @@
-import { openStore, readOrchestrator, table, taskDuration, currentAttempt, headingRule } from '../util.js';
+import { openStore, readOrchestrator, questionLines, table, taskDuration, currentAttempt, headingRule } from '../util.js';
+import { pausedNeeds } from '../../workflow/run-view.js';
 import { stateGlyph, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
 import { ACTIVE_TASK_STATES } from '../../types/run.js';
 import { addUsage } from '../../types/result.js';
 import { agentLabel, formatCost, formatTokens } from '../../tui/format.js';
 import { sanitizeText } from '../color.js';
+import { withoutWorkerInstructions } from '../../types/interaction.js';
 import { runUsage } from '../render/plain.js';
 
 export interface StatusOptions {
@@ -59,7 +61,7 @@ export async function statusCommand(runRef: string | undefined, opts: StatusOpti
         : ACTIVE_TASK_STATES.has(state)
           ? `pid ${a?.pid ?? '-'}  ${liveTask?.lastActivity ?? st.lastActivity ?? ''}`
           : st.message
-            ? st.message.split('\n')[0] ?? ''
+            ? withoutWorkerInstructions(st.message).split('\n')[0] ?? ''
             : st.result?.summary.split('\n')[0] ?? '',
     );
     const u = liveTask?.usage ?? addUsage(...st.attempts.map((x) => x.usage));
@@ -69,6 +71,18 @@ export async function statusCommand(runRef: string | undefined, opts: StatusOpti
     return [`${stateGlyph(state)} ${t.id}`, STATE_LABEL[state], taskDuration(st, now), a ? `#${a.number}` : '', agentLabel(t.agent, u.model ?? t.model), ctx, cost, files ? String(files) : '', detail];
   });
   out(table(rows, { header: ['Task', 'Status', 'Duration', 'Attempt', 'Agent', 'Context', 'Cost', 'Files', 'Detail'], hideEmptyColumns: true }));
+  // A paused run is waiting for this operator; the table's Detail cell is one clipped line, so the question
+  // and the command that answers it are spelled out under it.
+  const needs = pausedNeeds(run);
+  if (needs.length) {
+    out('');
+    out(needs.length === 1 ? 'This run is waiting for you:' : `This run is waiting for you (${needs.length} tasks):`);
+    for (const need of needs) {
+      out(`  ${need.kind === 'approval' ? 'Approval' : 'Answer'} required for "${need.taskId}":`);
+      for (const line of questionLines(need.question, 6)) out(`    ${line}`);
+      out(`    ${need.command}`);
+    }
+  }
   out('');
   out(`Running: ${Object.values(run.tasks).filter((t) => ACTIVE_TASK_STATES.has(t.state)).length} / ${run.workflow.execution.maxConcurrency}   Completed: ${summary.success}   Failed: ${summary.failed}   Blocked: ${summary.blocked}   Skipped: ${summary.skipped}   Cancelled: ${summary.cancelled}`);
   return 0;

@@ -465,6 +465,22 @@ switch (effectiveMode) {
     }
     break;
   }
+  // Asked once; a --resume of the session carries the operator's answer as the next user message, and the
+  // worker continues from there rather than asking again.
+  case 'question-resumable': {
+    if (resumedSessionId) {
+      finish(result('success', { data: { resumedWith: prompt } }));
+      break;
+    }
+    const questions = [{ question: 'Which database?', header: 'Database', options: [{ label: 'postgres', description: 'Relational' }, { label: 'mongo', description: 'Document' }], multiSelect: false }];
+    const response = await askHost('AskUserQuestion', { questions }, { requires_user_interaction: true });
+    if (response.subtype === 'success' && response.response?.behavior === 'allow') {
+      finish(result('success', { data: { answers: response.response.updatedInput?.answers ?? {} } }));
+    } else {
+      finish(result('needs_input', { error: response.response?.message ?? 'no answer' }));
+    }
+    break;
+  }
   case 'question': {
     const questions = [{ question: 'Which database?', header: 'Database', options: [{ label: 'postgres', description: 'Relational' }, { label: 'mongo', description: 'Document' }], multiSelect: false }];
     const response = await askHost('AskUserQuestion', { questions }, { requires_user_interaction: true });

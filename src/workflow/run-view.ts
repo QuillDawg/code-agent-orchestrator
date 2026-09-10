@@ -2,8 +2,9 @@
  * Read-only derivations over a persisted run, shared by every surface that reads the run directory rather
  * than the live scheduler: the order the tasks actually executed in, and the diff an attempt captured.
  */
-import type { WorkflowRun, TaskAttempt } from '../types/run.js';
+import type { WorkflowRun, TaskAttempt, TaskRunState } from '../types/run.js';
 import type { AttemptDiff } from '../types/result.js';
+import { withoutWorkerInstructions } from '../types/interaction.js';
 import type { RunStore } from '../persistence/run-store.js';
 
 /**
@@ -56,4 +57,64 @@ export async function findCapturedDiff(
     if (diff) return { attempt, kind: 'task', diff };
   }
   return null;
+}
+
+/**
+ * The first of `parts` with readable content, with the instruction the orchestrator appends for the worker
+ * taken back off: these strings are on their way to an operator, and "finish with status needs_input if you
+ * cannot continue" is an instruction to the agent that buries the question underneath it.
+ */
+function firstText(...parts: Array<string | undefined>): string | undefined {
+  for (const p of parts) {
+    const t = withoutWorkerInstructions(p ?? '');
+    if (t) return t;
+  }
+  return undefined;
+}
+
+/**
+ * What an attempt stopped to ask. A worker that cannot reach a human ends its attempt as `needs_input`
+ * carrying the question in the result, whichever agent it was and whichever transport could not answer, so
+ * this is the one place that knows where the question lives.
+ */
+export function attemptQuestion(attempt: TaskAttempt | undefined): string | undefined {
+  if (attempt?.outcome !== 'needs_input') return undefined;
+  return firstText(attempt.result?.error, attempt.result?.summary, attempt.error);
+}
+
+/** The same, for a task sitting in `needs_input`: what `cao resume --input` is expected to answer. */
+export function taskQuestion(state: TaskRunState | undefined): string | undefined {
+  if (state?.state !== 'needs_input') return undefined;
+  return firstText(state.result?.error, state.result?.summary, state.message);
+}
+
+export interface PausedNeed {
+  taskId: string;
+  kind: 'approval' | 'input';
+  /** The question the worker asked, or the approval gate's prompt. Agent-written; sanitize before printing. */
+  question?: string;
+  /** The exact command that answers it. */
+  command: string;
+}
+
+/**
+ * Every task holding the run paused, with what it wants and the command that answers it. One derivation so
+ * the paused block `cao run` prints, `cao status`, `cao task` and `report.md` cannot drift apart - and so an
+ * operator is told the same next step wherever they happen to be looking.
+ *
+ * Answers are delivered one task at a time: `--input` names a single task, because the answer belongs to
+ * the question that one worker asked.
+ */
+export function pausedNeeds(run: WorkflowRun): PausedNeed[] {
+  const needs: PausedNeed[] = [];
+  for (const task of run.workflow.tasks) {
+    const st = run.tasks[task.id];
+    if (!st) continue;
+    if (st.state === 'awaiting_approval') {
+      needs.push({ taskId: task.id, kind: 'approval', question: task.prompt, command: `cao resume ${run.runId} --approve ${task.id}   (or --reject ${task.id})` });
+    } else if (st.state === 'needs_input') {
+      needs.push({ taskId: task.id, kind: 'input', question: taskQuestion(st), command: `cao resume ${run.runId} --task ${task.id} --input "<your answer>"` });
+    }
+  }
+  return needs;
 }

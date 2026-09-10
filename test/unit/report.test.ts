@@ -320,6 +320,29 @@ describe('buildReport', () => {
     // a task in flight is not one the run never reached, however `counts.pending` lumps them together
     expect(md).toContain('2/5 tasks succeeded, 1 skipped, 1 still running, 1 never started');
   });
+
+  it('counts a task waiting for a human apart from one that is running, and says how to answer it', async () => {
+    const { run, store } = await fixture();
+    run.state = 'paused';
+    const paused = run.tasks.implement!;
+    paused.state = 'needs_input';
+    paused.currentAttempt = undefined;
+    paused.result = {
+      ...paused.result!,
+      status: 'needs_input',
+      summary: 'Stopped for a decision',
+      error: 'Which database should I use for the new service?; finish with status needs_input if you cannot continue',
+    };
+    const report = await buildReport(store, run, NOW);
+    expect(report.needs).toEqual([
+      { taskId: 'implement', kind: 'input', question: 'Which database should I use for the new service?', command: 'cao resume 2026-09-04-001 --task implement --input "<your answer>"' },
+    ]);
+    const md = renderReportMarkdown(stable(report));
+    // Nothing is running: calling it "still running" sends a reader looking for a worker that has exited.
+    expect(md).toContain('2/5 tasks succeeded, 1 skipped, 1 waiting for you, 1 never started');
+    expect(md).not.toContain('still running');
+    expect(md).toContain('**Answer required:** `implement` — `cao resume 2026-09-04-001 --task implement --input "<your answer>"`');
+  });
 });
 
 describe('renderReportMarkdown', () => {

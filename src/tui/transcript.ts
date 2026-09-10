@@ -130,17 +130,21 @@ function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: 
       return block(lines, '? ', ['yellow', 'bold'], color, width);
     }
     case 'result': {
-      const ok = !entry.isError && entry.status !== 'failed' && entry.status !== 'blocked';
+      // A worker that stopped for a human neither succeeded nor failed. Drawn as a tick it reads as a task
+      // that is done, which is the opposite of what the log is there to say: the run is paused on it.
+      const waiting = !entry.isError && entry.status === 'needs_input';
+      const ok = !entry.isError && !waiting && entry.status !== 'failed' && entry.status !== 'blocked';
       // A completion object the worker emitted and then kept working past is a checkpoint, not the outcome:
       // it says so, and it is drawn dim rather than as a second green tick at the end of the attempt.
       const label = entry.intermediate ? 'intermediate result: ' : '';
       const head = `${label}${sanitizeText(entry.status ?? (entry.isError ? 'error' : 'done'))}${entry.summary ? ` ${glyph('dash')} ${textLines(entry.summary)[0]}` : ''}`;
-      const style: Style[] = entry.intermediate ? ['dim'] : ok ? ['green', 'bold'] : ['red', 'bold'];
+      const style: Style[] = entry.intermediate ? ['dim'] : waiting ? ['yellow', 'bold'] : ok ? ['green', 'bold'] : ['red', 'bold'];
       const lines = [paint(head, style, color)];
-      if (entry.error) lines.push(paint(textLines(entry.error)[0] ?? '', entry.intermediate ? 'dim' : 'red', color));
+      if (entry.error) lines.push(paint(textLines(entry.error)[0] ?? '', entry.intermediate ? 'dim' : waiting ? 'yellow' : 'red', color));
       if (entry.costUsd !== undefined) lines.push(paint(`cost $${entry.costUsd.toFixed(4)}`, 'dim', color));
-      const gutter = entry.intermediate ? `${glyph('bullet')} ` : ok ? `${glyph('ok')} ` : `${glyph('error')} `;
-      return block(lines, gutter, entry.intermediate ? 'dim' : ok ? 'green' : 'red', color, width);
+      // '?' is the marker every other surface uses for a task that needs you, in both alphabets.
+      const gutter = entry.intermediate ? `${glyph('bullet')} ` : waiting ? '? ' : ok ? `${glyph('ok')} ` : `${glyph('error')} `;
+      return block(lines, gutter, entry.intermediate ? 'dim' : waiting ? 'yellow' : ok ? 'green' : 'red', color, width);
     }
     case 'error':
       return block([paint(sanitizeText(entry.text), 'red', color)], `${glyph('error')} `, ['red', 'bold'], color, width);

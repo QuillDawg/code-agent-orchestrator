@@ -198,11 +198,30 @@ A worker that needs a human always ends in one of two states — `waiting` while
 
 ### Let a worker ask a question after it stopped
 
-A worker that returns `status: needs_input` pauses the run instead of guessing.
+A worker that returns `status: needs_input` pauses the run instead of guessing. The run's exit code is `3`,
+and the block it prints - like `cao status`, `cao task <id>` and `report.md` - names every task that is
+waiting, quotes what it asked, and gives the command that answers it:
+
+```
+Workflow paused.
+  Input required for "investigate":
+    | Which endpoint should the client call, v1 or v2?
+    cao resume 2026-09-10-001 --task investigate --input "<your answer>"
+```
 
 ```bash
 cao resume <run-id> --task investigate --input "Use the v2 endpoint."
 ```
+
+Your answer goes back to the worker that asked, next to its own question. Where the previous attempt left a
+session behind (the usual case on both agents), that session is **continued** with the answer as its next
+message: the work it already did is not repeated. Where it did not, the task starts again and the fresh
+prompt carries the question and the answer together, so it still knows what it is answering. `cao task <id>`
+says which happened.
+
+One answer per invocation: `--input` names a single `--task`, because the answer belongs to the question one
+worker asked. Other tasks waiting for you keep waiting - resume again for each. Naming a task that is not
+waiting for an answer is an error that says what state it is actually in, rather than quietly re-running it.
 
 ### Run only part of a workflow
 

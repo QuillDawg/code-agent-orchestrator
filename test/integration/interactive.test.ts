@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import path from 'node:path';
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { prepareWorkflow, createRuntime, requireValid } from '../../src/cli/app.js';
 import { createRun } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
@@ -12,6 +12,10 @@ import { silentLogger } from '../../src/logging/logger.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { tmpGitRepo, captureCli, waitFor, FAKE_CLAUDE } from '../helpers/index.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
+import { statusCommand } from '../../src/cli/commands/status.js';
+import { resumeCommand } from '../../src/cli/commands/resume.js';
+import { reconcileForResume } from '../../src/workflow/run-factory.js';
+import { pausedNeeds } from '../../src/workflow/run-view.js';
 import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
 import { canAllowAlways } from '../../src/types/interaction.js';
 import type { SchedulerDeps } from '../../src/workflow/scheduler.js';
@@ -327,4 +331,172 @@ describe('blocked on a human: Claude (H3.7 rows 1-5, 12)', () => {
     expect(run.tasks['a']!.attempts[0]!.interactions!.map((i) => i.source)).toEqual(['handler', 'handler']);
     expect(run.tasks['a']!.result?.data).toEqual({ first: 'allow', second: 'allow' });
   }, 30_000);
+});
+
+/**
+ * Row 11 of the matrix, and the operator-facing half of H3.5/H3.6 around it: a run that paused holding a
+ * question, answered later with `cao resume --task <id> --input "..."`. The worker must continue the session
+ * that asked rather than redo the task, and it must be told what it is answering either way.
+ */
+describe('answered later with --input: Claude (H3.7 row 11)', () => {
+  beforeAll(() => clearDetectionCache());
+
+  const ASK_ONE = 'name: i\nexecution:\n  workspaceStrategy: shared\nclaude:\n  permissionPrompts: ask\ntasks:\n  - id: a\n    prompt: do it\n';
+
+  it('row 11: the answer continues the session that asked, carrying the question with it', async () => {
+    const repo = await tmpGitRepo('cao-h3-row11-');
+    const first = await execute(repo, ASK_ONE, { FAKE_CLAUDE_MODE: 'question-resumable' });
+    expect(first.result.state).toBe('paused');
+    const task = first.run.tasks['a']!;
+    expect(task.state).toBe('needs_input');
+    const sessionId = task.attempts[0]!.sessionId;
+    expect(sessionId).toBeDefined();
+
+    // `cao resume --task a --input "..."`, through the same reconciliation the command performs.
+    await reconcileForResume(first.run, { input: { taskId: 'a', text: 'Use Postgres' } });
+    const runtime = createRuntime({ run: first.run, environment: { FAKE_CLAUDE_TRACE: first.tracePath, FAKE_CLAUDE_MODE: 'question-resumable' }, secrets: [], logger: silentLogger });
+    expect((await runtime.scheduler.execute()).state).toBe('completed');
+
+    const traceText = await fs.readFile(first.tracePath, 'utf8');
+    const trace = traceText.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as Trace);
+    expect(trace).toHaveLength(2);
+    // The task was not started over: the worker's own session was continued.
+    expect(trace[1]!.args).toEqual(expect.arrayContaining(['--resume', sessionId!]));
+    const attempt = first.run.tasks['a']!.attempts[1]!;
+    expect(attempt.triggeredBy).toBe('user_input');
+    expect(attempt.resumedSessionId).toBe(sessionId);
+
+    // ...and it knows what it is answering: the question it asked, then the operator's words.
+    const prompt = await fs.readFile(path.join(first.store.paths.attemptDir(first.run.runId, 'a', 2), 'prompt.md'), 'utf8');
+    expect(prompt).toContain('# Your Question Was Answered');
+    expect(prompt).toContain('> No human is available to answer Asking: Which database?');
+    expect(prompt).toContain('Use Postgres');
+    expect(prompt).not.toContain('do it'); // the task prompt is not repeated; the session already has it
+    expect(String(first.run.tasks['a']!.result?.data?.resumedWith)).toContain('Use Postgres');
+
+    // `cao task` tells the same story: continued, not restarted.
+    const shown = await captureCli(() => taskCommand(['a'], { repository: repo }));
+    expect(shown.stdout).toContain('continued with your answer after attempt 1 needs input');
+    expect(shown.stdout).toContain('#2  task  user input');
+  }, 60_000);
+
+  it('row 11 without a resumable session: the task restarts, and the question travels with the answer', async () => {
+    const repo = await tmpGitRepo('cao-h3-row11-fresh-');
+    // sessionPersistence: false is the documented way to say "never resume this task's session".
+    const yaml = 'name: i\nexecution:\n  workspaceStrategy: shared\nclaude:\n  permissionPrompts: ask\n  sessionPersistence: false\ntasks:\n  - id: a\n    prompt: do it\n';
+    const first = await execute(repo, yaml, { FAKE_CLAUDE_MODE: 'question-resumable' });
+    expect(first.run.tasks['a']!.state).toBe('needs_input');
+
+    await reconcileForResume(first.run, { input: { taskId: 'a', text: 'Use Postgres' } });
+    const runtime = createRuntime({ run: first.run, environment: { FAKE_CLAUDE_TRACE: first.tracePath, FAKE_CLAUDE_MODE: 'success' }, secrets: [], logger: silentLogger });
+    expect((await runtime.scheduler.execute()).state).toBe('completed');
+
+    const prompt = await fs.readFile(path.join(first.store.paths.attemptDir(first.run.runId, 'a', 2), 'prompt.md'), 'utf8');
+    expect(prompt).toContain('# User Input');
+    expect(prompt).toContain('A previous attempt of this task stopped and asked for a human decision:');
+    expect(prompt).toContain('> No human is available to answer Asking: Which database?');
+    expect(prompt).toContain('Use Postgres');
+    // A fresh session has to be given the task again.
+    expect(prompt).toContain('# Task');
+    expect(first.run.tasks['a']!.attempts[1]!.resumedSessionId).toBeUndefined();
+  }, 60_000);
+
+  it('the paused run tells the operator what is wanted and the exact command that answers it', async () => {
+    const repo = await tmpGitRepo('cao-h3-paused-surfaces-');
+    const { run, result } = await execute(repo, ASK_ONE, { FAKE_CLAUDE_MODE: 'question-resumable' });
+    expect(result.state).toBe('paused');
+    expect(result.exitCode).toBe(3);
+
+    const needs = pausedNeeds(run);
+    expect(needs).toEqual([
+      {
+        taskId: 'a',
+        kind: 'input',
+        question: 'No human is available to answer Asking: Which database?',
+        command: `cao resume ${run.runId} --task a --input "<your answer>"`,
+      },
+    ]);
+    // The instruction the orchestrator appends for the worker is not read back at the operator.
+    expect(needs[0]!.question).not.toContain('needs_input if you cannot continue');
+
+    const status = await captureCli(() => statusCommand(undefined, { repository: repo }));
+    expect(status.stdout).toContain('This run is waiting for you:');
+    expect(status.stdout).toContain('Which database?');
+    expect(status.stdout).toContain(`cao resume ${run.runId} --task a --input "<your answer>"`);
+
+    const shown = await captureCli(() => taskCommand(['a'], { repository: repo }));
+    expect(shown.stdout).toContain('Needs your answer:');
+    expect(shown.stdout).toContain('Which database?');
+    expect(shown.stdout).toContain(`cao resume ${run.runId} --task a --input "<your answer>"`);
+    // The error is where a needs_input result keeps the question; without it `cao task` said nothing at all.
+    expect(shown.stdout).toMatch(/^ {2}error: .*Which database\?/m);
+  }, 40_000);
+
+  it('runs hooks.onInputRequired headless too, where a notification is the only way anyone finds out', async () => {
+    const repo = await tmpGitRepo('cao-h3-hook-headless-');
+    const marker = path.join(repo, 'notified.txt');
+    const script = path.join(repo, 'notify.mjs');
+    await fs.writeFile(
+      script,
+      `import { appendFileSync } from 'node:fs';\nappendFileSync(process.argv[2], [process.env.CAO_INTERACTION_KIND, process.env.CAO_INTERACTION_TOOL, process.env.CAO_INTERACTION_TITLE].join('|'));\n`,
+      'utf8',
+    );
+    const hook = `node ${JSON.stringify(script)} ${JSON.stringify(marker)}`;
+    const yaml = `name: i\nexecution:\n  workspaceStrategy: shared\nclaude:\n  permissionPrompts: ask\nhooks:\n  onInputRequired: ${JSON.stringify(hook)}\ntasks:\n  - id: a\n    prompt: do it\n`;
+    const { run } = await execute(repo, yaml, { FAKE_CLAUDE_MODE: 'permission' });
+    expect(run.tasks['a']!.state).toBe('needs_input');
+    // The hook is fire-and-forget, so it can land a moment after the run ends; it must never delay the answer.
+    let notified = '';
+    await waitFor(() => Boolean((notified = existsSync(marker) ? readFileSync(marker, 'utf8') : '')), 10_000);
+    expect(notified).toBe('permission|Bash|Bash: rm -rf build');
+  }, 40_000);
+});
+
+/**
+ * `cao resume --task <id> --input "..."` as an operator types it: what it refuses, and that a refusal costs
+ * the run nothing (the lock is never taken, so the next command still works).
+ */
+describe('cao resume --input as a command (H3.5)', () => {
+  beforeAll(() => clearDetectionCache());
+
+  const ASK = 'name: i\nexecution:\n  workspaceStrategy: shared\nclaude:\n  permissionPrompts: ask\ntasks:\n  - id: a\n    prompt: do it\n  - id: b\n    prompt: do it\n    dependsOn: [a]\n';
+
+  it('refuses an answer for a task that is not waiting for one, and leaves the run resumable', async () => {
+    const repo = await tmpGitRepo('cao-h3-resume-usage-');
+    const { run } = await execute(repo, ASK, { FAKE_CLAUDE_MODE: 'question-resumable' });
+    expect(run.tasks['a']!.state).toBe('needs_input');
+    expect(run.tasks['b']!.state).toBe('pending');
+    const resume = (opts: Record<string, unknown>) => resumeCommand(undefined, { repository: repo, tui: false, claudeCommand: FAKE_CLAUDE, ...opts });
+
+    // Silently re-running the task instead was the old behaviour: the answer went nowhere and nothing said so.
+    await expect(resume({ task: ['b'], input: 'Use Postgres' })).rejects.toThrow(expect.objectContaining({ exitCode: 2 }));
+    await expect(resume({ task: ['b'], input: 'Use Postgres' })).rejects.toThrow(/"b" is pending, not needs_input.*Waiting for an answer: a/s);
+    await expect(resume({ task: ['nope'], input: 'x' })).rejects.toThrow(/has no task "nope"/);
+    await expect(resume({ input: 'x' })).rejects.toThrow(/--input requires --task/);
+    // One question, one answer: pairing two of each on one command line is guesswork.
+    await expect(resume({ task: ['a', 'b'], input: 'x' })).rejects.toThrow(/one task at a time/);
+
+    // None of that took the run lock, so the real answer still goes through.
+    expect((await captureCli(() => resume({ task: ['a'], input: 'Use Postgres' }))).code).toBe(0);
+    const after = await new FileRunStore(repo).loadRun(run.runId);
+    expect(after.tasks['a']!.state).toBe('success');
+    expect(after.tasks['a']!.attempts[1]!.triggeredBy).toBe('user_input');
+  }, 60_000);
+
+  it('leaves the tasks it was not given an answer for holding their questions', async () => {
+    const repo = await tmpGitRepo('cao-h3-resume-others-');
+    const yaml = 'name: i\nexecution:\n  mode: dag\n  maxConcurrency: 2\n  workspaceStrategy: shared\n  allowUnsafeSharedParallel: true\nclaude:\n  permissionPrompts: ask\ntasks:\n  - id: a\n    prompt: do it\n  - id: b\n    prompt: do it\n';
+    const { run } = await execute(repo, yaml, { FAKE_CLAUDE_MODE: 'question-resumable' });
+    expect(run.tasks['a']!.state).toBe('needs_input');
+    expect(run.tasks['b']!.state).toBe('needs_input');
+
+    const answered = await captureCli(() => resumeCommand(undefined, { repository: repo, tui: false, claudeCommand: FAKE_CLAUDE, task: ['a'], input: 'Use Postgres' }));
+    // Restarting "b" unanswered would spend a whole attempt arriving back at the same question.
+    expect(answered.stdout).toContain(`"b" still needs input: cao resume ${run.runId} --task b --input "<your answer>"`);
+    const after = await new FileRunStore(repo).loadRun(run.runId);
+    expect(after.tasks['a']!.state).toBe('success');
+    expect(after.tasks['b']!.state).toBe('needs_input');
+    expect(after.tasks['b']!.attempts).toHaveLength(1);
+    expect(after.state).toBe('paused');
+  }, 60_000);
 });

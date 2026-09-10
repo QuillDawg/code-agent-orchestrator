@@ -26,6 +26,34 @@ export interface ModalProps {
 
 const MAX_INPUT_LINES = 12;
 
+/**
+ * Agent-written prose, clamped to a box: sanitized, wrapped at `width` and cut to `maxLines`. Nothing an
+ * agent writes may be long enough to push the answer keys off the bottom of the terminal - an operator who
+ * cannot see "Y allow / N deny" cannot answer, and the worker waits out `interactionTimeout` for nothing.
+ */
+export function clampText(text: string, maxLines: number, width: number): string[] {
+  const wrapWidth = Math.max(20, width);
+  const out: string[] = [];
+  for (const raw of sanitizeText(text).replace(/\r\n?/g, '\n').split('\n')) {
+    let rest = raw;
+    do {
+      out.push(rest.slice(0, wrapWidth));
+      rest = rest.slice(wrapWidth);
+      if (out.length > maxLines) break;
+    } while (rest.length > 0);
+    if (out.length > maxLines) break;
+  }
+  if (out.length <= maxLines) return out;
+  return [...out.slice(0, maxLines), `... clipped; the full text is in the task's events.jsonl`];
+}
+
+/** A window of `size` options around the cursor, so a question with fifty of them still fits the screen. */
+export function optionWindow(count: number, cursor: number, size: number): { from: number; to: number } {
+  if (count <= size) return { from: 0, to: count };
+  const from = Math.max(0, Math.min(count - size, cursor - Math.floor(size / 2)));
+  return { from, to: from + size };
+}
+
 /** Lines describing a tool input for the permission modal; every line is sanitized and clipped to the box width. */
 export function describeInput(toolName: string, input: Record<string, unknown>, width: number): string[] {
   const clip = (s: string): string[] =>
@@ -119,7 +147,7 @@ function ApprovalBody(props: { item: Extract<PendingItem, { kind: 'approval' }>;
   );
 }
 
-function PermissionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; onDone: () => void }): React.JSX.Element {
+function PermissionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; onDone: () => void }): React.JSX.Element {
   const { interaction } = props;
   const [denying, setDenying] = useState(false);
   // "Allow for the rest of this task" is only offered when the CLI supplied a rule scoped to this request;
@@ -150,13 +178,19 @@ function PermissionBody(props: { interaction: Interaction; resolve: (a: Interact
     { isActive: !denying },
   );
   const lines = describeInput(interaction.toolName, interaction.input, props.width);
+  // The box, the keys and the header take about a dozen rows; whatever is left is the title's budget.
+  const titleLines = clampText(interaction.title, Math.max(2, Math.min(8, props.height - 16)), props.width);
   return (
     <Box flexDirection="column">
       <Text color="yellow" bold>
         ? {interaction.taskId} wants to use {sanitizeText(interaction.toolName)}
       </Text>
-      <Text>{sanitizeText(interaction.title)}</Text>
-      {interaction.description && interaction.description !== interaction.title && <Text dimColor>{sanitizeText(interaction.description)}</Text>}
+      {titleLines.map((l, i) => (
+        <Text key={i}>{l}</Text>
+      ))}
+      {interaction.description && interaction.description !== interaction.title && (
+        <Text dimColor>{clampText(interaction.description, 3, props.width).join('\n')}</Text>
+      )}
       {interaction.decisionReason && <Text color="magenta">{sanitizeText(interaction.decisionReason)}</Text>}
       <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1} marginBottom={1}>
         {lines.map((l, i) => (
@@ -189,7 +223,7 @@ function PermissionBody(props: { interaction: Interaction; resolve: (a: Interact
   );
 }
 
-function QuestionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; onDone: () => void }): React.JSX.Element {
+function QuestionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; onDone: () => void }): React.JSX.Element {
   const questions = props.interaction.questions ?? [];
   const [qi, setQi] = useState(0);
   const [cursor, setCursor] = useState(0);
@@ -272,23 +306,33 @@ function QuestionBody(props: { interaction: Interaction; resolve: (a: Interactio
     return <Text color="red">Question without content; press N to decline.</Text>;
   }
   const allAnswered = questions.every((_, i) => answerOf(i) !== undefined);
+  // The options list is the part that has to stay on screen, so the question text yields to it first.
+  const room = Math.max(6, props.height - 10);
+  const optionRows = Math.max(3, Math.min(q.options.length, room - 4));
+  const questionLines = Math.max(2, Math.min(8, room - optionRows));
+  const shown = optionWindow(q.options.length, cursor, optionRows);
   return (
     <Box flexDirection="column">
       <Text color="yellow" bold>
         ? {props.interaction.taskId} asks{questions.length > 1 ? ` (${qi + 1}/${questions.length})` : ''}: {sanitizeText(q.header ?? '')}
       </Text>
-      <Text>{sanitizeText(q.question)}</Text>
+      {clampText(q.question, questionLines, props.width).map((l, i) => (
+        <Text key={i}>{l}</Text>
+      ))}
       <Box flexDirection="column" marginTop={1} marginBottom={1}>
-        {q.options.map((o, i) => {
+        {shown.from > 0 && <Text dimColor>↑ {shown.from} more above</Text>}
+        {q.options.slice(shown.from, shown.to).map((o, n) => {
+          const i = shown.from + n;
           const picked = chosen[qi]?.has(i) ?? false;
           return (
-            <Text key={i} inverse={i === cursor}>
+            <Text key={i} inverse={i === cursor} wrap="truncate-end">
               {picked ? '◉ ' : '○ '}
               <Text bold>{i + 1}</Text>) {sanitizeText(o.label)}
               {o.description ? <Text dimColor> — {sanitizeText(o.description)}</Text> : null}
             </Text>
           );
         })}
+        {shown.to < q.options.length && <Text dimColor>↓ {q.options.length - shown.to} more below</Text>}
         {free[qi] !== undefined && <Text color="green">Free text: {free[qi]}</Text>}
         {q.multiSelect && <Text dimColor>(multiple answers allowed)</Text>}
       </Box>
@@ -319,9 +363,9 @@ export function Modal(props: ModalProps): React.JSX.Element {
       {item.kind === 'approval' ? (
         <ApprovalBody item={item} onDone={props.onDone} />
       ) : item.interaction.kind === 'question' ? (
-        <QuestionBody interaction={item.interaction} resolve={item.resolve} onDone={props.onDone} />
+        <QuestionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} onDone={props.onDone} />
       ) : (
-        <PermissionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} onDone={props.onDone} />
+        <PermissionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} onDone={props.onDone} />
       )}
       {props.queued > 0 && <Text dimColor>{props.queued} more waiting</Text>}
     </Box>

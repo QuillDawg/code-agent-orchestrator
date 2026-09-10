@@ -564,4 +564,17 @@ describe('telling the completion object apart from agent prose', () => {
     expect(lines).toEqual(['· intermediate result: needs_input — Which database?', '✓ success — done']);
     expect(lines.join('\n')).not.toContain('"status"');
   });
+
+  it('draws a result that stopped for a human as waiting, not as a tick', () => {
+    // `cao logs` ending an attempt with a green tick tells the operator the task is done, when in fact the
+    // run is paused on it and their answer is the only thing that will move it.
+    const lines = renderTranscript(
+      [
+        { kind: 'result', ts, status: 'needs_input', summary: 'Stopped for a decision', error: 'Which database?', isError: false },
+        { kind: 'result', ts, status: 'success', summary: 'done', isError: false },
+      ],
+      { color: false, width: 0 },
+    );
+    expect(lines).toEqual(['? needs_input — Stopped for a decision', '  Which database?', '✓ success — done']);
+  });
 });

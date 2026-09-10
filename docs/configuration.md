@@ -347,6 +347,8 @@ When nobody answers in time, or no dashboard is attached, the prompt is denied w
 
 Codex `appServer` routes stable command and file-change approvals, and (with `experimentalUserInput: true`) questions, through the same flow. Codex `exec` cannot be asked anything at all: see [`codex`](#codex-workflow-template-or-task-level) above.
 
+**Answering afterwards.** `cao resume <run> --task <id> --input "<text>"` gives a paused task its answer. When the attempt that asked left a resumable session behind, that session is continued with the answer as its next message rather than the task being run again from the top; otherwise the fresh attempt's prompt carries the question next to the answer. `--input` answers one task at a time, and a task that is not in `needs_input` is a usage error naming the state it is actually in — the other paused tasks keep their questions until you answer them too.
+
 ## `hooks`
 
 ```yaml
@@ -359,7 +361,7 @@ hooks:
   onInputRequired: [ "notify-send \"cao: $CAO_TASK_ID needs you\" \"$CAO_INTERACTION_TITLE\"" ]
 ```
 
-Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TASK_ID`, `CAO_TASK_STATE`, `CAO_TASK_TYPE`, `CAO_WORKDIR`, `CAO_BRANCH` and `CAO_HOOK` in the environment. `onInputRequired` runs when a worker is waiting for a human answer (permission prompt or question) and additionally receives `CAO_INTERACTION_KIND` (`permission` | `question`), `CAO_INTERACTION_TITLE` and `CAO_INTERACTION_TOOL`; it never blocks the answer. Only commands written in the YAML ever run; nothing a worker prints is executed. `beforeWorkflow`/`beforeTask` failures abort; other hook failures are warnings.
+Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TASK_ID`, `CAO_TASK_STATE`, `CAO_TASK_TYPE`, `CAO_WORKDIR`, `CAO_BRANCH` and `CAO_HOOK` in the environment. `onInputRequired` runs whenever a worker needs a human answer (permission prompt or question) and additionally receives `CAO_INTERACTION_KIND` (`permission` | `question`), `CAO_INTERACTION_TITLE` and `CAO_INTERACTION_TOOL`; it never blocks the answer. It fires headlessly too, where the request is denied at once and the notification is the only way anyone finds out — `CAO_TASK_STATE` is `waiting` when someone can still answer and `needs_input` when nobody can. Only commands written in the YAML ever run; nothing a worker prints is executed. `beforeWorkflow`/`beforeTask` failures abort; other hook failures are warnings.
 
 > `CAO_INTERACTION_TITLE` and `CAO_INTERACTION_TOOL` are the only hook variables carrying agent-written text — for a `Bash` prompt the title is the first line of the command the agent wants to run. They are collapsed to a single line of at most 200 characters with control characters removed before being exported, but **always quote them** in a hook command (`"$CAO_INTERACTION_TITLE"`, as in the example above) and never pass them to `eval`.
 

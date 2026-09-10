@@ -220,14 +220,16 @@ if (line.scope.startsWith('exec')) {
   emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
   // `codex exec` has no channel for approvals or questions: the CLI rejects the request itself, and the
   // wording below is the shipped binary's. The two shapes it can arrive in are both covered.
-  if (mode === 'exec-approval') {
+  // A resumed exec session is one the operator has already answered with `cao resume --input`: the answer
+  // arrives as the next user message and the worker no longer needs the approval it was refused.
+  if (mode === 'exec-approval' && !resumed) {
     emit({ type: 'turn.started' });
     emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm publish --tag latest' } });
     emit({ type: 'error', message: 'command execution approval is not supported in exec mode for thread `codex-exec-thread-1`' });
     emit({ type: 'turn.failed', error: { message: 'command execution approval is not supported in exec mode for thread `codex-exec-thread-1`' } });
     process.exit(1);
   }
-  if (mode === 'exec-user-input') {
+  if (mode === 'exec-user-input' && !resumed) {
     emit({ type: 'turn.started' });
     emit({ type: 'item.completed', item: { type: 'error', id: 'err-1', message: 'request_user_input is not supported in exec mode for thread `codex-exec-thread-1`' } });
     emit({ type: 'turn.completed', usage: { input_tokens: 4, cached_input_tokens: 0, output_tokens: 1 } });
@@ -378,6 +380,9 @@ rl.on('line', (raw) => {
       emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'acceptForSession', 'decline'], proposedExecpolicyAmendment: ['npm', 'test'] } });
     } else if (mode === 'file-approval') {
       emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', startedAtMs: Date.now(), reason: 'update fixture', grantRoot: process.cwd() } });
+    } else if (mode === 'question-then-resume' && !isResume) {
+      // Asked once; a thread/resume carrying the operator's answer completes the turn instead.
+      ask(100, [{ id: 'db', header: 'Database', question: 'Which database?', isOther: false, isSecret: false, options: [{ label: 'postgres', description: 'Relational' }] }]);
     } else if (mode === 'question' || mode === 'question-recovers') {
       ask(100, [{ id: 'choice', header: 'Choice', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'first' }] }]);
     } else if (mode === 'question-multi') {

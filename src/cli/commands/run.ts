@@ -10,7 +10,8 @@ import { renderHeader, attachPlainRenderer, renderSummary } from '../render/plai
 import { createInterruptController, clearStopRequest, watchStopRequests } from '../../execution/signals.js';
 import { ConsoleLogger, type Logger } from '../../logging/logger.js';
 import { Redactor } from '../../logging/redact.js';
-import { findActiveRun, isInteractive, parseList, resolveWorkflowPath } from '../util.js';
+import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflowPath } from '../util.js';
+import { pausedNeeds } from '../../workflow/run-view.js';
 import { ConfigError, OrchestratorError, UsageError } from '../../util/errors.js';
 import type { WorkflowRun } from '../../types/run.js';
 import type { Runtime } from '../app.js';
@@ -210,12 +211,17 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
     }
   }
   if (result.state === 'paused') {
-    const waiting = Object.values(run.tasks).filter((t) => t.state === 'awaiting_approval' || t.state === 'needs_input');
+    const needs = pausedNeeds(run);
     process.stdout.write('\nWorkflow paused.\n');
-    for (const t of waiting) {
-      if (t.state === 'awaiting_approval') process.stdout.write(`  Approval required for "${t.id}": cao resume ${run.runId} --approve ${t.id}   (or --reject ${t.id})\n`);
-      else process.stdout.write(`  Input required for "${t.id}": cao resume ${run.runId} --task ${t.id} --input "<your answer>"\n`);
+    for (const need of needs) {
+      process.stdout.write(`  ${need.kind === 'approval' ? 'Approval' : 'Input'} required for "${need.taskId}":\n`);
+      // The question itself, indented under the task: an operator who has to answer it should not have to
+      // run another command to find out what was asked.
+      for (const line of questionLines(need.question, 3)) process.stdout.write(`    ${line}\n`);
+      process.stdout.write(`    ${need.command}\n`);
     }
+    // One answer per invocation, so a run paused on several questions needs one resume each.
+    if (needs.filter((n) => n.kind === 'input').length > 1) process.stdout.write('  Answers are given one task at a time; each cao resume carries the run on to the next.\n');
   } else if (result.state === 'interrupted') {
     process.stdout.write(`\nRun interrupted. Resume with: cao resume ${run.runId}\n`);
   } else if (result.state === 'failed') {

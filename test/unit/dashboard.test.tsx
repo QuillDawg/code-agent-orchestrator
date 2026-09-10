@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from 'ink-testing-library';
 import { TranscriptViewer, type ViewerTask } from '../../src/tui/viewer.js';
 import { DashboardApp, createDashboard, type AppProps, type DashboardOptions, type DashboardShared } from '../../src/tui/app.js';
-import { Modal, describeInput, type PendingItem } from '../../src/tui/dashboard/modal.js';
+import { Modal, clampText, describeInput, optionWindow, type PendingItem } from '../../src/tui/dashboard/modal.js';
 import { ReviewView, type LoadedDiff, type ReviewTaskInput, type ReviewViewProps } from '../../src/tui/dashboard/review.js';
 import { taskFiles } from '../../src/tui/dashboard/files.js';
 import { activityCell, lastAction, retryLabel, IDLE_AFTER_MS } from '../../src/tui/dashboard/activity.js';
@@ -450,6 +450,44 @@ describe('Modal', () => {
       await wait();
       expect(got).toEqual(expected);
     }
+  });
+
+
+  it('keeps the answer keys on screen when the agent writes a very long question', async () => {
+    // The keys are the whole point of the modal: a question long enough to push "N decline" off the bottom
+    // of a terminal leaves an operator with nothing to press, and the worker waits out interactionTimeout.
+    const long = Array.from({ length: 40 }, (_, i) => `line ${i} ${'x'.repeat(300)}`).join('\n');
+    const q = interaction({
+      kind: 'question',
+      toolName: 'AskUserQuestion',
+      title: 'Asking',
+      input: {},
+      questions: [{ question: long, header: 'Long', multiSelect: false, options: Array.from({ length: 40 }, (_, i) => ({ label: `option ${i}` })) }],
+    });
+    const { lastFrame, stdin } = render(<Modal item={{ kind: 'interaction', id: 'i', interaction: q, resolve: () => undefined }} queued={0} width={100} height={24} onDone={() => undefined} />);
+    await wait();
+    const frame = stripAnsi(lastFrame() ?? '');
+    expect(frame.split('\n').length).toBeLessThanOrEqual(24);
+    expect(frame).toContain('N decline');
+    expect(frame).toContain('clipped');
+    // The option list scrolls rather than being cut off: arrowing down reaches the ones below.
+    expect(frame).toContain('more below');
+    expect(frame).not.toContain('option 39');
+    for (let i = 0; i < 39; i++) stdin.write('[B');
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('option 39');
+  });
+
+  it('clamps and windows without losing what the operator has to read', () => {
+    expect(clampText('one\ntwo', 5, 20)).toEqual(['one', 'two']);
+    expect(clampText('a'.repeat(45), 5, 20)).toEqual(['a'.repeat(20), 'a'.repeat(20), 'a'.repeat(5)]);
+    expect(clampText('a\nb\nc\nd', 2, 20)).toEqual(['a', 'b', "... clipped; the full text is in the task's events.jsonl"]);
+    // Neither a carriage return nor an erase-line sequence survives into a clamped line.
+    expect(clampText(`x${String.fromCharCode(13)}y${String.fromCharCode(27)}[2K`, 5, 40)).toEqual(['xy']);
+    expect(optionWindow(3, 0, 9)).toEqual({ from: 0, to: 3 });
+    expect(optionWindow(40, 0, 9)).toEqual({ from: 0, to: 9 });
+    expect(optionWindow(40, 20, 9)).toEqual({ from: 16, to: 25 });
+    expect(optionWindow(40, 39, 9)).toEqual({ from: 31, to: 40 });
   });
 
   it('describes tool inputs for the permission box', () => {
@@ -910,6 +948,114 @@ describe('DashboardApp', () => {
     expect(frame).toContain('Review');
     expect(frame).toContain('attempt 2  2 files changed, +5 -3');
     expect(hasRow(frame, 'M src/a.ts', '+3 -3')).toBe(true);
+    unmount();
+  });
+
+
+  it('takes over from whatever view is open when a prompt arrives, and Q does not quit while it is up', async () => {
+    const run = {
+      runId: 'run-1',
+      workflowName: 'beta',
+      repositoryRoot: '/repo',
+      state: 'running',
+      startedAt: ts,
+      workflow: { execution: { maxConcurrency: 2 }, tasks: [{ id: 'implement-102', agent: 'claude', dependsOn: [], retry: {}, codex: {} }] },
+      tasks: {
+        'implement-102': {
+          id: 'implement-102',
+          state: 'running',
+          retryWindowStart: 1,
+          attempts: [{ number: 1, kind: 'task', triggeredBy: 'initial', startedAt: ts, cwd: '.', files: {} }],
+        },
+      },
+    };
+    const scheduler = { peek: () => [], transcript: () => [], capturedDiff: async () => captured };
+    const listeners = new Set<() => void>();
+    const queue: PendingItem[] = [];
+    const shared: DashboardShared = {
+      queue,
+      listeners,
+      notify: () => listeners.forEach((l) => l()),
+      remove: (id) => {
+        const i = queue.findIndex((x) => x.id === id);
+        if (i < 0) return false;
+        queue.splice(i, 1);
+        shared.notify();
+        return true;
+      },
+    };
+    let minimised = 0;
+    const { lastFrame, stdin, unmount } = render(
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={scheduler as never} shared={shared} finished={false} onMinimise={() => minimised++} onInterrupt={() => undefined} />,
+    );
+    await wait();
+    stdin.write('c');
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('Review');
+
+    // The worker asks while the review view has the screen: the prompt has to win, or it is answered by
+    // whatever the operator was about to press in the other view.
+    let answer: InteractionAnswer | undefined;
+    queue.push({ kind: 'interaction', id: 'i1', interaction: interaction(), resolve: (a) => (answer = a) });
+    shared.notify();
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('implement-102 wants to use Bash');
+
+    // Q is "quit the dashboard" everywhere else; with a prompt up it must not reach that handler.
+    stdin.write('q');
+    await wait();
+    expect(minimised).toBe(0);
+    expect(answer).toBeUndefined();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('implement-102 wants to use Bash');
+
+    // Answering puts the view that was open back, rather than dropping the operator on the task list.
+    stdin.write('y');
+    await wait();
+    expect(answer).toEqual({ kind: 'allow', scope: 'once' });
+    expect(stripAnsi(lastFrame() ?? '')).toContain('Review');
+    unmount();
+  });
+
+  it('takes a withdrawn prompt off the screen and shows the next one', async () => {
+    const run = {
+      runId: 'run-1',
+      workflowName: 'beta',
+      repositoryRoot: '/repo',
+      state: 'running',
+      startedAt: ts,
+      workflow: { execution: { maxConcurrency: 2 }, tasks: [{ id: 'implement-102', agent: 'claude', dependsOn: [], retry: {}, codex: {} }] },
+      tasks: { 'implement-102': { id: 'implement-102', state: 'waiting', retryWindowStart: 1, attempts: [] } },
+    };
+    const listeners = new Set<() => void>();
+    const queue: PendingItem[] = [];
+    const shared: DashboardShared = {
+      queue,
+      listeners,
+      notify: () => listeners.forEach((l) => l()),
+      remove: (id) => {
+        const i = queue.findIndex((x) => x.id === id);
+        if (i < 0) return false;
+        queue.splice(i, 1);
+        shared.notify();
+        return true;
+      },
+    };
+    queue.push({ kind: 'interaction', id: 'i1', interaction: interaction({ id: 'r1', title: 'Bash: first' }), resolve: () => undefined });
+    queue.push({ kind: 'interaction', id: 'i2', interaction: interaction({ id: 'r2', toolName: 'Write', title: 'Write src/new.ts', input: { file_path: 'src/new.ts', content: 'x' } }), resolve: () => undefined });
+    const { lastFrame, stdin, unmount } = render(
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={{ peek: () => [], transcript: () => [] } as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+    );
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('Bash: first');
+    expect(stripAnsi(lastFrame() ?? '')).toContain('1 more waiting');
+
+    // The scheduler withdraws the one on screen (the worker took it back, or it timed out).
+    shared.remove('i1');
+    await wait();
+    const frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).not.toContain('Bash: first');
+    expect(frame).toContain('wants to use Write');
+    void stdin;
     unmount();
   });
 

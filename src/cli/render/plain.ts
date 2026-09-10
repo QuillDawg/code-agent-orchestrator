@@ -3,6 +3,7 @@ import type { EventBus } from '../../events/event-bus.js';
 import type { WorkflowRun } from '../../types/run.js';
 import type { ResolvedWorkflow } from '../../types/workflow.js';
 import { addUsage } from '../../types/result.js';
+import { withoutWorkerInstructions } from '../../types/interaction.js';
 import { formatDuration } from '../../util/duration.js';
 import { stateGlyph, STATE_COLOR, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { renderExecutionPlan } from '../../workflow/plan.js';
@@ -144,7 +145,9 @@ export function renderSummary(run: WorkflowRun, opts: { color?: boolean } = {}):
     const dur = st.startedAt && st.endedAt ? formatDuration(new Date(st.endedAt).getTime() - new Date(st.startedAt).getTime()) : '';
     const usage = addUsage(...st.attempts.map((a) => a.usage));
     const cost = usage.costUsd !== undefined ? formatCost(usage.costUsd) : '';
-    const note = st.state === 'success' ? '' : st.message ? firstLine(st.message) : '';
+    // The instruction appended for the worker ("finish with status needs_input...") is not news to the
+    // operator reading the last table of the run; the question underneath it is.
+    const note = st.state === 'success' ? '' : st.message ? firstLine(withoutWorkerInstructions(st.message)) : '';
     // STATE_LABEL, not the raw state name, so the last table of a run says "Completed" like `cao status` does.
     return [[`${paint(stateGlyph(st.state), STATE_COLOR[st.state], color)} ${t.id}`, STATE_LABEL[st.state], dur, cost, note]];
   });

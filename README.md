@@ -764,12 +764,18 @@ Completed tasks are recorded as `state: completed` in the workflow file and skip
 <details>
 <summary><strong>The run exited with code 3.</strong></summary>
 
-It is paused on an approval gate or a worker that returned `needs_input`. Answer it:
+It is paused on an approval gate or a worker that returned `needs_input`. The block it printed names every
+task that is waiting, quotes what it asked and gives the command that answers it; `cao status`, `cao task
+<id>` and `report.md` say the same. Answer it:
 
 ```bash
 cao resume <run-id> --approve <task>
 cao resume <run-id> --task <task> --input "Use the v2 endpoint."
 ```
+
+Your answer goes back to the worker that asked, next to its own question: where the paused attempt left a
+session behind it is continued with the answer rather than the task being redone. One `--task` per
+`--input` — if several tasks are waiting, answer them one at a time.
 
 </details>
 

@@ -13,7 +13,7 @@ import { TERMINAL_TASK_STATES, ACTIVE_TASK_STATES } from '../types/run.js';
 import type { ResolvedTask, ResolvedWorkflow, WorkspaceMode } from '../types/workflow.js';
 import type { AttemptDiff, EnrichedTaskResult, GitInfo, TaskResult, RunnerUsage } from '../types/result.js';
 import { transcriptLine, type TranscriptEntry } from '../types/transcript.js';
-import { describeAnswer, toInteractionRecord, type Interaction, type InteractionAnswer, type InteractionAnswerSource, type InteractionRecord } from '../types/interaction.js';
+import { describeAnswer, toInteractionRecord, NEEDS_INPUT_HINT, type Interaction, type InteractionAnswer, type InteractionAnswerSource, type InteractionRecord } from '../types/interaction.js';
 import { sanitizeText } from '../util/text.js';
 import { formatDuration } from '../util/duration.js';
 import type { RunStore } from '../persistence/run-store.js';
@@ -23,6 +23,7 @@ import type { WorkspaceManager, FinalizeResult } from '../workspace/workspace-ma
 import type { EventBus } from '../events/event-bus.js';
 import type { HookRunner } from '../execution/hooks.js';
 import { noopHookRunner } from '../execution/hooks.js';
+import { attemptQuestion } from './run-view.js';
 import { ContextBuilder } from '../context/context-builder.js';
 import { evaluateWhen } from '../conditions/evaluator.js';
 import { assertRunTransition, assertTaskTransition, summarize } from './states.js';
@@ -140,7 +141,6 @@ function oneLine(text: string): string {
  * whoever produced it — the dashboard, a host handler, the timeout — so the instruction is added in one
  * place rather than trusted to each of them.
  */
-const NEEDS_INPUT_HINT = 'finish with status needs_input if you cannot continue';
 
 /**
  * A deny message the worker can act on: what was refused, and how to end the attempt. Without the title a
@@ -160,6 +160,19 @@ function resumePrompt(previous: TaskAttempt | undefined): string {
     '# Session Resumed',
     `Your previous turn in this session was cut short by a transient API error${detail ? ` (${detail})` : ''}. The task and its context are unchanged.`,
     'Continue exactly where you left off. Re-check the working tree if you are unsure what was already done, finish the remaining work, and end with the single JSON completion object required by the contract.',
+  ].join('\n\n');
+}
+
+/** Prompt for a session continued with `cao resume --input`: the answer, and the question it answers. */
+function answerPrompt(question: string | undefined, answer: string): string {
+  const quoted = question ? question.split('\n').map((l) => `> ${l}`).join('\n') : '';
+  return [
+    '# Your Question Was Answered',
+    question
+      ? `You ended your previous turn in this session needing a human decision:\n\n${quoted}`
+      : 'You ended your previous turn in this session needing a human decision.',
+    `The operator answered:\n\n${answer}`,
+    'The task and its context are unchanged. Continue from where you left off using this answer, and end with the single JSON completion object required by the contract.',
   ].join('\n\n');
 }
 
@@ -227,6 +240,8 @@ export class WorkflowScheduler {
   private readonly pendingMerges = new Map<string, { task: ResolvedTask; state: TaskRunState; attempt: TaskAttempt; fin: FinalizeResult }>();
   /** taskId -> still-open interactions by request id; a worker can block on several at once (parallel tool calls). */
   private readonly openInteractions = new Map<string, Map<string, InteractionRecord>>();
+  /** The same requests, as callbacks that settle them from outside the handler (the operator stopped the run). */
+  private readonly interactionSettlers = new Map<string, Map<string, (reason: string) => void>>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
   private retryTimer: unknown;
   private liveTimer: unknown;
@@ -615,7 +630,10 @@ export class WorkflowScheduler {
     const mode = this.workspaceMode(task);
     // After a transient API error the worker's session is intact: continue it instead of starting over. The
     // same goes for a session that finished its turn without the completion object: it is asked for just that.
-    const resumable = lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result';
+    // An answer to a question the worker asked is the same conversation continuing too: `cao resume --input`
+    // continues the session that asked rather than paying for the whole task again.
+    const answering = Boolean(state.userInput) && lastAttempt?.outcome === 'needs_input';
+    const resumable = lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering;
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
     const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
     state.resumeSessionId = undefined;
@@ -664,9 +682,17 @@ export class WorkflowScheduler {
         previousAttempt: resumeSessionId ? undefined : previousFailed,
         previousOutputTail: previousFailed && !resumeSessionId ? this.buffers.get(task.id)?.last(30).map(transcriptLine) : undefined,
         userInput: state.userInput,
+        // A restarted task has forgotten what it asked, so the answer travels with the question it answers.
+        userInputQuestion: attemptQuestion(lastAttempt),
       });
       for (const w of ctx.warnings) this.bus.emit({ type: 'workflow.warning', code: 'context', message: w, taskId: task.id });
-      const prompt = resumeSessionId ? (nudge ? nudgePrompt(lastAttempt) : resumePrompt(lastAttempt)) : ContextBuilder.compose(ctx.markdown, task.prompt);
+      const prompt = resumeSessionId
+        ? answering
+          ? answerPrompt(attemptQuestion(lastAttempt), state.userInput!)
+          : nudge
+            ? nudgePrompt(lastAttempt)
+            : resumePrompt(lastAttempt)
+        : ContextBuilder.compose(ctx.markdown, task.prompt);
       await this.store.writeContext(this.run.runId, task.id, ctx.markdown);
       await this.store.writePrompt(this.run.runId, task.id, number, prompt);
       await this.store.writeAttempt(this.run.runId, task.id, attempt);
@@ -676,7 +702,11 @@ export class WorkflowScheduler {
 
       const attemptDir = await this.store.attemptDir(this.run.runId, task.id, number);
       const runner = this.runners.get(task.runner);
-      this.note(task.id, number, nudge ? `asking ${task.agent} for the completion object` : resumeSessionId ? `resuming ${task.agent} session` : `starting ${task.agent}`);
+      this.note(
+        task.id,
+        number,
+        nudge ? `asking ${task.agent} for the completion object` : resumeSessionId ? `${answering ? 'answering the' : 'resuming'} ${task.agent} session` : `starting ${task.agent}`,
+      );
       const promise = runner.run(
         {
           runId: this.run.runId,
@@ -790,6 +820,7 @@ export class WorkflowScheduler {
   /** Every request a task is blocked on is settled elsewhere; drop the bookkeeping (attempt end, interrupt). */
   private clearInteractions(taskId: string): void {
     this.openInteractions.delete(taskId);
+    this.interactionSettlers.delete(taskId);
     const state = this.run.tasks[taskId];
     if (state) state.pendingInteraction = undefined;
   }
@@ -825,7 +856,26 @@ export class WorkflowScheduler {
     const deny = (message: string): InteractionAnswer => ({ kind: 'deny', message: denyMessage(message, interaction.title) });
     /** Whatever answered, a denied worker is told what was refused and how to finish. */
     const normalize = (answer: InteractionAnswer): InteractionAnswer => (answer.kind === 'deny' ? { kind: 'deny', message: denyMessage(answer.message, interaction.title) } : answer);
+    /** Fire-and-forget: the hook is a notification, so it never stands between the worker and its answer. */
+    const notify = (taskState: 'waiting' | 'needs_input'): void => {
+      if (!task || !this.workflow.hooks.onInputRequired.length) return;
+      void this.hooks
+        .run('onInputRequired', {
+          taskId,
+          taskState,
+          env: {
+            ...this.hookEnv(task, a?.workspace),
+            CAO_INTERACTION_KIND: interaction.kind,
+            CAO_INTERACTION_TITLE: oneLine(interaction.title),
+            CAO_INTERACTION_TOOL: oneLine(interaction.toolName),
+          },
+        })
+        .catch(() => undefined);
+    };
     if (!this.interactionHandler || !state || !a || state.currentAttempt !== attempt) {
+      // Headless is exactly when nobody is watching the terminal, so the notification matters most here
+      // even though the answer is already decided: the hook is how an operator finds out at all.
+      notify('needs_input');
       return finish(deny(`No human is available to answer ${interaction.title}`), 'no_handler');
     }
     if (state.state === 'running') this.setState(state, 'waiting');
@@ -834,20 +884,7 @@ export class WorkflowScheduler {
     open.set(interaction.id, record);
     this.refreshPending(taskId);
     await this.persist().catch(() => undefined);
-    if (task) {
-      void this.hooks
-        .run('onInputRequired', {
-          taskId,
-          taskState: 'waiting',
-          env: {
-            ...this.hookEnv(task, a.workspace),
-            CAO_INTERACTION_KIND: interaction.kind,
-            CAO_INTERACTION_TITLE: oneLine(interaction.title),
-            CAO_INTERACTION_TOOL: oneLine(interaction.toolName),
-          },
-        })
-        .catch(() => undefined);
-    }
+    notify('waiting');
     const timeoutMs = this.workflow.execution.interactionTimeoutMs;
     // The handler waits on its own signal, aborted whenever this request stops needing an answer: the worker
     // withdrew it, the timeout expired, or it has just been answered. A dashboard that is not told loses its
@@ -857,6 +894,14 @@ export class WorkflowScheduler {
     let onAbort: (() => void) | undefined;
     try {
       const answer = await new Promise<{ answer: InteractionAnswer; source: InteractionAnswerSource }>((resolve) => {
+        // A stop request settles the prompt from outside: an operator who has asked the run to stop must not
+        // then be held by a modal, and a worker left blocked would otherwise wait out `interactionTimeout`.
+        const settlers = this.interactionSettlers.get(taskId) ?? new Map<string, (reason: string) => void>();
+        this.interactionSettlers.set(taskId, settlers);
+        settlers.set(interaction.id, (reason) => {
+          handler.abort(new Error(reason));
+          resolve({ answer: deny(reason), source: 'stopped' });
+        });
         if (timeoutMs !== null) {
           timer = this.clock.setTimeout(() => {
             handler.abort(new Error('interaction timed out'));
@@ -878,7 +923,16 @@ export class WorkflowScheduler {
     } finally {
       if (timer !== undefined) this.clock.clearTimeout(timer);
       if (onAbort) signal.removeEventListener('abort', onAbort);
+      const settlers = this.interactionSettlers.get(taskId);
+      if (settlers?.delete(interaction.id) && settlers.size === 0) this.interactionSettlers.delete(taskId);
       handler.abort(new Error('the request has been answered'));
+    }
+  }
+
+  /** Deny every request still waiting for a human, in every task. Safe to call twice: settling is idempotent. */
+  private settleOpenInteractions(reason: string): void {
+    for (const settlers of [...this.interactionSettlers.values()]) {
+      for (const settle of [...settlers.values()]) settle(reason);
     }
   }
 
@@ -908,6 +962,9 @@ export class WorkflowScheduler {
           this.stop = { mode: w.mode, cause: w.cause };
         }
         if (w.mode === 'cancel') for (const e of this.inflight.values()) e.abort.abort();
+        // Whatever the stop mode, nothing may still be asking the operator who just stopped the run: with
+        // `wait` the worker is left to finish its turn, and a denial is what lets it.
+        this.settleOpenInteractions(w.cause === 'signal' ? 'The run was interrupted' : 'The run is stopping');
         break;
       case 'restart': {
         if (this.stop || this.inflight.has(w.taskId)) break;
@@ -1188,6 +1245,9 @@ export class WorkflowScheduler {
 
     if (outcome === 'needs_input' && result) {
       state.result = { ...result, taskId: task.id, attempt: attempt.number, usage: attempt.usage, completedAt: nowIso() };
+      // Keep the session that asked the question: `cao resume --input` continues it instead of restarting.
+      const sessionId = attempt.usage?.sessionId ?? attempt.sessionId;
+      state.resumeSessionId = sessionResumable(task) && sessionId ? sessionId : undefined;
       await this.store.writeResult(this.run.runId, task.id, state.result);
       this.setState(state, 'needs_input', 'needs_input', result.error ?? result.summary);
       this.bus.emit({ type: 'task.needs_input', taskId: task.id, summary: result.error ?? result.summary });

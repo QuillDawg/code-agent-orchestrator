@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { prepareWorkflow, createRuntime, requireValid } from '../../src/cli/app.js';
-import { createRun } from '../../src/workflow/run-factory.js';
+import { createRun, reconcileForResume } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { silentLogger } from '../../src/logging/logger.js';
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
@@ -569,5 +569,81 @@ describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
     expect(stored.error).toContain('request_user_input is not supported in exec mode');
     expect(stored.error).toContain('codex.experimentalUserInput: true');
     expect(stored.followUp).toEqual([expect.stringContaining('codex.transport: appServer')]);
+  }, 60_000);
+});
+
+/**
+ * Row 11 for Codex on both transports: a task paused holding a question, answered later with
+ * `cao resume --task <id> --input "..."`. The answer continues the thread that asked - `exec resume <id>`
+ * on the exec transport, `thread/resume` on the app-server - rather than paying for the task twice.
+ */
+describe.skipIf(!HAS_GIT)('answered later with --input: Codex (H3.7 row 11)', () => {
+  beforeAll(() => clearCodexDetectionCache());
+
+  it('row 11 exec: the answer resumes the thread that was refused an approval', async () => {
+    const repo = await tmpGitRepo('cao-h3-codex-row11-exec-');
+    const yaml = workflowYaml('exec', '  - id: blocked\n    retries: 0\n    prompt: do it');
+    const first = await execute(repo, yaml, { modes: { blocked: 'exec-approval' } });
+    expect(first.result.state).toBe('paused');
+    const task = first.run.tasks.blocked!;
+    expect(task.state).toBe('needs_input');
+    const threadId = task.attempts[0]!.sessionId;
+    expect(threadId).toBe('codex-exec-thread-1');
+
+    await reconcileForResume(first.run, { input: { taskId: 'blocked', text: 'Yes, publish it' } });
+    const runtime = createRuntime({
+      run: first.run,
+      environment: { FAKE_CODEX_TRACE: first.tracePath, FAKE_CODEX_TASK_MODES: JSON.stringify({ blocked: 'exec-approval' }) },
+      secrets: [],
+      logger: silentLogger,
+    });
+    expect((await runtime.scheduler.execute()).state).toBe('completed');
+
+    const trace = await readTrace(first.tracePath);
+    expect(trace).toHaveLength(2);
+    // `codex exec resume <thread>` - the same thread, not a new one.
+    expect(trace[1]!.scope).toBe('exec resume');
+    expect(trace[1]!.args).toContain(threadId!);
+    // The prompt it is resumed with quotes the rejection it stopped on and then the operator's answer.
+    expect(trace[1]!.prompt).toContain('# Your Question Was Answered');
+    expect(trace[1]!.prompt).toContain('not supported in exec mode');
+    expect(trace[1]!.prompt).toContain('Yes, publish it');
+    const attempt = first.run.tasks.blocked!.attempts[1]!;
+    expect(attempt.triggeredBy).toBe('user_input');
+    expect(attempt.resumedSessionId).toBe(threadId);
+    expect(first.run.tasks.blocked!.result?.summary).toBe('fake exec resumed blocked');
+  }, 60_000);
+
+  it('row 11 appServer: a question nobody could answer during the run is answered afterwards', async () => {
+    const repo = await tmpGitRepo('cao-h3-codex-row11-app-');
+    // experimentalUserInput off: the question is declined through the protocol and the attempt ends holding it.
+    const yaml = workflowYaml('appServer', '  - id: asked\n    retries: 0\n    prompt: do it');
+    const first = await execute(repo, yaml, { modes: { asked: 'question-then-resume' } });
+    expect(first.result.state).toBe('paused');
+    const task = first.run.tasks.asked!;
+    expect(task.state).toBe('needs_input');
+    expect(task.result?.error).toContain('Which database?');
+    const threadId = task.attempts[0]!.sessionId;
+    expect(threadId).toBeDefined();
+
+    await reconcileForResume(first.run, { input: { taskId: 'asked', text: 'Use Postgres' } });
+    const runtime = createRuntime({
+      run: first.run,
+      environment: { FAKE_CODEX_TRACE: first.tracePath, FAKE_CODEX_TASK_MODES: JSON.stringify({ asked: 'question-then-resume' }) },
+      secrets: [],
+      logger: silentLogger,
+    });
+    expect((await runtime.scheduler.execute()).state).toBe('completed');
+
+    const prompt = await fs.readFile(path.join(first.store.paths.attemptDir(first.run.runId, 'asked', 2), 'prompt.md'), 'utf8');
+    expect(prompt).toContain('# Your Question Was Answered');
+    expect(prompt).toContain('> ');
+    expect(prompt).toContain('Which database?');
+    expect(prompt).toContain('Use Postgres');
+    const attempt = first.run.tasks.asked!.attempts[1]!;
+    expect(attempt.resumedSessionId).toBe(threadId);
+    expect(first.run.tasks.asked!.result?.summary).toBe('fake app-server resumed asked');
+    const events = await attemptEvents(first.store, first.run.runId, 'asked', 2);
+    expect(events[0]).toMatchObject({ kind: 'system', text: `resumed session ${threadId}` });
   }, 60_000);
 });

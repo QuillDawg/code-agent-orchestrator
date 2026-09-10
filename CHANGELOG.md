@@ -30,6 +30,19 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- `cao resume <run> --task <id> --input "..."` now **continues the session that asked** instead of running
+  the task again from the top, wherever the paused attempt left a resumable one (both Claude and both Codex
+  transports). The answer arrives as that session's next message, quoted next to the question it answers.
+  Where no session can be resumed the task still restarts, but its prompt now carries the original question
+  beside the answer, so a restarted worker knows what it is answering. `cao task <id>` distinguishes the two.
+- `--input` is refused, rather than silently ignored, for a task that is not in `needs_input` (the error
+  names the state it is actually in and which tasks are waiting), for an unknown task id, and when several
+  `--task` values are given: an answer belongs to the question one worker asked. Tasks nobody answered are
+  left holding their questions instead of being restarted unanswered, so a run paused on several of them is
+  answered one at a time and says so.
+- `hooks.onInputRequired` now also fires for a request nobody can answer (headless, `--no-tui`, CI), where
+  the notification is the only way an operator finds out at all. `CAO_TASK_STATE` distinguishes the two
+  cases: `waiting` while someone can still answer, `needs_input` when nobody can.
 - A worker blocked on a human now always ends in one of two documented states, on either agent and whether
   or not a dashboard is attached: `waiting` while the request can still be answered, or `needs_input` once
   the attempt is over. Several paths that used to end as `failed`/`crash` when the real cause was an
@@ -49,6 +62,23 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- A paused run now says what it is waiting for everywhere an operator looks. `cao run`'s "Workflow paused"
+  block, `cao status`, `cao task <id>` and `report.md` all quote the question and print the exact
+  `cao resume` command that answers it, from one shared derivation. `cao task <id>` never printed a result's
+  `error` at all, which is where a `needs_input` result keeps the question; the report counted a task
+  waiting for a human as "still running".
+- The instruction the orchestrator appends for the worker ("finish with status needs_input if you cannot
+  continue") is no longer read back at the operator in `cao status`, `cao task` or the run's closing
+  summary; it still reaches the worker unchanged.
+- `cao logs` and the dashboard drew a `needs_input` attempt with a green tick, which reads as a task that
+  is done when the run is in fact paused on it. It is now the same `?` marker every other surface uses.
+- A stop that lets running workers finish (`stopMode: wait`) now settles any prompt still open, so the
+  operator who asked the run to stop is not held by a modal and the worker is not left blocked until
+  `execution.interactionTimeout` expires.
+- The interaction modal clamps agent-written question text and windows a long option list, so a worker
+  cannot push the answer keys off the bottom of the terminal.
+- `cao resume` now validates its arguments before taking the run lock, so a mistyped `--task` cannot leave
+  the run owned by a process that then exits.
 - `codex exec` rejects approvals and questions itself, and the rejection used to fall through to
   `invalid_result` or `crash` depending on the exit code, spending a nudge and a retry on a session that
   could never have finished. The rejection is now recognised, the attempt ends as `needs_input` quoting
