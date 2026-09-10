@@ -8,7 +8,7 @@ import { tmpDir } from '../helpers/index.js';
 import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import { paint, sanitizeText, stripAnsi, useColor, visibleLength } from '../../src/cli/color.js';
 import { formatCost, formatElapsed, formatTokens, bar, contextRatio } from '../../src/tui/format.js';
-import { agentTextEvents, splitCompletionObject } from '../../src/runners/claude/completion-text.js';
+import { agentTextEvents, completionTranscript, splitCompletionObject } from '../../src/runners/claude/completion-text.js';
 
 const ts = '2026-09-03T10:11:12.000Z';
 // Transcript stamps are local wall clock, like every other absolute time this CLI prints.
@@ -576,5 +576,57 @@ describe('telling the completion object apart from agent prose', () => {
       { color: false, width: 0 },
     );
     expect(lines).toEqual(['? needs_input — Stopped for a decision', '  Which database?', '✓ success — done']);
+  });
+});
+
+/**
+ * One attempt, one outcome. The classifier sees a message at a time and cannot know which is the last, so
+ * the transcript is what decides: a completion object is a checkpoint only if the worker kept going past it.
+ */
+describe('the completion object an attempt ends on', () => {
+  const checkpoint = (status: string, summary: string): TranscriptEntry => ({ kind: 'result', ts, status, summary, isError: false, intermediate: true, raw: `{"status":"${status}","summary":"${summary}"}` });
+  const record = (): { entries: TranscriptEntry[]; transcript: ReturnType<typeof completionTranscript> } => {
+    const entries: TranscriptEntry[] = [];
+    return { entries, transcript: completionTranscript((e) => entries.push(e)) };
+  };
+
+  it('writes the outcome once, keeping the bytes of the object it came from', () => {
+    const { entries, transcript } = record();
+    transcript.entry({ kind: 'text', ts, text: 'Working on it' });
+    transcript.entry(checkpoint('success', 'Added the docs'));
+    transcript.finish({ kind: 'result', ts, status: 'success', summary: 'Added the docs', isError: false, costUsd: 0.01 });
+
+    expect(entries.map((e) => e.kind)).toEqual(['text', 'result']);
+    expect(entries[1]).toMatchObject({ status: 'success', summary: 'Added the docs', costUsd: 0.01, raw: '{"status":"success","summary":"Added the docs"}' });
+    // The authoritative object is not labelled provisional, and its summary is not printed twice.
+    expect(entries[1]).not.toHaveProperty('intermediate');
+    expect(entries.filter((e) => e.kind === 'result' && e.summary === 'Added the docs')).toHaveLength(1);
+  });
+
+  it('keeps an object the worker kept working past a checkpoint', () => {
+    const { entries, transcript } = record();
+    transcript.entry(checkpoint('needs_input', 'Checking whether the docs build'));
+    transcript.entry({ kind: 'command', ts, command: 'npm test', tool: 'shell' });
+    transcript.finish({ kind: 'result', ts, status: 'success', summary: 'Added the docs', isError: false });
+
+    expect(entries).toMatchObject([{ kind: 'result', intermediate: true }, { kind: 'command' }, { kind: 'result', status: 'success' }]);
+    expect(entries[2]).not.toHaveProperty('intermediate');
+  });
+
+  it('keeps an object that is not the outcome next to the outcome that is', () => {
+    const { entries, transcript } = record();
+    transcript.entry(checkpoint('success', 'I think I am done'));
+    transcript.finish({ kind: 'error', ts, text: 'timed out after 1000ms' });
+
+    expect(entries).toMatchObject([{ kind: 'result', intermediate: true, summary: 'I think I am done' }, { kind: 'error' }]);
+  });
+
+  it('never loses an object when the attempt ends without recording an outcome', () => {
+    const { entries, transcript } = record();
+    transcript.entry(checkpoint('success', 'Cancelled halfway'));
+    transcript.flush();
+    transcript.flush();
+
+    expect(entries).toMatchObject([{ kind: 'result', intermediate: true, summary: 'Cancelled halfway' }]);
   });
 });

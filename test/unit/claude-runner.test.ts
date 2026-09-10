@@ -323,9 +323,10 @@ describe('Claude runner: the completion object is never agent prose', () => {
     expect(proseThatIsReallyAResult(persisted)).toEqual([]);
     // The prose the worker wrote on the way is untouched.
     expect(persisted.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual([expect.stringMatching(/^Working on /)]);
-    // The object the session ended on is a result that says it is not yet the outcome, and keeps its own bytes.
+    // The object the session ended on *is* the outcome: one result entry, keeping the object's own bytes,
+    // rather than the same summary twice - once as a checkpoint and once as the result.
     const results = persisted.filter((e): e is Extract<TranscriptEntry, { kind: 'result' }> => e.kind === 'result');
-    expect(results[0]).toMatchObject({ status: 'success', intermediate: true });
+    expect(results).toHaveLength(1);
     expect(results[0]!.raw).toContain('"status":"success"');
     expect(persisted.at(-1)).toMatchObject({ kind: 'result', status: 'success' });
     expect(persisted.at(-1)).not.toHaveProperty('intermediate');

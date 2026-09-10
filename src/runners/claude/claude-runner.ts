@@ -21,7 +21,7 @@ import { ProcessManager } from '../../execution/process-manager.js';
 import { detectClaude, splitCommand } from './detect.js';
 import { parseClaudeEvents, activityFromText, type ClaudeResultEvent } from './event-parser.js';
 import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA_STRING, extractJsonObject, validateTaskResult } from './contract.js';
-import { agentTextEvents } from './completion-text.js';
+import { agentTextEvents, completionTranscript } from './completion-text.js';
 import { claudeConfigRejection, isTransientApiError } from './transient.js';
 import { configErrorOutcome, killedMessage, openToolMessage } from '../outcomes.js';
 import { contextWindowFor, supportsAutoMode, supportsEffort } from './models.js';
@@ -194,10 +194,13 @@ export class ClaudeRunner implements TaskRunner {
 
     await ensureDir(input.attemptDir);
     const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
-    const entry = (e: TranscriptEntry): void => {
+    // A completion object the session ends on is that session's outcome rather than a checkpoint before it,
+    // so the last one is held back until the outcome has been decided below.
+    const transcript = completionTranscript((e: TranscriptEntry): void => {
       eventsLog.write(`${JSON.stringify(e)}\n`);
       hooks.onTranscript(e);
-    };
+    });
+    const entry = transcript.entry;
     if (resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${resumeSessionId}` });
 
     const env: Record<string, string> = {};
@@ -407,7 +410,7 @@ export class ClaudeRunner implements TaskRunner {
     // The outcome is written through entry(), so the attempt's events.jsonl ends with the result rather than
     // stopping at the last tool call; the log is closed once, after the outcome has been decided.
     const finishEntry = (e: Extract<TranscriptEntryInput, { kind: 'result' | 'error' }>): void => {
-      entry({ ...e, ts: nowIso() } as TranscriptEntry);
+      transcript.finish({ ...e, ts: nowIso() } as TranscriptEntry);
     };
     const outcome = ((): RunnerOutcome => {
       if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
@@ -496,6 +499,8 @@ export class ClaudeRunner implements TaskRunner {
       finishEntry({ kind: 'error', text: message });
       return { kind: 'error', outcome: 'invalid_result', message, exitCode: exit.code, usage: finalUsage };
     })();
+    // Cancellation and a failure to start return without recording an outcome: nothing held may be lost.
+    transcript.flush();
     await new Promise<void>((resolve) => eventsLog.end(() => resolve()));
     return outcome;
   }

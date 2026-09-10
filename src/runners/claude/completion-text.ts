@@ -60,10 +60,12 @@ export interface AgentTextEvent {
  * What one agent message becomes in the transcript: prose stays a `text` entry, and a completion object
  * becomes a `result` entry instead. A message that is both is recorded as both, prose first.
  *
- * The result entry is always `intermediate`: at the moment a message arrives the attempt is still running, and
- * the authoritative outcome is decided afterwards from `final.json` (Codex exec), the last agent message
- * (Codex app-server) or `structured_output` (Claude). It carries the object verbatim in `raw` so
- * `cao logs --json` and a debugger still see exactly what the worker produced.
+ * The result entry is marked `intermediate`: at the moment a message arrives the attempt is still running,
+ * and the authoritative outcome is decided afterwards from `final.json` (Codex exec), the last agent message
+ * (Codex app-server) or `structured_output` (Claude). One message cannot tell whether it is the last, so the
+ * flag is provisional here and `completionTranscript` below takes it off again when the object turns out to
+ * be the outcome. It carries the object verbatim in `raw` so `cao logs --json` and a debugger still see
+ * exactly what the worker produced.
  *
  * `activity` is how this runner summarises prose for the activity line; a completion object is summarised here
  * instead, because that line must never start with `{`.
@@ -86,4 +88,61 @@ export function agentTextEvents(text: string, ts: string, opts: { activity: (pro
   };
   events.push({ entry, activity: truncate(transcriptLine(entry), MAX_ACTIVITY) });
   return events;
+}
+
+/** A `result` entry, named for the places below that hold one back. */
+type ResultEntry = Extract<TranscriptEntry, { kind: 'result' }>;
+
+/**
+ * The attempt's transcript, with the completion object it ends on held back until the outcome is known.
+ *
+ * `agentTextEvents` sees one message at a time, so it cannot tell the object a worker emitted mid-turn from
+ * the one it finished on: it marks both intermediate. Left at that, every successful attempt ends with the
+ * same summary twice - once as `intermediate result: success - …` and once as the outcome - and the entry
+ * that is genuinely authoritative is the one labelled provisional.
+ *
+ * So the most recent completion object is held here. Anything that follows it proves it was a checkpoint and
+ * it is written as one; if instead the attempt's outcome turns out to be that same object, the two are one
+ * event and are written once, as the outcome, keeping the object's own bytes in `raw`.
+ */
+export interface CompletionTranscript {
+  /** Record an entry, in order. A completion object is held until something follows it. */
+  entry: (value: TranscriptEntry) => void;
+  /** Close the log with the attempt's outcome, decided by the runner. */
+  finish: (value: TranscriptEntry) => void;
+  /** Write anything still held: for the outcomes a runner returns without recording an entry for. */
+  flush: () => void;
+}
+
+/** Whether a held completion object and the attempt's outcome are the same event rather than two. */
+function sameOutcome(held: ResultEntry, final: ResultEntry): boolean {
+  return !final.intermediate && held.status === final.status && (held.summary ?? '') === (final.summary ?? '') && (held.error ?? '') === (final.error ?? '');
+}
+
+export function completionTranscript(write: (value: TranscriptEntry) => void): CompletionTranscript {
+  let held: ResultEntry | undefined;
+  const flush = (): void => {
+    if (!held) return;
+    const value = held;
+    held = undefined;
+    write(value);
+  };
+  return {
+    entry: (value) => {
+      flush();
+      if (value.kind === 'result' && value.intermediate) held = value;
+      else write(value);
+    },
+    finish: (value) => {
+      if (held && value.kind === 'result' && sameOutcome(held, value)) {
+        const { raw } = held;
+        held = undefined;
+        write(raw === undefined ? value : { ...value, raw });
+        return;
+      }
+      flush();
+      write(value);
+    },
+    flush,
+  };
 }

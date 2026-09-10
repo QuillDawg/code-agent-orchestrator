@@ -163,8 +163,10 @@ describe('Codex exec transport', () => {
     expect(proseThatIsReallyAResult(entries)).toEqual([]);
     // The prose the worker wrote between the two objects is untouched.
     expect(entries.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['Now running the tests.']);
-    // The mid-turn object is a result, and says it is not the outcome; the outcome is the last entry.
+    // The mid-turn object is a result, and says it is not the outcome; the outcome is the last entry, and
+    // is written once even though the worker's last message was that same object.
     const results = entries.filter((e): e is Extract<TranscriptEntry, { kind: 'result' }> => e.kind === 'result');
+    expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ status: 'needs_input', summary: 'Checking whether the docs still build', intermediate: true });
     expect(results[0]!.raw).toContain('"status":"needs_input"');
     expect(entries.at(-1)).toMatchObject({ kind: 'result', status: 'success', summary: 'fake exec completed' });
@@ -277,11 +279,12 @@ describe('Codex app-server transport', () => {
     const entries = await readEntries(attemptDir);
     expect(proseThatIsReallyAResult(entries)).toEqual([]);
     expect(entries.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['Now running the tests.']);
+    // Two entries, not three: the object the turn ended on is the outcome, not a checkpoint before it.
     expect(entries.filter((e) => e.kind === 'result')).toMatchObject([
       { status: 'needs_input', intermediate: true },
-      { status: 'success', summary: 'fake app-server completed' },
-      { status: 'success', summary: 'fake app-server completed' },
+      { status: 'success', summary: 'fake app-server completed', raw: expect.stringContaining('"status":"success"') },
     ]);
+    expect(entries.at(-1)).not.toHaveProperty('intermediate');
   });
 
   it('interrupts and cancels a hanging turn', async () => {

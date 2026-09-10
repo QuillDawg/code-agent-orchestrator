@@ -8,7 +8,7 @@ import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
-import { agentTextEvents } from '../claude/completion-text.js';
+import { agentTextEvents, completionTranscript } from '../claude/completion-text.js';
 import { codexFailureMetadata, codexProtocolRejection, normalizeCodexFailure } from './failure.js';
 import { configErrorOutcome, killedMessage, openToolMessage, type ConfigRejection } from '../outcomes.js';
 import { ensureDir } from '../../util/fs.js';
@@ -116,7 +116,10 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   Object.assign(env, input.env);
 
   const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
-  const entry = (value: TranscriptEntry): void => { eventsLog.write(`${JSON.stringify(value)}\n`); hooks.onTranscript(value); };
+  // A completion object the turn ends on is the attempt's outcome rather than a checkpoint before it, so
+  // the last one is held back until the outcome has been decided below.
+  const transcript = completionTranscript((value: TranscriptEntry): void => { eventsLog.write(`${JSON.stringify(value)}\n`); hooks.onTranscript(value); });
+  const entry = transcript.entry;
   // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
   if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
   const usage: RunnerUsage = { sessionId: input.resumeSessionId, model: input.task.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };
@@ -424,7 +427,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   }
   // Killing the app-server discards the turn and any work in it, so an attempt that ended that way says so.
   if (killed || (exit.timedOut && blocked)) entry({ kind: 'system', ts: nowIso(), text: `the Codex app-server process was killed: ${killed ?? `the turn was still running after ${input.timeoutMs}ms`}` });
-  entry(outcome.kind === 'result'
+  transcript.finish(outcome.kind === 'result'
     ? { kind: 'result', ts: nowIso(), status: outcome.result.status, summary: outcome.result.summary, isError: false, error: outcome.result.error }
     : { kind: 'error', ts: nowIso(), text: outcome.message });
   await new Promise<void>((resolve) => eventsLog.end(() => resolve()));

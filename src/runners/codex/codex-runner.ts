@@ -16,7 +16,7 @@ import { ProcessManager } from '../../execution/process-manager.js';
 import { detectCodex } from './detect.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
-import { agentTextEvents } from '../claude/completion-text.js';
+import { agentTextEvents, completionTranscript } from '../claude/completion-text.js';
 import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -117,10 +117,13 @@ export class CodexRunner implements TaskRunner {
     const args = [...prefixArgs, ...buildCodexArgs(options, schemaPath, outputPath, input.resumeSessionId, input.task.model, input.task.effort)];
     const prompt = [CODEX_COMPLETION_CONTRACT.systemPrompt, input.systemPromptAddendum, input.prompt].filter(Boolean).join('\n\n');
     const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
-    const entry = (e: TranscriptEntry): void => {
+    // A completion object the worker ends on is the attempt's outcome rather than a checkpoint before it,
+    // so the last one is held back until the outcome has been decided below.
+    const transcript = completionTranscript((e: TranscriptEntry): void => {
       eventsLog.write(`${JSON.stringify(e)}\n`);
       hooks.onTranscript(e);
-    };
+    });
+    const entry = transcript.entry;
     // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
     if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
     // Say up front, in the attempt's own log and once per task in the run log, that nobody can be asked
@@ -267,7 +270,7 @@ export class CodexRunner implements TaskRunner {
     const finalUsage: RunnerUsage = { ...usage, sessionId, model, numTurns: sawTurn ? usage.numTurns : undefined };
     // The outcome goes through entry(), so the attempt's events.jsonl ends with the result rather than
     // stopping at the last tool call; the log is closed once, after the outcome has been decided.
-    const finish = (e: Extract<TranscriptEntryInput, { kind: 'result' | 'error' }>): void => entry({ ...e, ts: nowIso() } as TranscriptEntry);
+    const finish = (e: Extract<TranscriptEntryInput, { kind: 'result' | 'error' }>): void => transcript.finish({ ...e, ts: nowIso() } as TranscriptEntry);
     const outcome = await (async (): Promise<RunnerOutcome> => {
       if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
       if (exit.timedOut) {
@@ -324,6 +327,8 @@ export class CodexRunner implements TaskRunner {
       finish({ kind: 'error', text: 'Codex finished without a schema-valid final response' });
       return { kind: 'error', outcome: 'invalid_result', message: 'Codex finished without a schema-valid final response', exitCode: exit.code, usage: finalUsage };
     })();
+    // Cancellation returns without recording an outcome: nothing held may be lost.
+    transcript.flush();
     await new Promise<void>((resolve) => eventsLog.end(() => resolve()));
     return outcome;
   }

@@ -128,8 +128,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   used to print `{"status":"success","summary":"…"` where the agent's own words belong, on both agents. It
   is now recorded as a `result` transcript entry showing its summary, with the object itself kept verbatim
   in the entry's `raw` field so `events.jsonl` and `cao logs --json` lose nothing. An object a worker emits
-  mid-run reads as `intermediate result: …` and does not end the attempt; other JSON a worker prints is
-  untouched.
+  mid-run and then keeps working past reads as `intermediate result: …` and does not end the attempt; the
+  object an attempt ends on is its outcome and is written once, so a successful attempt no longer prints its
+  summary twice. Other JSON a worker prints is untouched.
 - A Codex attempt that continues an earlier thread now opens its log with `resumed session <id>`, as a
   Claude attempt already did, so `cao logs` and `cao peek` no longer show a retried or nudged attempt as if
   it were a fresh session.

@@ -394,12 +394,16 @@ built on `extractJsonObject` and the contract validator), so all three agree on 
   contract's, malformed JSON, and text that merely talks about JSON are all prose. This is not a "hide
   JSON" feature: a config a worker was showing off renders exactly as it did before.
 
-A `result` entry made this way is marked `intermediate: true` and keeps the object verbatim in `raw`, so
-`events.jsonl` still holds what the worker produced and `cao logs --json` can still recover it. It is
-rendered as `intermediate result: <status> — <summary>` rather than as an outcome, because it is not one:
-a worker may answer the contract mid-turn and keep working. The authoritative result is still `final.json`
-for Codex `exec`, the last agent message for Codex `appServer` and `structured_output` for Claude, and the
-attempt's log still ends with that outcome as its own `result` entry.
+A `result` entry made this way keeps the object verbatim in `raw`, so `events.jsonl` still holds what the
+worker produced and `cao logs --json` can still recover it. Whether it is *intermediate* depends on what
+happened next, which one message cannot say: a worker may answer the contract mid-turn and keep working.
+So the transcript holds the last object back. Anything that follows it — another message, a command, the
+attempt's outcome — proves it was a checkpoint, and it is written as `intermediate: true` and rendered as
+`intermediate result: <status> — <summary>` rather than as an outcome. If instead the attempt's outcome is
+that same object, the two are one event: the log ends with a single `result` entry, not marked
+`intermediate`, carrying the object's own bytes in `raw`. Either way the authoritative result is still
+`final.json` for Codex `exec`, the last agent message for Codex `appServer` and `structured_output` for
+Claude, and the attempt's log ends with that outcome as a `result` entry.
 
 ---
 
