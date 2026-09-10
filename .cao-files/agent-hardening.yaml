@@ -51,14 +51,14 @@ hooks:
 templates:
   feature:
     type: implementation
-    prompt: Implement `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the Feature rules
-      in `.cao-files/scope/agent-hardening/RULES.md`.
+    prompt: Implement `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the
+      Feature rules in `.cao-files/scope/agent-hardening/RULES.md`.
 
   iterate:
     type: implementation
-    prompt: Work through `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the Iterate
-      rules in `.cao-files/scope/agent-hardening/RULES.md`. The previous pass's result is in
-      context.
+    prompt: Work through `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the
+      Iterate rules in `.cao-files/scope/agent-hardening/RULES.md`. The previous
+      pass's result is in context.
 
   review:
     type: review
@@ -77,6 +77,10 @@ tasks:
     effort: medium
     timeout: 30m
     prompt: Follow `.cao-files/scope/agent-hardening/baseline.md`.
+    state: completed
+    completion:
+      completedAt: 2026-09-10T15:18:31.797Z
+      runId: 2026-09-10-009
 
   # --- phase 1: make failures visible (H1, H2) --------------------------------
   - id: harness
@@ -84,21 +88,29 @@ tasks:
     scope: harness
     effort: xhigh
     timeout: 120m
-    dependsOn: [baseline]
+    dependsOn: [ baseline ]
     context:
       from:
         - task: baseline
-          include: [summary, decisions, warnings]
+          include: [ summary, decisions, warnings ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T15:51:40.818Z
+      runId: 2026-09-10-009
 
   - id: transcript-fidelity
     template: feature
     scope: transcript-fidelity
     timeout: 60m
-    dependsOn: [harness]
+    dependsOn: [ harness ]
     context:
       from:
         - task: harness
-          include: [summary, warnings]
+          include: [ summary, warnings ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T16:11:40.183Z
+      runId: 2026-09-10-009
 
   # --- phase 2: waiting for a human (H3) --------------------------------------
   - id: blocked-on-human
@@ -106,43 +118,55 @@ tasks:
     scope: blocked-on-human
     effort: xhigh
     timeout: 150m
-    dependsOn: [transcript-fidelity]
+    dependsOn: [ transcript-fidelity ]
     context:
       from:
         - task: harness
-          include: [summary, decisions, warnings]
+          include: [ summary, decisions, warnings ]
         - task: transcript-fidelity
-          include: [summary]
+          include: [ summary ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T16:55:48.171Z
+      runId: 2026-09-10-009
 
   - id: blocked-on-human-iterate
     template: iterate
     scope: blocked-on-human-iterate
     timeout: 120m
-    dependsOn: [blocked-on-human]
+    dependsOn: [ blocked-on-human ]
     context:
       from:
         - task: blocked-on-human
-          include: [summary, decisions, warnings, followUp]
+          include: [ summary, decisions, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T17:58:43.887Z
+      runId: 2026-09-10-009
 
   # --- phase 3: honest failures (H4) ------------------------------------------
   - id: failure-consistency
     template: feature
     scope: failure-consistency
     timeout: 120m
-    dependsOn: [blocked-on-human-iterate]
+    dependsOn: [ blocked-on-human-iterate ]
     context:
       from:
         - task: harness
-          include: [summary, warnings]
+          include: [ summary, warnings ]
         - task: blocked-on-human-iterate
-          include: [summary, followUp]
+          include: [ summary, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T18:35:24.557Z
+      runId: 2026-09-10-009
 
   # --- phase 4: documentation (H5) --------------------------------------------
   - id: docs-and-changelog
     type: documentation
     effort: medium
     timeout: 60m
-    dependsOn: [failure-consistency]
+    dependsOn: [ failure-consistency ]
     prompt: Follow `.cao-files/scope/agent-hardening/docs-and-changelog.md`.
     context:
       from:
@@ -151,8 +175,12 @@ tasks:
         - blocked-on-human
         - blocked-on-human-iterate
         - failure-consistency
-      include: [summary, decisions]
+      include: [ summary, decisions ]
       maxChars: 30000
+    state: completed
+    completion:
+      completedAt: 2026-09-10T18:51:20.045Z
+      runId: 2026-09-10-009
 
   # --- phase 5: review and gate (H6) ------------------------------------------
   - id: review
@@ -164,16 +192,20 @@ tasks:
       that no existing workflow file changes behaviour, and to any agent-controlled text reaching
       the terminal unsanitised
     timeout: 90m
-    dependsOn: [docs-and-changelog]
+    dependsOn: [ docs-and-changelog ]
     context:
       from:
         - task: baseline
-          include: [summary, decisions]
+          include: [ summary, decisions ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T19:06:41.971Z
+      runId: 2026-09-10-009
 
   - id: fix
     template: fix
     timeout: 90m
-    dependsOn: [review]
+    dependsOn: [ review ]
     when:
       expr: tasks.review.warnings.length > 0
     # A fix that cannot finish must not hide the gate: let the gate run and report it.
@@ -181,22 +213,26 @@ tasks:
     context:
       from:
         - task: review
-          include: [summary, warnings, followUp]
+          include: [ summary, warnings, followUp ]
+    state: completed
+    completion:
+      completedAt: 2026-09-10T20:21:17.789Z
+      runId: 2026-09-10-009
 
   - id: release-gate
     type: verification
     effort: xhigh
     timeout: 90m
-    dependsOn: [review, fix]
+    dependsOn: [ review, fix ]
     retry:
       attempts: 0
     prompt: Follow `.cao-files/scope/agent-hardening/release-gate.md`.
     context:
       from:
         - task: baseline
-          include: [summary, decisions, data]
+          include: [ summary, decisions, data ]
         - task: review
-          include: [summary, warnings]
+          include: [ summary, warnings ]
         - task: fix
-          include: [summary, warnings, followUp]
+          include: [ summary, warnings, followUp ]
       includeFailed: true
