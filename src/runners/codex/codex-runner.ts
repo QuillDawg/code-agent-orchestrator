@@ -15,8 +15,8 @@ import type { TranscriptEntry, TranscriptEntryInput, FileOp } from '../../types/
 import { ProcessManager } from '../../execution/process-manager.js';
 import { detectCodex } from './detect.js';
 import { splitCommand } from '../claude/detect.js';
-import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
-import { agentTextEvents, completionTranscript } from '../claude/completion-text.js';
+import { CODEX_COMPLETION_CONTRACT } from '../contract.js';
+import { agentTextEvents, completionTranscript } from '../completion-text.js';
 import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';

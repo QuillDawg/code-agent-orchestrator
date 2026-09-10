@@ -9,7 +9,7 @@ import type { ResolvedTask } from '../../src/types/workflow.js';
 import type { Interaction } from '../../src/types/interaction.js';
 import { FAKE_CODEX, tmpDir } from '../helpers/index.js';
 import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
-import { splitCompletionObject } from '../../src/runners/claude/completion-text.js';
+import { splitCompletionObject } from '../../src/runners/completion-text.js';
 import { eventLineRenderer } from '../../src/cli/commands/logs.js';
 
 /** The lines of an attempt's events.jsonl, as a surface reads them back. */

@@ -8,7 +8,7 @@ import { tmpDir } from '../helpers/index.js';
 import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import { paint, sanitizeText, stripAnsi, useColor, visibleLength } from '../../src/cli/color.js';
 import { formatCost, formatElapsed, formatTokens, bar, contextRatio } from '../../src/tui/format.js';
-import { agentTextEvents, completionTranscript, splitCompletionObject } from '../../src/runners/claude/completion-text.js';
+import { agentTextEvents, completionTranscript, splitCompletionObject } from '../../src/runners/completion-text.js';
 
 const ts = '2026-09-03T10:11:12.000Z';
 // Transcript stamps are local wall clock, like every other absolute time this CLI prints.

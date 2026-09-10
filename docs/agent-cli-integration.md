@@ -385,7 +385,7 @@ so stored results and downstream context retain the object shape above.
 ### The completion object is protocol, not prose
 
 The object arrives as an ordinary agent message on every transport, and it is not something the agent said.
-Each runner routes its agent text through one shared classifier (`src/runners/claude/completion-text.ts`,
+Each runner routes its agent text through one shared classifier (`src/runners/completion-text.ts`,
 built on `extractJsonObject` and the contract validator), so all three agree on what is protocol:
 
 - a message that **is** the object — bare, or in a fenced block — becomes a `result` transcript entry;

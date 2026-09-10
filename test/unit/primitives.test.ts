@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderTemplate, templateReferences } from '../../src/templates/engine.js';
 import { parseExpression, evaluateExpression, evaluateWhen, compileWhen, referencedTasks } from '../../src/conditions/evaluator.js';
 import { TaskGraph } from '../../src/workflow/graph.js';
-import { validateTaskResult, extractJsonObject, TASK_RESULT_JSON_SCHEMA } from '../../src/runners/claude/contract.js';
+import { validateTaskResult, extractJsonObject, TASK_RESULT_JSON_SCHEMA } from '../../src/runners/contract.js';
 import { parseClaudeLine } from '../../src/runners/claude/event-parser.js';
 import { buildClaudeArgs } from '../../src/runners/claude/claude-runner.js';
 import { parseDuration, formatDuration, formatDurationShort } from '../../src/util/duration.js';

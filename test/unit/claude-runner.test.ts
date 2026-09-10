@@ -11,7 +11,7 @@ import type { RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.j
 import type { ResolvedTask } from '../../src/types/workflow.js';
 import { renderTranscript } from '../../src/tui/transcript.js';
 import { FAKE_CLAUDE, tmpDir } from '../helpers/index.js';
-import { splitCompletionObject } from '../../src/runners/claude/completion-text.js';
+import { splitCompletionObject } from '../../src/runners/completion-text.js';
 
 type ModelBits = Pick<ResolvedTask, 'claude' | 'model' | 'effort'>;
 

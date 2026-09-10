@@ -7,12 +7,13 @@
  * also emit one mid-turn and keep working, so this is not only about the last message of an attempt.
  *
  * Both Codex runners and the Claude runner route agent text through here, so the three of them classify it the
- * same way. Nothing agent-specific lives in this file beyond the validator the caller passes in.
+ * same way. Nothing agent-specific lives in this file beyond the validator the caller passes in, which is why
+ * it sits in `src/runners/` rather than under one agent's directory.
  */
 import { findJsonObject, validateTaskResult, type ParseFailure, type ParsedResult } from './contract.js';
-import { transcriptLine, type TranscriptEntry } from '../../types/transcript.js';
-import type { TaskResult } from '../../types/result.js';
-import { truncate } from '../../util/misc.js';
+import { transcriptLine, type TranscriptEntry } from '../types/transcript.js';
+import type { TaskResult } from '../types/result.js';
+import { truncate } from '../util/misc.js';
 
 /** The contract validator to judge a candidate with: the shared one, or a runner's own decoding of it. */
 export type CompletionValidator = (value: unknown) => ParsedResult | ParseFailure;

@@ -1,6 +1,11 @@
-/** The worker completion contract: JSON schema handed to Claude and the validator applied to its output. */
+/**
+ * The worker completion contract: the JSON schema each agent's CLI is handed and the validator applied to
+ * what comes back. Shared by every runner - Claude's `--json-schema`, Codex's `--output-schema` and the
+ * app-server's `outputSchema` are three encodings of one contract - so it lives here rather than under one
+ * agent's directory.
+ */
 import { z } from 'zod';
-import { TASK_RESULT_STATUSES, type TaskResult, type TaskResultStatus } from '../../types/result.js';
+import { TASK_RESULT_STATUSES, type TaskResult, type TaskResultStatus } from '../types/result.js';
 
 const stringArray = z
   .array(z.union([z.string(), z.number(), z.boolean(), z.null()]))

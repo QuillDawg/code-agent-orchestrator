@@ -7,8 +7,8 @@ import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js'
 import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
-import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
-import { agentTextEvents, completionTranscript } from '../claude/completion-text.js';
+import { CODEX_COMPLETION_CONTRACT } from '../contract.js';
+import { agentTextEvents, completionTranscript } from '../completion-text.js';
 import { codexFailureMetadata, codexProtocolRejection, normalizeCodexFailure } from './failure.js';
 import { configErrorOutcome, killedMessage, openToolMessage, type ConfigRejection } from '../outcomes.js';
 import { ensureDir } from '../../util/fs.js';
