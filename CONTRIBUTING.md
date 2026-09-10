@@ -18,6 +18,14 @@ npm link            # optional: puts your checkout's `cao` on PATH
 Node 22 or newer (`.nvmrc` pins 22; CI also runs 24). A real `git` is needed for the worktree and
 end-to-end suites — without it they skip themselves with a message rather than failing.
 
+This is an npm workspace root. `packages/protocol/` is `code-agent-orchestrator-protocol`, the wire
+contract shared with CAO Desktop, and `cao` depends on it like any other dependency. `npm install` links
+and builds it for you; `npm run typecheck`, `npm run lint` and `npm test` rebuild it first, so editing
+`packages/protocol/src/` needs no separate step. Two rules govern what may go in it: **nothing that needs
+a Node builtin, a DOM API or a dependency** — a test bundles it for a browser with no externals and fails
+on any import that is not relative — and **nothing that is presentation**. It carries its own semver,
+moved only when the contract moves, so most `cao` releases do not bump it.
+
 Run the CLI straight from the sources while you work, no build step:
 
 ```bash
@@ -181,5 +189,9 @@ here than style:
   a terminal.
 - **Every transition is persisted.** If you add state, decide what happens to it when the process is killed
   between two writes, and cover the resume path in a test.
+- **Never build a run-directory path by hand.** `createRunPaths` (via `persistence/paths.ts`, which spells
+  its results with the platform separator) is the one description of the layout, and it lives in the
+  protocol package so that CAO Desktop reads the same one. A `'.orchestrator'` string literal outside that
+  package is how a second, silently diverging copy of the layout starts, and a test fails on one.
 
 Comments explain why, not what. `.editorconfig` carries the whitespace rules; there is no formatter to run.

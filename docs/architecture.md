@@ -32,23 +32,31 @@ src/
     render/diff.ts            reads a captured diff.patch: section lookup by path (git's quoting undone), stat and colour
   config/                     schema.ts (zod), loader.ts (YAML, repository/launch dir, env), normalize.ts (defaults, templates, foreach, DAG rules)
   workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts
-  runners/                    task-runner.ts (TaskRunner, RunnerRegistry, typed failure contract), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
+  runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
   conditions/evaluator.ts     safe `when` expression grammar
   templates/engine.ts         safe {{path}} substitution
   workspace/                  git.ts (explicit git wrapper), workspace-manager.ts (shared + git worktree strategies, merge-back), diff.ts (tree snapshots through a throwaway index, diff.patch/diff.json capture)
-  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts, run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl)
+  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl)
   events/event-bus.ts         typed synchronous event bus
   logging/                    logger.ts, redact.ts
   tui/                        app.tsx (Ink dashboard: table, detail, usage, help), viewer.tsx (follow view, shared with `cao logs --follow`),
                               dashboard/ (modal.tsx for permission prompts, questions and approvals; review.tsx + files.ts + editor.ts for the
                               `C` review view; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
                               by `cao task` and the detail view), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
-                              surface), logs.tsx, follow.ts (file tailer)
-  util/                       text.ts (strips escapes and control characters from anything shown to a human), glyphs.ts + marks.ts (Unicode/ASCII
-                              fallback, CAO_ASCII/CAO_UNICODE), package-info.ts, async-queue, duration, errors, fs, misc
-  types/                      shared type definitions (transcript.ts and interaction.ts carry the live-visibility contracts)
+                              surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
+                              package), logs.tsx, follow.ts (file tailer)
+  util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
+                              instruction the scheduler appends to deny messages, and the helpers that take it back off for an
+                              operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,
+                              async-queue, duration, errors, fs, misc
+packages/
+  protocol/                   code-agent-orchestrator-protocol: the wire contract, its own npm workspace and its own semver. Zero runtime
+                              dependencies, no Node builtins, browser-safe. The workflow/run/result/event/interaction/transcript types, the
+                              run-directory layout (createRunPaths), transcript structure (planTranscript, the kind filters), and the
+                              registry, request, pending-interaction and presence file schemas. `cao` depends on it by caret range and
+                              re-exports every symbol from src/index.ts, so its published surface is unchanged.
 test/
   fixtures/fake-claude.mjs    scripted stream-json Claude stand-in (permission prompts, questions, cancellation, usage, transient errors,
                               subagents, thinking, shell-only and binary changes)
@@ -156,7 +164,7 @@ It reads only: it will name a `cao clean` invocation but never run one.
 
 ## Live visibility
 
-- Every runner emits typed `TranscriptEntry` records (`types/transcript.ts`): agent text, thinking, commands, tool calls, tool output, permissions, questions, results. They go to the bus as `task.transcript`, into a per-task ring buffer the dashboard reads, and verbatim into the attempt's `events.jsonl`; one renderer (`tui/transcript.ts`, markdown-aware, ANSI-coloured) draws them everywhere — as a whole transcript for a screen or a tail, and line by line (`createTranscriptStream`) for `cao logs --follow` and `cao peek`, which see one entry at a time and have to remember the calls earlier lines opened. A call and its result share a `toolUseId` (so the renderer can show how long the tool took) and everything a subagent produced carries the `parentToolUseId` of the `Agent:` call that spawned it (so it nests under it). `thinking` entries are the one kind the renderer drops unless a surface asks for them (`showThinking`), which is what makes `T` in the viewer and `--thinking` on `cao logs` the only ways to see them.
+- Every runner emits typed `TranscriptEntry` records (`packages/protocol/src/transcript.ts`): agent text, thinking, commands, tool calls, tool output, permissions, questions, results. They go to the bus as `task.transcript`, into a per-task ring buffer the dashboard reads, and verbatim into the attempt's `events.jsonl`; one planner (`planTranscript`, in the protocol package) decides the structure and one renderer (`tui/transcript.ts`, markdown-aware, ANSI-coloured) draws it everywhere — as a whole transcript for a screen or a tail, and line by line (`createTranscriptStream`) for `cao logs --follow` and `cao peek`, which see one entry at a time and have to remember the calls earlier lines opened. A call and its result share a `toolUseId` (so the renderer can show how long the tool took) and everything a subagent produced carries the `parentToolUseId` of the `Agent:` call that spawned it (so it nests under it). `thinking` entries are the one kind the renderer drops unless a surface asks for them (`showThinking`), which is what makes `T` in the viewer and `--thinking` on `cao logs` the only ways to see them.
 - Runners also report live usage (`task.usage`: tokens, context size, cost — Claude from every assistant message's `usage` and the final `modelUsage`; Codex exec from `turn.completed` and app-server from `thread/tokenUsage/updated`) and file changes (`task.files`, from Edit/Write tool calls or Codex `file_change` items).
 - In-process dashboard (Ink, `tui/app.tsx`): a controller that can be minimised (`Q`) and reopened (`D`, or automatically when a worker needs a human); follow view = `tui/viewer.tsx`, shared with `cao logs --follow`; prompts, questions and approval gates use one modal (`tui/dashboard/modal.tsx`).
 - Cross-process: `cao status` reads `workflow.json` + `live.json` (which now carries usage, file counts and the pending interaction); `cao peek`/`cao logs --follow` tail the attempt's `events.jsonl` with a polling tailer (works on Windows and network drives); the viewer lets you switch tasks and attempts and reads finished tasks in full. Scrolling above the oldest entry still in the ring buffer pages older ones back in through `persistence/transcript-log.ts`, which finds the caller's oldest entry in the attempt's `events.jsonl` and returns the page before it. The buffer spans every attempt while each file covers one, so a beginning-of-file is not a beginning-of-transcript: paging walks back into the previous attempt's file, and "nothing older" is remembered against the entry it was said about rather than the task, so it cannot latch for the session.
@@ -185,6 +193,11 @@ It reads only: it will name a `cao clean` invocation but never run one.
 - `files` lists `docs/*.md`, not `docs`, so `docs/research/` (internal notes) stays out of the tarball.
 - `publishConfig.tag` is `beta`, so `npm install -g code-agent-orchestrator` does not resolve to a pre-1.0
   release until a `latest` publish happens.
+- **Two packages, two release trains.** `packages/protocol/` publishes `code-agent-orchestrator-protocol`
+  on its own semver, moved only when the wire contract moves, so most `cao` releases do not bump it. `cao`
+  depends on a caret range and re-exports every symbol from `src/index.ts`, so a consumer of the library
+  sees the same surface whichever package a type is declared in. The package tarball is `dist/` plus its
+  README, CHANGELOG and LICENSE; `files` in the root package keeps `packages/` out of `cao`'s own tarball.
 - CI (`.github/workflows/ci.yml`) runs typecheck, lint, test and build on Node 22 and 24, on
   `ubuntu-latest` and `windows-latest`. It needs a real `git`; it never needs Claude or Codex, because every
   agent process in the suites is a fake Claude or Codex CLI under `test/fixtures/`. Without `git` the worktree and end-to-end

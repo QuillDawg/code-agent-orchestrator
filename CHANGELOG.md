@@ -10,6 +10,17 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **A second published package: `code-agent-orchestrator-protocol`.** The types and pure logic that
+  describe what `cao` writes to disk now live in `packages/protocol/`, an npm workspace in this repository
+  with its own semver. It has zero runtime dependencies, uses no Node builtins and is browser-safe, so a
+  desktop or web surface can share `cao`'s wire contract without bundling the CLI — whose entry point
+  reaches `node:fs` and cannot be built for a browser at all. It carries the workflow, run, result, event,
+  interaction and transcript types, the run-directory layout (`createRunPaths`), the transcript structure
+  (`planTranscript`, `PlannedEntry`, the kind filters), and the schemas of the registry, request,
+  pending-interaction and presence files a companion surface will exchange with a run.
+  **Nothing about using `cao` changes.** It gained the package as its ninth dependency and re-exports every
+  symbol from `src/index.ts`, so `import { … } from 'code-agent-orchestrator'` resolves exactly as before;
+  the moved declarations were moved, not copied, and a test fails if any of them is ever declared twice.
 - Codex now has a production-default `exec` backend with explicit auto-review and configuration isolation,
   plus an opt-in experimental `appServer` backend for dashboard-mediated command/file approvals, typed
   failures, token usage, interruption, and gated user questions.
