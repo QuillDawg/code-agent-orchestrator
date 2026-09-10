@@ -189,4 +189,51 @@ describe('resume', () => {
     await schedule(run, runner, new MemoryRunStore(), true).scheduler.execute();
     expect(runner.calls.map((c) => c.taskId)).toEqual(['c', 'd']);
   });
+
+  it('calls only the attempt that carries the answer a user-input attempt', async () => {
+    // Answered, then the answering attempt crashes and is retried: the retry is a retry, not a second answer.
+    const { workflow: wf } = await buildWorkflow('name: t\ntasks:\n  - id: b\n    prompt: p\n    retries: 2\n', { gitRoot: process.cwd() });
+    const run = makeRun(wf);
+    const runner = new MockRunner().when('b', { kind: 'status', status: 'needs_input', error: 'Which database?' });
+    expect((await schedule(run, runner).scheduler.execute()).state).toBe('paused');
+    await reconcileForResume(run, { input: { taskId: 'b', text: 'Use Postgres' } });
+    // MockRunner indexes its behaviours by attempt number, and this run starts at attempt 2.
+    const runner2 = new MockRunner().when('b', [{ kind: 'success' }, { kind: 'error', outcome: 'crash' }, { kind: 'success' }]);
+    expect((await schedule(run, runner2, new MemoryRunStore(), true).scheduler.execute()).state).toBe('completed');
+    expect(run.tasks.b!.attempts.map((a) => a.triggeredBy)).toEqual(['initial', 'user_input', 'retry']);
+    // The answer is still in front of the retried worker; only the label changed.
+    expect(runner2.calls[1]!.prompt).toContain('Use Postgres');
+  });
+
+  it('does not treat a task waiting for a human as a failed dependency', async () => {
+    // needs_input is not a failure, so onFailure must not fire and dependents must wait rather than be
+    // skipped - including one that opted into running when its dependency fails.
+    const { workflow: wf } = await buildWorkflow(
+      [
+        'name: t',
+        'tasks:',
+        '  - id: a',
+        '    prompt: p',
+        '    onFailure: skip_dependents',
+        '  - id: b',
+        '    prompt: p',
+        '    dependsOn: [a]',
+        '  - id: c',
+        '    prompt: p',
+        '    dependsOn: [a]',
+        '    runIfDependencyFailed: true',
+        '',
+      ].join('\n'),
+      { gitRoot: process.cwd() },
+    );
+    const run = makeRun(wf);
+    const runner = new MockRunner().when('a', { kind: 'status', status: 'needs_input', error: 'Which database?' });
+    expect((await schedule(run, runner).scheduler.execute()).state).toBe('paused');
+    expect(states(run)).toEqual({ a: 'needs_input', b: 'pending', c: 'pending' });
+
+    await reconcileForResume(run, { input: { taskId: 'a', text: 'Use Postgres' } });
+    const runner2 = new MockRunner();
+    expect((await schedule(run, runner2, new MemoryRunStore(), true).scheduler.execute()).state).toBe('completed');
+    expect(states(run)).toEqual({ a: 'success', b: 'success', c: 'success' });
+  });
 });

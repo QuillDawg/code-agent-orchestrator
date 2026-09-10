@@ -40,6 +40,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `--task` values are given: an answer belongs to the question one worker asked. Tasks nobody answered are
   left holding their questions instead of being restarted unanswered, so a run paused on several of them is
   answered one at a time and says so.
+- Only the attempt that actually carries a new answer is labelled `user input` in `cao task` and
+  `report.md`; a retry of a failed answering attempt is a retry, and still receives the answer.
 - `hooks.onInputRequired` now also fires for a request nobody can answer (headless, `--no-tui`, CI), where
   the notification is the only way an operator finds out at all. `CAO_TASK_STATE` distinguishes the two
   cases: `waiting` while someone can still answer, `needs_input` when nobody can.

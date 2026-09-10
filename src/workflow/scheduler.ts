@@ -637,7 +637,9 @@ export class WorkflowScheduler {
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
     const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
     state.resumeSessionId = undefined;
-    const triggeredBy: TaskAttempt['triggeredBy'] = state.userInput && lastAttempt
+    // `answering`, not merely "an answer exists": the answer stays on the task so a later retry still has
+    // it, and an attempt that retries a failed answering attempt is a retry, not a second answer.
+    const triggeredBy: TaskAttempt['triggeredBy'] = answering
       ? 'user_input'
       : lastAttempt
         ? nudge
