@@ -353,6 +353,13 @@ describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
 
   const HOST = '  approvals: host';
 
+  /** The security envelope the app-server turn was started with; it travels in params, never in argv. */
+  async function wireEnvelope(store: FileRunStore, runId: string, taskId: string, attempt = 1): Promise<Record<string, unknown> | undefined> {
+    const events = await attemptEvents(store, runId, taskId, attempt);
+    const line = events.find((e): e is Extract<TranscriptEntry, { kind: 'stderr' }> => e.kind === 'stderr' && e.text.startsWith('envelope:'));
+    return line ? (JSON.parse(line.text.slice('envelope:'.length)) as Record<string, unknown>) : undefined;
+  }
+
   it('row 6: a command approval round-trips allow-once, allow-always and decline', async () => {
     // allow once -> "accept"
     const once = await tmpGitRepo('cao-h3-cmd-once-');
@@ -414,6 +421,66 @@ describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
     const stored = await storedResult(store, run.runId, 'approve');
     expect(stored.error).toContain('codex.approvals: host');
     expect(stored.error).toContain('codex.approvals: autoReview');
+  }, 60_000);
+
+  /**
+   * The other half of rows 6-7's headless cell. `approvals: host` with no dashboard pauses (above); the
+   * default `auto` resolves to auto-review instead, and auto-review is Codex reviewing its own actions - so
+   * the task has to *finish*, with the envelope saying who the reviewer is. The envelope of an app-server
+   * turn travels in `thread/start`, not in argv, so it is read from the fake's trace.
+   */
+  it('rows 6-7 headless: the auto-review half runs to completion without a human', async () => {
+    const repo = await tmpGitRepo('cao-h3-autoreview-headless-');
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: build\n    retries: 0\n    prompt: do it'));
+    expect(result.state).toBe('completed');
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.build!.state).toBe('success');
+    // Nobody was asked anything, and nothing waited for a human.
+    expect(persisted.tasks.build!.attempts[0]!.interactions ?? []).toEqual([]);
+    expect(await wireEnvelope(store, run.runId, 'build')).toEqual({ approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: 'workspace-write' });
+  }, 60_000);
+
+  /**
+   * Row 12 on Codex: two of the server's own requests open at the same time. The app-server keys its
+   * pending requests by id, so answering the newer one first must settle that one and leave the older one
+   * open - not settle whichever the client happens to reach first.
+   */
+  it('row 12: two server requests open at once are answerable in either order', async () => {
+    const repo = await tmpGitRepo('cao-h3-two-codex-');
+    const open: Array<{ interaction: Interaction; resolve: (a: InteractionAnswer) => void }> = [];
+    const prepared = await prepare(repo, workflowYaml('appServer', '  - id: approve\n    prompt: do it', HOST), {
+      modes: { approve: 'two-approvals' },
+      interactionHandler: (interaction) => new Promise<InteractionAnswer>((resolve) => open.push({ interaction, resolve })),
+    });
+    const execution = prepared.runtime.scheduler.execute();
+    await waitFor(() => open.length === 2, 20_000);
+    const task = prepared.run.tasks.approve!;
+    expect(task.state).toBe('waiting');
+    expect(open.map((o) => o.interaction.toolName)).toEqual(['command', 'fileChange']);
+    const first = task.pendingInteraction!.id;
+    expect(first).toBe(open[0]!.interaction.id);
+
+    open[1]!.resolve({ kind: 'allow', scope: 'once' }); // the newer one first
+    await waitFor(() => (task.attempts[0]!.interactions ?? []).some((i) => i.answeredAt), 10_000);
+    // Still blocked on the older request, which nobody has answered yet.
+    expect(task.state).toBe('waiting');
+    expect(task.pendingInteraction?.id).toBe(first);
+
+    open[0]!.resolve({ kind: 'deny', message: 'not on my machine' });
+    const result = await execution;
+    expect(result.state).toBe('completed');
+
+    // Each answer reached the request it belonged to: the file change was accepted, the command declined.
+    const responses = await wireResponses(prepared.store, prepared.run.runId, 'approve');
+    expect(responses).toEqual([
+      expect.objectContaining({ id: 98, result: { decision: 'accept' } }),
+      expect.objectContaining({ id: 99, result: { decision: 'decline' } }),
+    ]);
+    const persisted = await prepared.store.loadRun(prepared.run.runId);
+    expect(persisted.tasks.approve!.attempts[0]!.interactions).toEqual([
+      expect.objectContaining({ toolName: 'command', answer: 'deny', source: 'handler' }),
+      expect.objectContaining({ toolName: 'fileChange', answer: 'allow', source: 'handler' }),
+    ]);
   }, 60_000);
 
   it('row 8: a multi-question requestUserInput is answered by question id', async () => {

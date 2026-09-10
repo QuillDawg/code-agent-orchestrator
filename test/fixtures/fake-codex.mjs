@@ -17,7 +17,8 @@
  *   exec only:       open-command (a command is started and the process leaves without completing it) |
  *                    exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
  *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
- *   app-server only: approval | approval-always | approval-decline | file-approval | question |
+ *   app-server only: approval | approval-always | approval-decline | file-approval | two-approvals |
+ *                    question |
  *                    question-multi | question-recovers | question-then-resume | unknown-request |
  *                    failure | interrupted |
  *                    mcp-failure | malformed | overload-once | wrong-model | missing-policy
@@ -302,6 +303,9 @@ const recallThread = (id) => {
 };
 
 let unsupportedOutstanding = 2;
+/** `two-approvals`: the turn ends only once both of the requests it opened have been answered. */
+let bothOutstanding = 2;
+const bothSettled = [];
 let threadId = 'codex-thread-1';
 let overloaded = false;
 let isResume = false;
@@ -373,6 +377,9 @@ rl.on('line', (raw) => {
       sandbox: message.params?.sandbox ?? stored?.sandbox ?? 'workspace-write',
     };
     if (!isResume) rememberThread(threadId, settings);
+    // The security envelope of an app-server turn travels in these params rather than in argv, so it is
+    // echoed the way the responses below are: a test reads it back out of the attempt's log.
+    process.stderr.write(`envelope:${JSON.stringify({ approvalPolicy: settings.approvalPolicy, approvalsReviewer: settings.approvalsReviewer, sandbox: settings.sandbox })}` + String.fromCharCode(10));
     const sandboxType = settings.sandbox.replace(/-([a-z])/g, (_all, letter) => letter.toUpperCase());
     emit({ id: message.id, result: {
       thread: { id: threadId }, model: mode === 'wrong-model' ? 'other-model' : settings.model, modelProvider: 'openai', cwd: message.params?.cwd ?? process.cwd(),
@@ -393,6 +400,11 @@ rl.on('line', (raw) => {
       emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'decline'], proposedExecpolicyAmendment: null } });
     } else if (mode === 'approval-always') {
       emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'acceptForSession', 'decline'], proposedExecpolicyAmendment: ['npm', 'test'] } });
+    } else if (mode === 'two-approvals') {
+      // Two requests open at once, from one turn: whichever order the client answers them in, both have to
+      // be answered before the turn can end.
+      emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'decline'], proposedExecpolicyAmendment: null } });
+      emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', startedAtMs: Date.now(), reason: 'update fixture', grantRoot: process.cwd() } });
     } else if (mode === 'file-approval') {
       emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', startedAtMs: Date.now(), reason: 'update fixture', grantRoot: process.cwd() } });
     } else if (mode === 'question-then-resume' && !isResume) {
@@ -438,6 +450,14 @@ rl.on('line', (raw) => {
     else if (--unsupportedOutstanding === 0) finish();
   } else if (message.id === 98 || message.id === 99 || message.id === 100) {
     process.stderr.write(`response:${JSON.stringify(message)}\n`);
+    if (mode === 'two-approvals') {
+      // The turn is waiting on both. The answers are recorded in the order they arrive, so a test can see
+      // that the order the client chose did not decide which request each answer belonged to.
+      if (!message.error && !validateResponse(message)) return;
+      bothSettled.push(`${message.id === 99 ? 'command' : 'file'}:${message.error ? 'declined' : JSON.stringify(message.result.decision)}`);
+      if (--bothOutstanding === 0) finish({ ...result, summary: `fake app-server honoured ${bothSettled.join(' ')}` });
+      return;
+    }
     if (message.error) {
       // Declined through the protocol. A worker that can carry on does; one that truly needed the answer
       // ends its turn without the completion object, which is what the operator has to be told about.

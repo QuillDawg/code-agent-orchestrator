@@ -323,7 +323,8 @@ Every row has a test that drives it through the scheduler against the fakes — 
 handler is registered) and headless (none is) wherever both apply — asserting the task-state timeline, the
 stored `TaskResult` and the attempt's `events.jsonl`. They are named `row <n>` in
 `test/integration/interactive.test.ts` (rows 1-5, 11, 12) and `test/integration/codex-e2e.test.ts`
-(rows 6-11); `test/unit/resume.test.ts` covers the row 11 mechanics on their own.
+(rows 6-12); `test/unit/resume.test.ts` covers the row 11 mechanics on their own. Row 12 is driven on both
+agents: two Claude permission prompts, and two Codex app-server approval requests open in one turn.
 
 | # | Agent / transport | Situation | Attended (dashboard) | Headless |
 |---|---|---|---|---|
@@ -338,7 +339,7 @@ stored `TaskResult` and the attempt's `events.jsonl`. They are named `row <n>` i
 | 9 | codex appServer | `requestUserInput`, disabled | declined with `-32601`; `needs_input` quoting the question if the worker cannot finish | same |
 | 10 | codex exec | approval or question rejected by the CLI | `needs_input` quoting the request and naming how to enable answers | same |
 | 11 | either | answered later with `cao resume --input` | the session that asked is resumed with the answer | same |
-| 12 | either | two prompts open at once | both answerable, in either order; the task leaves `waiting` on the last one | both denied |
+| 12 | either | two prompts open at once | both answerable, in either order; the task leaves `waiting` on the last one | both denied (Codex: `codex.approvals: host` pauses before the turn starts, as in rows 6-7) |
 
 ### What `codex exec` cannot do, and what changes it
 
