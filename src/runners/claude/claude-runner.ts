@@ -12,7 +12,7 @@ import path from 'node:path';
 import { createWriteStream } from 'node:fs';
 import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../task-runner.js';
 import type { ClaudeOptions, ResolvedTask } from '../../types/workflow.js';
-import type { RunnerUsage } from '../../types/result.js';
+import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry, TranscriptEntryInput } from '../../types/transcript.js';
 import type { InteractionAnswer } from '../../types/interaction.js';
 import { ProcessManager } from '../../execution/process-manager.js';
@@ -22,8 +22,9 @@ import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA_STRING, extractJsonObje
 import { agentTextEvents } from './completion-text.js';
 import { isTransientApiError } from './transient.js';
 import { contextWindowFor, supportsAutoMode, supportsEffort } from './models.js';
-import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, summarizeAnswer, PendingInteractions } from './protocol.js';
+import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, summarizeAnswer, describeDenials, PendingInteractions } from './protocol.js';
 import { ensureDir } from '../../util/fs.js';
+import { sanitizeText } from '../../util/text.js';
 import { nowIso, uuid } from '../../util/misc.js';
 
 export interface ClaudeRunnerOptions {
@@ -105,6 +106,31 @@ function claudeFailure(message: string, retryable: boolean, sessionId: string | 
   const status = /\b(?:HTTP\s*)?(\d{3})\b/i.exec(message)?.[1];
   const requestId = /\brequest[_ -]?id[:= ]+([\w-]+)/i.exec(message)?.[1];
   return { retryable, sessionId, ...(status ? { httpStatus: Number(status) } : {}), ...(requestId ? { requestId } : {}), ...extras };
+}
+
+/**
+ * A worker that was refused every prompt it raised is blocked on a human, not broken. Without this the
+ * attempt ends as `crash` and the run reports a failure whose real cause — nobody could answer — appears
+ * nowhere, so `cao resume --input` never looks like the next step.
+ */
+function deniedNeedsInput(denied: string[], detail: string, promptMode: PromptMode): TaskResult {
+  const list = denied.map((d) => sanitizeText(d)).join(', ');
+  const named = list ? `Claude Code denied ${list}` : 'Claude Code denied every permission prompt this session raised';
+  const why =
+    promptMode === 'deny'
+      ? 'this attempt ran with claude.permissionPrompts "deny" (the default without a dashboard), so nothing could be asked'
+      : 'the prompts were denied rather than answered';
+  return {
+    status: 'needs_input',
+    summary: `${named} and the session could not continue`,
+    error: `${named} itself: ${why}. The session then ended: ${detail}. Attach a dashboard (or set claude.permissionPrompts: ask) to answer prompts during the run, or answer this task with \`cao resume --task <id> --input "…"\`.`,
+    filesChanged: [],
+    commits: [],
+    decisions: [],
+    warnings: [detail],
+    followUp: ['Set claude.permissionPrompts: ask and attach a dashboard to answer prompts during the run.'],
+    data: { blockedOn: 'claudePermission' },
+  };
 }
 
 function claudeProviderCode(retry: { httpStatus?: number; message?: string } | undefined, subtype?: string): string | undefined {
@@ -381,9 +407,16 @@ export class ClaudeRunner implements TaskRunner {
         }
         if (resultEvent.isError) {
           const detail = resultEvent.resultText ?? resultEvent.subtype ?? 'unknown error';
-          const denials = resultEvent.permissionDenials?.length ? ` (${resultEvent.permissionDenials.length} permission denial(s))` : '';
+          const denied = describeDenials(resultEvent.permissionDenials);
+          const denials = denied.length ? ` (${denied.length} permission denial(s))` : '';
           // A 5xx/overloaded/network failure ends the print-mode process; the session itself is intact and resumable.
           const outcome = isTransientApiError(detail) || isTransientApiError(stderrTail.join('\n')) ? 'api_error' : 'crash';
+          // A session refused everything it asked for and then gave up is waiting on a human, not crashed.
+          if (denied.length && outcome !== 'api_error') {
+            const result = deniedNeedsInput(denied, detail, promptMode);
+            finishEntry({ kind: 'result', status: result.status, summary: result.summary, costUsd: finalUsage.costUsd, isError: false, error: result.error });
+            return { kind: 'result', result, exitCode: exit.code, usage: finalUsage };
+          }
           finishEntry({ kind: 'result', status: resultEvent.subtype ?? 'error', costUsd: finalUsage.costUsd, isError: true, error: `${detail}${denials}` });
           return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, { ...(claudeProviderCode(lastApiRetry, resultEvent.subtype) ? { providerCode: claudeProviderCode(lastApiRetry, resultEvent.subtype) } : {}), ...(lastApiRetry?.httpStatus !== undefined ? { httpStatus: lastApiRetry.httpStatus } : {}), ...(lastApiRetry ? { retryAfterMs: lastApiRetry.retryDelayMs } : {}) }) };
         }

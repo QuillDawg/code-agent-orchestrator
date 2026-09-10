@@ -61,6 +61,7 @@ Partial message streaming (`--include-partial-messages`) is not enabled; tool-us
 | `structured_output` valid | result status (`success`, `failed`, …) |
 | no `structured_output` but a JSON object in `result` text (fenced or trailing) | validated the same way |
 | `is_error: true` with a transient API/network message (`API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, …) | `api_error` → the scheduler waits and resumes the session |
+| `is_error: true` with `permission_denials` (the CLI answered the prompts itself) | `needs_input` naming the denied tools |
 | `is_error: true` otherwise (max turns, budget, auth) | `crash` with Claude's message |
 | exit 0 without a valid result | `invalid_result` → the scheduler first asks the same session for the object (`retry.resultNudges`), then retries |
 | non-zero exit with a transient network error on stderr | `api_error` |
@@ -98,7 +99,11 @@ The wire protocol (verified against Claude Code 2.1.259 and the Agent SDK):
 
 "Allow for the rest of this task" (`A`) reuses the CLI's own `addRules` entries from `permission_suggestions`, with `destination` forced to `session`, so nothing is written to a settings file and nothing outlives the worker process. It is offered **only** when the request carried such a suggestion: the orchestrator never substitutes a rule of its own, because the only one it could construct — `{"toolName":"Bash"}` — would allow every later shell command in the session, which is not what the key says it does. When the CLI suggests nothing, `A` is absent from the modal and an "always" answer degrades to a plain allow-once.
 
-A `control_cancel_request` from the worker withdraws a prompt; on cancellation or timeout the orchestrator answers with a deny whose message tells the worker to finish with `status: needs_input`, and withdraws the prompt from the dashboard so a decided request never sits in front of a live one. Everything else about the invocation (schema, system prompt, `--resume`) is identical in both modes.
+A `control_cancel_request` from the worker withdraws a prompt; on cancellation or timeout the orchestrator answers with a deny whose message tells the worker to finish with `status: needs_input`, and withdraws the prompt from the dashboard so a decided request never sits in front of a live one. A cancel for a request that has already been answered is ignored — each request settles exactly once — so a late withdrawal cannot leak one prompt's decision into the next.
+
+**Every denial names what was refused and how to end the attempt.** Whoever produced it — the dashboard (`Denied by the user`), a host handler, the interaction timeout, or the absence of any handler — the scheduler appends the request's title and `finish with status needs_input if you cannot continue` before the worker sees it, so the task result an operator later reads carries the question or the command rather than a bare "denied". A worker blocked on a human therefore ends in exactly one of two states: `waiting` while someone can still answer, or `needs_input` once the attempt is over. It is never `failed`/`crash` because nobody answered.
+
+In **deny** mode the orchestrator is never asked at all: Claude Code refuses the tool and reports it in `permission_denials` on the result event. A session that then gives up (`is_error: true`) is a worker waiting on a human, not a crash, so the attempt ends as `needs_input` naming the tools that were denied and how to answer them next time. A session that ends without the completion object still gets the ordinary nudge first — asking the same session for the object is a cheaper recovery than pausing the run. Everything else about the invocation (schema, system prompt, `--resume`) is identical in both modes.
 
 Tool input is model-controlled text. It is stored verbatim in the attempt's `events.jsonl`, but every surface that renders it — the permission modal above all — strips escape sequences and control characters first, so a worker cannot repaint the prompt an operator is reading. The run-level `events.jsonl` records only the interaction summary (id, kind, tool, title), never the raw input.
 
@@ -120,6 +125,7 @@ codex [--approve-for-me] --sandbox <read-only|workspace-write|danger-full-access
       [extraArgs...] [--model X] [-c model_reasoning_effort="<effort>"]
 ```
 
+- **No human can be reached during a `codex exec` task.** The CLI answers approval and user-input requests itself, with a rejection, so nothing ever reaches the dashboard. `cao validate` names the tasks that run on this transport, every `exec` attempt opens its log with the same statement, and the run log records it once per task.
 - The prompt—completion contract, optional addendum, then the task prompt—is written to stdin.
 - The default `exec` transport writes its schema-validated final answer to `final.json`; JSONL activity arrives on stdout.
 - `--model` and `-c model_reasoning_effort` come from the resolved task `model`/`effort`.
@@ -132,7 +138,45 @@ Security-affecting passthrough arguments are rejected rather than allowed to sup
 
 Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protocol. CAO initializes the server, starts or resumes a thread, starts a schema-constrained turn, records items and cumulative token usage, and waits for the authoritative `turn/completed` event. The process is private to one attempt. Cancellation sends `turn/interrupt` before process-tree termination.
 
-Stable command and file-change approval requests become the same runner-neutral `Interaction` used by Claude. Unknown server requests are rejected and permission-affecting requests fail closed. `item/tool/requestUserInput` is enabled only with `experimentalUserInput: true`; otherwise the task produces `needs_input`. Typed `codexErrorInfo` values drive retry classification. The transports never silently fall back into one another; `exec` remains the default while app-server is experimental.
+Stable command and file-change approval requests become the same runner-neutral `Interaction` used by Claude. Typed `codexErrorInfo` values drive retry classification. The transports never silently fall back into one another; `exec` remains the default while app-server is experimental.
+
+CAO answers exactly three server requests — `item/commandExecution/requestApproval`,
+`item/fileChange/requestApproval` and `item/tool/requestUserInput`. Everything else, including
+`item/permissions/requestApproval`, `mcpServer/elicitation/request` and the legacy `applyPatchApproval` /
+`execCommandApproval`, is refused with JSON-RPC `-32601` and recorded in the transcript: a
+permission-affecting request is never decided on the operator's behalf, with or without a dashboard.
+
+The wire shapes are those of the protocol bundle codex-cli ships
+(`codex app-server generate-json-schema --experimental`), and `src/runners/codex/app-server-protocol.ts`
+is the only place that knows them:
+
+| Answer | Command approval | File-change approval |
+|---|---|---|
+| allow once | `{"decision":"accept"}` | `{"decision":"accept"}` |
+| allow for the rest of this task | `{"decision":{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":[…]}}}` when the request proposed one, else `{"decision":"acceptForSession"}` when it offered that | `{"decision":"acceptForSession"}` — its response has no amendment variant |
+| deny | `{"decision":"decline"}`, so the agent keeps its turn | `{"decision":"decline"}` |
+
+"Allow for the rest of this task" is offered only where the request itself proposed a standing permission
+(`proposedExecpolicyAmendment`, `grantRoot`, or `acceptForSession` in `availableDecisions`); otherwise the
+key is absent from the modal and an "always" answer behaves as an allow-once. Nothing outlives the
+session either way.
+
+`item/tool/requestUserInput` needs `experimentalUserInput: true`. The reply is
+`{"answers":{"<question id>":{"answers":[…]}}}` — **keyed by the question's own id**, not by its text,
+which is what the dashboard keys its answers by; the mapping happens on the way out. The protocol has no
+multi-select (a question carries `options`, `isOther` and `isSecret`, and nothing that permits several
+choices), so questions reach the dashboard with `multiSelect: false`, and a question with no options at
+all is a free-text prompt.
+
+A question that cannot be answered — the capability is off, nobody is attached, the request timed out —
+is **declined through the protocol** (`-32601` when the capability is off, `-32000` otherwise) rather
+than by killing the process, so the worker keeps its turn and any work in it. If it finishes anyway, its
+result stands and the question becomes a run warning. If it cannot, the attempt ends as `needs_input`
+whose summary and `error` quote the question Codex asked. Should the process still have to be killed,
+the attempt's transcript says so explicitly.
+
+`codex.approvals: host` with no dashboard attached also ends as `needs_input`, explaining that the task
+either needs the dashboard or `codex.approvals: autoReview`.
 
 | `permissionMode` | sandbox | approvals |
 |---|---|---|
@@ -152,7 +196,7 @@ Use `fullAccess` only in an appropriately isolated environment.
 | `item.type: agent_message` | transcript `text` entry, or a `result` entry when the message is (or contains) the completion object — see [the completion contract](#the-completion-object-is-protocol-not-prose) |
 | `item.type: mcp_tool_call` / `web_search` | transcript `tool` entry |
 | `turn.completed` | usage: input / cached / output tokens, turn count, context size |
-| `error` / `turn.failed` / `item.type: error` | transcript `error` entry (this is where rejected approvals show up) |
+| `error` / `turn.failed` / `item.type: error` | transcript `error` entry; a rejected approval or question is recognised here (below) |
 
 ### Outcome mapping
 
@@ -165,6 +209,23 @@ Use `fullAccess` only in an appropriately isolated environment.
 | non-zero exit with a transient network error on stderr | `api_error` |
 | non-zero exit otherwise | `crash` with exit code and stderr tail |
 | exit 0 with no schema-valid final response | `invalid_result` |
+| an approval or user-input rejection in the stream, and no schema-valid final response | `needs_input` quoting the rejection |
+
+#### Requests `codex exec` rejects for us
+
+Codex answers these itself and reports the refusal in the JSONL stream, verbatim (wording from codex-cli
+0.154.0): `command execution approval`, `exec command approval`, `file change approval`, `apply_patch
+approval`, `permissions approval` and `request_user_input`, each `… is not supported in exec mode for thread
+<id>`. CAO recognises those six and ends the attempt as `needs_input` whose `error` quotes the rejection,
+names the command it was about when the stream said so, and names the option that would have allowed an
+answer (`codex.transport: appServer` with `codex.approvals: host`, or `codex.experimentalUserInput: true`
+for a question). Without that the attempt fell through to `invalid_result` or `crash` depending on the
+exit code, spending a nudge and a retry on a session that could never have finished. Rejections nobody
+could have answered either — auth token refresh, attestation, the current time, dynamic tool calls — are
+deliberately left as ordinary errors.
+
+If the worker carries on after the rejection and still produces a schema-valid completion object, that
+object is the result and the rejection is reported as a run warning instead.
 
 ---
 

@@ -443,3 +443,43 @@ describe('effort on models without effort levels', () => {
     expect(explicit.validation.diagnostics.filter((d) => d.level === 'warning')).toEqual([]);
   });
 });
+
+describe('cao validate says up front which tasks cannot reach a human', () => {
+  const warnings = (result: { diagnostics: Array<{ level: string; message: string }> }): string[] =>
+    result.diagnostics.filter((d) => d.level === 'warning').map((d) => d.message);
+
+  it('warns once, naming every Codex exec task', async () => {
+    const { validation } = await buildWorkflow(`
+name: exec-tasks
+agent: codex
+tasks:
+  - id: build
+    prompt: p
+  - id: ship
+    prompt: p
+  - id: review
+    codex: { transport: appServer }
+    prompt: p
+`, { gitRoot: process.cwd() });
+    // (buildWorkflow only registers the claude and mock runners, so `ok` is false here for that reason.)
+    // One sentence for the workflow rather than one per task, and the appServer task is not in it.
+    const notices = warnings(validation).filter((m) => m.includes('cannot reach a human'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('Tasks "build", "ship" run');
+    expect(notices[0]).not.toContain('review');
+    expect(notices[0]).toContain('appServer');
+  });
+
+  it('says nothing when no task runs on the exec transport', async () => {
+    const codexAppServer = await buildWorkflow(`
+name: app-server-only
+agent: codex
+codex: { transport: appServer }
+tasks: [{ id: a, prompt: p }]
+`, { gitRoot: process.cwd() });
+    expect(warnings(codexAppServer.validation).filter((m) => m.includes('cannot reach a human'))).toEqual([]);
+
+    const claudeOnly = await buildWorkflow('name: t\ntasks:\n  - id: a\n    prompt: p\n', { gitRoot: process.cwd() });
+    expect(warnings(claudeOnly.validation).filter((m) => m.includes('cannot reach a human'))).toEqual([]);
+  });
+});

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createWriteStream } from 'node:fs';
 import type { ProcessManager, ManagedProcess } from '../../execution/process-manager.js';
 import type { CodexOptions } from '../../types/workflow.js';
-import type { Interaction, InteractionAnswer, InteractionQuestion } from '../../types/interaction.js';
+import type { InteractionQuestion } from '../../types/interaction.js';
 import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js';
 import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
@@ -13,6 +13,10 @@ import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
+import {
+  REQUEST_DECLINED, REQUEST_UNSUPPORTED, approvalResponse, cancelResponse, interactionFromRequest,
+  isAnswerableRequest, parseQuestions, quoteQuestions, userInputResponse,
+} from './app-server-protocol.js';
 
 export interface CodexAppServerOptions {
   processManager: ProcessManager;
@@ -67,37 +71,24 @@ function sandboxPolicy(mode: NonNullable<CodexOptions['sandbox']>, cwd: string, 
   return { type: 'workspaceWrite', writableRoots: [cwd, ...addDirs], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
 }
 
-function interactionFromRequest(id: string, method: string, params: JsonObject, input: RunnerInput): Interaction {
-  if (method === 'item/tool/requestUserInput') {
-    const questions: InteractionQuestion[] = (Array.isArray(params.questions) ? params.questions : []).map((question: JsonObject) => ({
-      question: String(question.question ?? ''), header: typeof question.header === 'string' ? question.header : undefined,
-      options: (Array.isArray(question.options) ? question.options : []).map((option: JsonObject) => ({ label: String(option.label ?? ''), description: typeof option.description === 'string' ? option.description : undefined })),
-      multiSelect: false,
-    }));
-    return { id, kind: 'question', taskId: input.task.id, attempt: input.attempt, agent: 'codex', toolName: 'requestUserInput', title: questions[0]?.question ?? 'Codex needs input', input: params, questions, requestedAt: nowIso() };
-  }
-  const command = typeof params.command === 'string' ? params.command : undefined;
-  const isCommand = method === 'item/commandExecution/requestApproval';
-  const suggestions = isCommand && params.proposedExecpolicyAmendment ? [params.proposedExecpolicyAmendment] : !isCommand && params.grantRoot ? [params.grantRoot] : undefined;
-  return {
-    id, kind: 'permission', taskId: input.task.id, attempt: input.attempt, agent: 'codex', toolName: isCommand ? 'command' : 'fileChange',
-    title: command ? `Command: ${command}` : params.reason ? String(params.reason) : 'Approve file changes', description: typeof params.reason === 'string' ? params.reason : undefined,
-    input: params, suggestions, suppressAlwaysAllow: !suggestions?.length, requestedAt: nowIso(),
-  };
+/**
+ * A question CAO cannot put in front of a human. The request is declined through the protocol and the
+ * worker gets to finish its own turn; only if it cannot does this become the attempt's result, quoting
+ * what Codex asked instead of a fixed sentence.
+ */
+interface BlockedOnHuman {
+  questions: InteractionQuestion[];
+  /** What the worker was told when the request was declined. */
+  reason: string;
+  /** What the operator would have to change for the next run to be able to answer. */
+  fix: string;
 }
 
-function responseFor(interaction: Interaction, answer: InteractionAnswer): JsonObject {
-  if (interaction.kind === 'question') {
-    const answers: JsonObject = {};
-    for (const [id, value] of Object.entries(answer.kind === 'answer' ? answer.answers : {})) answers[id] = { answers: [value] };
-    return { answers };
-  }
-  if (answer.kind === 'allow') return { decision: answer.scope === 'always' ? 'acceptForSession' : 'accept' };
-  return { decision: answer.kind === 'deny' ? 'decline' : 'cancel' };
-}
-
-function emptyNeedsInput(message: string): TaskResult {
-  return { status: 'needs_input', summary: message, error: message, filesChanged: [], commits: [], decisions: [], warnings: [], followUp: [] };
+function needsInputResult(blocked: BlockedOnHuman, warnings: string[] = []): TaskResult {
+  const quoted = quoteQuestions(blocked.questions);
+  const summary = `Codex asked ${quoted} and no one could answer it`;
+  const error = [`Codex asked ${quoted}.`, blocked.reason, `${blocked.fix}, or answer this task with \`cao resume --task <id> --input "…"\`.`].join(' ');
+  return { status: 'needs_input', summary, error, filesChanged: [], commits: [], decisions: [], warnings, followUp: [`${blocked.fix}.`], data: { blockedOn: 'codexUserInput' } };
 }
 
 export async function runCodexAppServer(config: CodexAppServerOptions, input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
@@ -106,7 +97,13 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   const unsafeExtraArg = codexExtraArgsSecurityConflict(options.extraArgs);
   if (unsafeExtraArg) return { kind: 'error', outcome: 'invalid_result', message: `Codex extraArgs cannot override security option "${unsafeExtraArg}"; use the validated codex permission fields` };
   const resolved = resolveCodexPermissions(options, Boolean(input.canInteract));
-  if (resolved.host && !input.canInteract) return { kind: 'error', outcome: 'invalid_result', message: 'Codex host approvals require an interactive handler' };
+  if (resolved.host && !input.canInteract) {
+    // The task asked for approvals a human answers and there is no human. That is a run waiting on one,
+    // not a broken worker: failing the task here would hide the one thing that fixes it.
+    const message =
+      'This task sets codex.approvals: host, so every command and file change waits for a dashboard, and none is attached. Run it with the dashboard, or set codex.approvals: autoReview to let Codex review its own actions.';
+    return { kind: 'result', result: { status: 'needs_input', summary: 'Codex host approvals need a dashboard, and none is attached', error: message, filesChanged: [], commits: [], decisions: [], warnings: [], followUp: [message], data: { blockedOn: 'codexApproval' } }, exitCode: null };
+  }
   if (options.configMode === 'isolated') {
     return { kind: 'error', outcome: 'invalid_result', message: 'Codex app-server cannot isolate ambient configuration while preserving saved authentication; use transport "exec" or configMode "inherit"' };
   }
@@ -129,7 +126,8 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   let finalText = '';
   let terminal: JsonObject | undefined;
   let protocolError: string | undefined;
-  let gatedResult: TaskResult | undefined;
+  let blocked: BlockedOnHuman | undefined;
+  let killed: string | undefined;
   let nextId = 1;
   const initializeId = nextId++;
   let threadRequestId = 0;
@@ -152,21 +150,37 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     return true;
   };
 
+  /**
+   * A question that cannot be answered is declined *through the protocol*: the worker keeps its turn and
+   * whatever work is in it, and gets told what to do. Killing the process throws that work away, so it is
+   * left to the last resort (and recorded when it happens).
+   */
+  const declineUserInput = (message: JsonObject, code: number, reason: string): void => {
+    const questions = parseQuestions(message.params ?? {});
+    const fix = options.experimentalUserInput
+      ? 'Run this task with the dashboard attached to answer its questions during the run'
+      : 'Set codex.experimentalUserInput: true (with codex.transport: appServer and a dashboard attached) to answer questions during the run';
+    blocked ??= { questions, reason, fix };
+    entry({ kind: 'question', ts: nowIso(), id: String(message.id), questions, answer: `declined: ${reason}` });
+    hooks.onActivity(`? declined: ${quoteQuestions(questions)}`);
+    hooks.onWarning?.(`Codex asked ${quoteQuestions(questions)}; ${reason}`);
+    send({ id: message.id, error: { code, message: reason } });
+  };
+
   const answerRequest = (message: JsonObject): void => {
     const id = String(message.id);
     const method = String(message.method ?? '');
-    if (!['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/tool/requestUserInput'].includes(method)) {
-      send({ id: message.id, error: { code: -32601, message: `${method} is not supported by CAO` } });
+    // Fail closed: an unknown request is never guessed at, and a permission-affecting one is never allowed.
+    if (!isAnswerableRequest(method)) {
+      entry({ kind: 'system', ts: nowIso(), text: `refused unsupported Codex request ${method}` });
+      send({ id: message.id, error: { code: REQUEST_UNSUPPORTED, message: `${method} is not supported by CAO` } });
       return;
     }
     if (method === 'item/tool/requestUserInput' && !options.experimentalUserInput) {
-      const reason = 'Codex requested user input, but experimentalUserInput is disabled';
-      gatedResult = emptyNeedsInput(reason);
-      send({ id: message.id, error: { code: -32601, message: reason } });
-      void proc.kill('graceful');
+      declineUserInput(message, REQUEST_UNSUPPORTED, 'This task runs with codex.experimentalUserInput disabled, so questions cannot be answered; finish with status needs_input if you cannot continue.');
       return;
     }
-    const interaction = interactionFromRequest(id, method, message.params ?? {}, input);
+    const interaction = interactionFromRequest(id, method, message.params ?? {}, { taskId: input.task.id, attempt: input.attempt });
     const controller = new AbortController();
     pending.set(id, controller);
     const ts = nowIso();
@@ -174,15 +188,26 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     hooks.onActivity(`? ${interaction.title}`);
     hooks.onInteraction(interaction, controller.signal).then((answer) => {
       if (!pending.delete(id)) return;
-      send({ id: message.id, result: responseFor(interaction, answer) });
       const done = nowIso();
-      entry(interaction.kind === 'question'
-        ? { kind: 'question', ts: done, id, questions: interaction.questions ?? [], answer: answer.kind === 'answer' ? Object.values(answer.answers).join(' / ') : answer.kind }
-        : { kind: 'permission', ts: done, id, tool: interaction.toolName, title: interaction.title, decision: answer.kind === 'allow' ? 'allow' : 'deny' });
+      if (interaction.kind === 'question') {
+        // A question the orchestrator denied has no answer to send: the protocol's only reply carries
+        // answers, so it is declined the same way a disabled one is, and the worker is told why.
+        if (answer.kind !== 'answer') {
+          declineUserInput(message, REQUEST_DECLINED, answer.kind === 'deny' ? answer.message : 'the question was not answered');
+          return;
+        }
+        send({ id: message.id, result: userInputResponse(interaction, answer) });
+        entry({ kind: 'question', ts: done, id, questions: interaction.questions ?? [], answer: Object.values(answer.answers).join(' / ') });
+        return;
+      }
+      send({ id: message.id, result: approvalResponse(interaction, answer) });
+      entry({ kind: 'permission', ts: done, id, tool: interaction.toolName, title: interaction.title, decision: answer.kind === 'allow' ? 'allow' : 'deny', message: answer.kind === 'deny' ? answer.message : undefined });
     }, (error: unknown) => {
       if (!pending.delete(id)) return;
-      send({ id: message.id, result: { decision: 'cancel' } });
-      entry({ kind: 'error', ts: nowIso(), text: `could not answer ${interaction.title}: ${error instanceof Error ? error.message : String(error)}` });
+      const detail = error instanceof Error ? error.message : String(error);
+      if (interaction.kind === 'question') declineUserInput(message, REQUEST_DECLINED, `the orchestrator could not answer (${detail})`);
+      else send({ id: message.id, result: cancelResponse() });
+      entry({ kind: 'error', ts: nowIso(), text: `could not answer ${interaction.title}: ${detail}` });
     });
   };
 
@@ -319,23 +344,34 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   });
   hooks.onProcess({ pid: proc.pid, sessionId: threadId });
   request(initializeId, 'initialize', { clientInfo: { name: 'code-agent-orchestrator', title: 'CAO', version: '1' }, capabilities: { experimentalApi: Boolean(options.experimentalUserInput), requestAttestation: false } });
-  const abort = (): void => { if (threadId && turnId) request(nextId++, 'turn/interrupt', { threadId, turnId }); void proc.kill('graceful'); };
+  const abort = (): void => { if (threadId && turnId) request(nextId++, 'turn/interrupt', { threadId, turnId }); killed = 'the orchestrator cancelled the run'; void proc.kill('graceful'); };
   input.signal.addEventListener('abort', abort, { once: true });
   const exit = await proc.exited;
   input.signal.removeEventListener('abort', abort);
   for (const controller of pending.values()) controller.abort(new Error('worker exited'));
   pending.clear();
+  // A declined question is only the attempt's outcome when the worker could not finish its turn without an
+  // answer. Whatever went wrong instead is kept as a warning, so the result says both what was asked and
+  // what the turn did afterwards.
+  const blockedOutcome = (why: string): RunnerOutcome => ({ kind: 'result', result: needsInputResult(blocked!, [why]), exitCode: exit.code, usage });
   let outcome: RunnerOutcome;
   if (input.signal.aborted) outcome = { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, usage };
-  else if (exit.timedOut) outcome = { kind: 'error', outcome: 'timeout', message: `timed out after ${input.timeoutMs}ms`, exitCode: exit.code, usage };
-  else if (gatedResult) outcome = { kind: 'result', result: gatedResult, exitCode: exit.code, usage };
-  else if (protocolError) outcome = { kind: 'error', outcome: 'crash', message: protocolError, exitCode: exit.code, usage };
-  else if (!terminal) outcome = { kind: 'error', outcome: 'crash', message: `Codex app-server exited before turn completion (code ${exit.code ?? 'null'})`, exitCode: exit.code, usage };
-  else if (terminal.status === 'failed') {
+  else if (exit.timedOut) {
+    const message = `timed out after ${input.timeoutMs}ms`;
+    outcome = blocked ? blockedOutcome(`the turn was still running ${message} and the process had to be killed`) : { kind: 'error', outcome: 'timeout', message, exitCode: exit.code, usage };
+  } else if (protocolError) outcome = { kind: 'error', outcome: 'crash', message: protocolError, exitCode: exit.code, usage };
+  else if (!terminal) {
+    const message = `Codex app-server exited before turn completion (code ${exit.code ?? 'null'})`;
+    outcome = blocked ? blockedOutcome(message) : { kind: 'error', outcome: 'crash', message, exitCode: exit.code, usage };
+  } else if (terminal.status === 'failed') {
     const failure = normalizeCodexFailure(terminal.error?.codexErrorInfo, { ...codexFailureMetadata(terminal.error), sessionId: threadId });
-    outcome = { kind: 'error', outcome: failure.retryable ? 'api_error' : 'crash', message: String(terminal.error?.message ?? 'Codex turn failed'), exitCode: exit.code, usage, failure };
+    const message = String(terminal.error?.message ?? 'Codex turn failed');
+    // A retryable transport failure is still worth retrying; anything else after a declined question is the
+    // question, not a crash.
+    outcome = blocked && !failure.retryable ? blockedOutcome(`the turn then failed: ${message}`) : { kind: 'error', outcome: failure.retryable ? 'api_error' : 'crash', message, exitCode: exit.code, usage, failure };
   } else if (terminal.status !== 'completed') {
-    outcome = { kind: 'error', outcome: 'crash', message: `Codex turn ended with status ${String(terminal.status ?? 'unknown')}`, exitCode: exit.code, usage, failure: { retryable: false, sessionId: threadId, partialWork: true } };
+    const message = `Codex turn ended with status ${String(terminal.status ?? 'unknown')}`;
+    outcome = blocked ? blockedOutcome(message) : { kind: 'error', outcome: 'crash', message, exitCode: exit.code, usage, failure: { retryable: false, sessionId: threadId, partialWork: true } };
   } else {
     if (!finalText && Array.isArray(terminal.items)) {
       const finalMessage = [...terminal.items].reverse().find((item: JsonObject) => item?.type === 'agentMessage' && typeof item.text === 'string');
@@ -344,10 +380,16 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     let parsed: unknown;
     try { parsed = JSON.parse(finalText); } catch { parsed = undefined; }
     const valid = CODEX_COMPLETION_CONTRACT.validate(parsed);
-    outcome = valid.ok
-      ? { kind: 'result', result: valid.result, exitCode: exit.code, usage, rawResultText: finalText }
-      : { kind: 'error', outcome: 'invalid_result', message: valid.error, exitCode: exit.code, usage };
+    if (valid.ok) {
+      // The worker finished its own turn after the decline: its result stands, and the question is a warning.
+      if (blocked) hooks.onWarning?.(`Codex asked ${quoteQuestions(blocked.questions)} and finished the turn without an answer`);
+      outcome = { kind: 'result', result: valid.result, exitCode: exit.code, usage, rawResultText: finalText };
+    } else {
+      outcome = blocked ? blockedOutcome(valid.error) : { kind: 'error', outcome: 'invalid_result', message: valid.error, exitCode: exit.code, usage };
+    }
   }
+  // Killing the app-server discards the turn and any work in it, so an attempt that ended that way says so.
+  if (killed || (exit.timedOut && blocked)) entry({ kind: 'system', ts: nowIso(), text: `the Codex app-server process was killed: ${killed ?? `the turn was still running after ${input.timeoutMs}ms`}` });
   entry(outcome.kind === 'result'
     ? { kind: 'result', ts: nowIso(), status: outcome.result.status, summary: outcome.result.summary, isError: false, error: outcome.result.error }
     : { kind: 'error', ts: nowIso(), text: outcome.message });

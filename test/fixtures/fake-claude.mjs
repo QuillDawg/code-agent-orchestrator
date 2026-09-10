@@ -10,7 +10,11 @@
  *   orphan-tool (a single tool call whose result never arrives)
  *   thinking (thinking blocks around a line of prose, plus a redacted_thinking block)
  *   edge (rename into a path with a space, binary change, delete+recreate, CRLF file) | noop (changes nothing)
- *   permission | permission-always | question | permission-cancel | permission-hang   (interactive modes, need --input-format stream-json)
+ *   permission | permission-always | question | question-multi | permission-cancel | permission-hang
+ *   permission-two (two prompts open at once, answerable in either order)
+ *   permission-cancel-late (withdraws a request that has already been answered)
+ *   permission-give-up (asks, is refused, and ends with an error result carrying permission_denials)
+ *     (interactive modes; all but permission-give-up need --input-format stream-json)
  *   prose-no-json (ends with prose that reads like a result and no JSON at all; a --resume of the session answers with the object)
  * FAKE_CLAUDE_NO_SUBAGENT_TEXT=1 drops --forward-subagent-text from the --help text.
  * FAKE_CLAUDE_DELAY_MS delays between events. FAKE_CLAUDE_TRACE=<file> appends one line per invocation
@@ -186,6 +190,7 @@ const finish = (structured, opts = {}) => {
     duration_ms: 100,
     num_turns: 2,
     stop_reason: 'end_turn',
+    ...(opts.permissionDenials ? { permission_denials: opts.permissionDenials } : {}),
     modelUsage: { 'fake-model': { inputTokens: 120, outputTokens: 30, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.01, contextWindow: 200000, maxOutputTokens: 32000 } },
   });
 };
@@ -467,6 +472,62 @@ switch (effectiveMode) {
       const answers = response.response.updatedInput?.answers ?? {};
       emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: `Your questions have been answered: ${JSON.stringify(answers)}` }] } });
       finish(result('success', { data: { answers } }));
+    } else {
+      finish(result('needs_input', { error: response.response?.message ?? 'no answer' }));
+    }
+    break;
+  }
+  case 'permission-two': {
+    // Two tool calls in flight at once: both requests are on the wire before either is answered, so the
+    // host can answer them in any order. The worker only carries on once it has both.
+    const build = askHost('Bash', { command: 'npm run build' }, { description: 'Build the project', permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm run build' }], behavior: 'allow', destination: 'localSettings' }] });
+    const write = askHost('Write', { file_path: 'src/new.ts' });
+    const settled = [];
+    const both = await Promise.all([build.then((r) => (settled.push('build'), r)), write.then((r) => (settled.push('write'), r))]);
+    const allowed = both.every((r) => r.subtype === 'success' && r.response?.behavior === 'allow');
+    finish(result(allowed ? 'success' : 'needs_input', { data: { settled, decisions: both.map((r) => r.response?.behavior ?? r.subtype) }, ...(allowed ? {} : { error: both.map((r) => r.response?.message ?? 'denied').join(' | ') }) }));
+    break;
+  }
+  case 'permission-cancel-late': {
+    // The worker withdraws a request it has already had an answer to. A host that forgot a settled request
+    // can be settled twice would answer the next prompt with this one's decision.
+    const requestId = `req-${process.pid}-late`;
+    emit({ type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'echo late' }, tool_use_id: 'tu-l' } });
+    const answered = await new Promise((resolve) => {
+      const known = controlResponses.get(requestId);
+      if (known) resolve(known);
+      else controlWaiters.set(requestId, resolve);
+    });
+    emit({ type: 'control_cancel_request', request_id: requestId });
+    await sleep(50);
+    // A second prompt afterwards proves the late cancel did not disturb the next request.
+    const second = await askHost('Bash', { command: 'echo after' });
+    finish(result('success', { data: { first: answered.response?.behavior ?? answered.subtype, second: second.response?.behavior ?? second.subtype } }));
+    break;
+  }
+  case 'permission-give-up': {
+    // Refused, and unable to go on: the session ends with an error result and the CLI's own denial record.
+    const response = await askHost('Bash', { command: 'npm publish', description: 'Publish the package' });
+    if (response.subtype === 'success' && response.response?.behavior === 'allow') {
+      finish(result('success', { data: { permission: 'allowed' } }));
+      break;
+    }
+    finish(undefined, {
+      isError: true,
+      subtype: 'error_during_execution',
+      text: 'I could not continue without running npm publish.',
+      permissionDenials: [{ tool_name: 'Bash', tool_use_id: 'tu-1', tool_input: { command: 'npm publish' } }],
+    });
+    break;
+  }
+  case 'question-multi': {
+    const questions = [
+      { question: 'Which database?', header: 'Database', options: [{ label: 'postgres', description: 'Relational' }, { label: 'mongo', description: 'Document' }], multiSelect: false },
+      { question: 'Which regions?', header: 'Regions', options: [{ label: 'eu', description: 'Europe' }, { label: 'us', description: 'North America' }], multiSelect: true },
+    ];
+    const response = await askHost('AskUserQuestion', { questions }, { requires_user_interaction: true });
+    if (response.subtype === 'success' && response.response?.behavior === 'allow') {
+      finish(result('success', { data: { answers: response.response.updatedInput?.answers ?? {} } }));
     } else {
       finish(result('needs_input', { error: response.response?.message ?? 'no answer' }));
     }

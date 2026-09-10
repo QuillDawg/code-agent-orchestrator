@@ -96,6 +96,23 @@ export function encodeErrorResponse(requestId: string, error: string): string {
   return `${JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error } })}\n`;
 }
 
+/**
+ * The tools Claude Code refused on the worker's behalf, described the way the dashboard would have. In
+ * `deny` prompt mode (`--permission-prompts none`, which is what a headless run uses) the orchestrator is
+ * never asked at all: the only trace of a blocked worker is `permission_denials` on the result event.
+ */
+export function describeDenials(denials: unknown[] | undefined): string[] {
+  const out: string[] = [];
+  for (const denial of denials ?? []) {
+    if (!denial || typeof denial !== 'object') continue;
+    const record = denial as Record<string, unknown>;
+    const tool = str(record.tool_name) ?? str(record.toolName) ?? 'a tool';
+    const input = record.tool_input ?? record.input;
+    out.push(input && typeof input === 'object' ? describeToolUse(tool, input as Record<string, unknown>) : tool);
+  }
+  return out;
+}
+
 /** One-line summary of a question answer for transcripts. */
 export function summarizeAnswer(answer: InteractionAnswer): string {
   if (answer.kind === 'answer') return Object.values(answer.answers).join(' / ');

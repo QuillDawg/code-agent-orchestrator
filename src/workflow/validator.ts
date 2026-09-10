@@ -7,6 +7,7 @@ import { ConfigError } from '../util/errors.js';
 import { errorLine, warnLine } from '../util/marks.js';
 import { supportsAutoMode, supportsEffort } from '../runners/claude/models.js';
 import { codexAutomaticReviewSandboxConflict, codexExtraArgsSecurityConflict, resolveCodexPermissions } from '../runners/codex/permissions.js';
+import { codexExecNoHumanNotice } from '../runners/codex/exec-limits.js';
 
 export interface ValidationOptions {
   knownRunners?: string[];
@@ -39,6 +40,7 @@ export function validateWorkflow(
   };
 
   const ids = new Set<string>();
+  const codexExecTasks: string[] = [];
   for (const t of workflow.tasks) {
     if (ids.has(t.id)) error(`Task id "${t.id}" is duplicated`, t.id);
     ids.add(t.id);
@@ -61,6 +63,7 @@ export function validateWorkflow(
     }
     if (t.agent === 'codex') {
       const transport = t.codex.transport ?? 'exec';
+      if (transport === 'exec' && !t.isApproval) codexExecTasks.push(t.id);
       const permissions = resolveCodexPermissions(t.codex, false);
       if (t.codex.approvals === 'host' && transport !== 'appServer') {
         error(`Task "${t.id}": Codex approvals "host" requires transport "appServer"`, t.id);
@@ -100,6 +103,10 @@ export function validateWorkflow(
       warn(`Task "${t.id}": model "${t.model}" has no effort levels; effort "${t.effort}" is dropped`, t.id);
     }
   }
+
+  // Said once for the whole workflow rather than once per task: it is a property of the transport, and a
+  // twenty-task Codex workflow should not print the same sentence twenty times.
+  if (codexExecTasks.length) warn(codexExecNoHumanNotice(codexExecTasks));
 
   if (workflow.execution.maxConcurrency < 1) error('execution.maxConcurrency must be >= 1');
 

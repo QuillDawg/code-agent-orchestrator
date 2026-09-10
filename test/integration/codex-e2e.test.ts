@@ -18,6 +18,7 @@ import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
 import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import type { EnrichedTaskResult } from '../../src/types/result.js';
 import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
+import { canAllowAlways } from '../../src/types/interaction.js';
 import type { SchedulerDeps } from '../../src/workflow/scheduler.js';
 import { tmpGitRepo, gitAvailable, waitFor, FAKE_CODEX } from '../helpers/index.js';
 
@@ -120,7 +121,10 @@ describe.skipIf(!HAS_GIT)('codex end-to-end with the fake CLI', () => {
         expect(stored.summary).toContain('fake');
 
         const events = await attemptEvents(store, run.runId, 'build', 1);
-        expect(events[0]).toMatchObject({ kind: 'system', text: expect.stringContaining('thread ') });
+        // An `exec` attempt says up front that nobody can be asked anything during it; both transports
+        // then record the thread they are working in.
+        if (transport === 'exec') expect(events[0]).toMatchObject({ kind: 'system', text: expect.stringContaining('cannot reach a human') });
+        expect(events.some((e) => e.kind === 'system' && e.text.startsWith('thread '))).toBe(true);
         // The attempt log has to end with the outcome, or `cao logs` shows the work and never says how it went.
         expect(events[events.length - 1]).toMatchObject({ kind: 'result', status: 'success', isError: false });
       }, 60_000);
@@ -280,7 +284,9 @@ describe.skipIf(!HAS_GIT)('codex end-to-end with the fake CLI', () => {
       expect(stopped.tasks.ask!.state).toBe('needs_input');
       const stored = await storedResult(off.store, off.run.runId, 'ask');
       expect(stored.status).toBe('needs_input');
-      expect(stored.error).toMatch(/experimentalUserInput is disabled/);
+      // The question Codex actually asked, not a fixed sentence about a configuration key.
+      expect(stored.error).toContain('Codex asked "Which?"');
+      expect(stored.error).toMatch(/codex.experimentalUserInput/);
     }, 90_000);
 
     it('reports an interrupted turn as a failure that kept partial work', async () => {
@@ -323,4 +329,245 @@ describe.skipIf(!HAS_GIT)('codex end-to-end with the fake CLI', () => {
       expect((await storedResult(store, run.runId, 'busy')).status).toBe('success');
     }, 60_000);
   });
+});
+
+/**
+ * The H3.7 acceptance matrix for Codex, rows 6-10, driven through the scheduler against the fake CLI in
+ * both configurations: **attended** (an interaction handler is registered) and **headless** (none is).
+ *
+ * The fake validates every answer against the app-server protocol schemas of codex-cli 0.154.0, so a
+ * decision or an answer map of the wrong shape fails the turn instead of being quietly accepted. What CAO
+ * actually put on the wire is asserted from the `response:` lines the fake echoes to stderr, which the
+ * runner records in the attempt's events.jsonl.
+ */
+describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
+  beforeAll(() => clearCodexDetectionCache());
+
+  /** The wire payloads the fake received for its own requests, in order. */
+  async function wireResponses(store: FileRunStore, runId: string, taskId: string, attempt = 1): Promise<Array<Record<string, unknown>>> {
+    const events = await attemptEvents(store, runId, taskId, attempt);
+    return events
+      .filter((e): e is Extract<TranscriptEntry, { kind: 'stderr' }> => e.kind === 'stderr' && e.text.startsWith('response:'))
+      .map((e) => JSON.parse(e.text.slice('response:'.length)) as Record<string, unknown>);
+  }
+
+  const HOST = '  approvals: host';
+
+  it('row 6: a command approval round-trips allow-once, allow-always and decline', async () => {
+    // allow once -> "accept"
+    const once = await tmpGitRepo('cao-h3-cmd-once-');
+    const onceAsked: Interaction[] = [];
+    const onceRun = await execute(once, workflowYaml('appServer', '  - id: approve\n    prompt: do it', HOST), {
+      modes: { approve: 'approval' },
+      interactionHandler: async (i) => { onceAsked.push(i); return { kind: 'allow', scope: 'once' }; },
+    });
+    expect(onceRun.result.state).toBe('completed');
+    // The server offered `accept` and `decline` only, so "allow for the rest of this task" is not on offer.
+    expect(canAllowAlways(onceAsked[0]!)).toBe(false);
+    expect(await wireResponses(onceRun.store, onceRun.run.runId, 'approve')).toEqual([expect.objectContaining({ result: { decision: 'accept' } })]);
+
+    // allow always, with the amendment the server proposed -> acceptWithExecpolicyAmendment
+    const always = await tmpGitRepo('cao-h3-cmd-always-');
+    const alwaysAsked: Interaction[] = [];
+    const alwaysRun = await execute(always, workflowYaml('appServer', '  - id: approve\n    prompt: do it', HOST), {
+      modes: { approve: 'approval-always' },
+      interactionHandler: async (i) => { alwaysAsked.push(i); return { kind: 'allow', scope: 'always' }; },
+    });
+    expect(alwaysRun.result.state).toBe('completed');
+    expect(canAllowAlways(alwaysAsked[0]!)).toBe(true);
+    expect(await wireResponses(alwaysRun.store, alwaysRun.run.runId, 'approve')).toEqual([
+      expect.objectContaining({ result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['npm', 'test'] } } } }),
+    ]);
+
+    // decline -> the agent keeps its turn and finishes it
+    const declined = await tmpGitRepo('cao-h3-cmd-decline-');
+    const declineRun = await execute(declined, workflowYaml('appServer', '  - id: approve\n    prompt: do it', HOST), {
+      modes: { approve: 'approval-decline' },
+      interactionHandler: async () => ({ kind: 'deny', message: 'not on my machine' }),
+    });
+    expect(declineRun.result.state).toBe('completed');
+    expect(await wireResponses(declineRun.store, declineRun.run.runId, 'approve')).toEqual([expect.objectContaining({ result: { decision: 'decline' } })]);
+    const persisted = await declineRun.store.loadRun(declineRun.run.runId);
+    expect(persisted.tasks.approve!.attempts[0]!.interactions).toEqual([expect.objectContaining({ answer: 'deny', source: 'handler' })]);
+  }, 90_000);
+
+  it('row 7: a file-change approval honours grantRoot as an accept for the session', async () => {
+    const repo = await tmpGitRepo('cao-h3-file-always-');
+    const asked: Interaction[] = [];
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: edit\n    prompt: do it', HOST), {
+      modes: { edit: 'file-approval' },
+      interactionHandler: async (i) => { asked.push(i); return { kind: 'allow', scope: 'always' }; },
+    });
+    expect(result.state).toBe('completed');
+    expect(canAllowAlways(asked[0]!)).toBe(true);
+    // A file-change response has no amendment variant at all: the granted root is honoured by accepting for
+    // the session. Sending the command form here would fail the fake's own schema check.
+    expect(await wireResponses(store, run.runId, 'edit')).toEqual([expect.objectContaining({ result: { decision: 'acceptForSession' } })]);
+  }, 60_000);
+
+  it('rows 6-7 headless: a task configured for host approvals pauses instead of failing', async () => {
+    const repo = await tmpGitRepo('cao-h3-host-headless-');
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: approve\n    retries: 0\n    prompt: do it', HOST), { modes: { approve: 'approval' } });
+    expect(result.state).toBe('paused');
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.approve!.state).toBe('needs_input');
+    const stored = await storedResult(store, run.runId, 'approve');
+    expect(stored.error).toContain('codex.approvals: host');
+    expect(stored.error).toContain('codex.approvals: autoReview');
+  }, 60_000);
+
+  it('row 8: a multi-question requestUserInput is answered by question id', async () => {
+    const repo = await tmpGitRepo('cao-h3-question-multi-');
+    const asked: Interaction[] = [];
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: ask\n    prompt: do it', `${HOST}\n  experimentalUserInput: true`), {
+      modes: { ask: 'question-multi' },
+      interactionHandler: async (i): Promise<InteractionAnswer> => {
+        asked.push(i);
+        return { kind: 'answer', answers: { 'Which database?': 'postgres', 'Deploy where?': 'eu-west-1' } };
+      },
+    });
+    expect(result.state).toBe('completed');
+    // Both questions reach the dashboard with their ids, their headers and their option descriptions; a
+    // question with no options at all (the server's `isOther` free-text form) survives as an empty list.
+    expect(asked[0]!.questions).toEqual([
+      { id: 'db', question: 'Which database?', header: 'Database', options: [{ label: 'postgres', description: 'Relational' }, { label: 'mongo', description: 'Document' }], multiSelect: false },
+      { id: 'deploy', question: 'Deploy where?', header: 'Deploy', options: [], multiSelect: false },
+    ]);
+    expect(asked[0]!.title).toBe('Which database? (+1 more)');
+    // The dashboard keys its answers by question text; the wire wants the server's own ids.
+    expect(await wireResponses(store, run.runId, 'ask')).toEqual([
+      expect.objectContaining({ result: { answers: { db: { answers: ['postgres'] }, deploy: { answers: ['eu-west-1'] } } } }),
+    ]);
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.ask!.state).toBe('success');
+  }, 60_000);
+
+  it('row 8 headless: an enabled question nobody can answer is declined and quoted in the result', async () => {
+    const repo = await tmpGitRepo('cao-h3-question-headless-');
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: ask\n    retries: 0\n    prompt: do it', '  experimentalUserInput: true'), { modes: { ask: 'question' } });
+    expect(result.state).toBe('paused');
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.ask!.state).toBe('needs_input');
+    const stored = await storedResult(store, run.runId, 'ask');
+    expect(stored.error).toContain('Codex asked "Which?"');
+    // The switch is already on, so the advice is to attach a dashboard, not to set the switch again.
+    expect(stored.error).toContain('with the dashboard attached');
+    expect(stored.error).not.toContain('codex.experimentalUserInput: true');
+    // Declined through the protocol, not by killing the process: the worker had its turn to finish.
+    expect(await wireResponses(store, run.runId, 'ask')).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: -32000 }) })]);
+    const events = await attemptEvents(store, run.runId, 'ask', 1);
+    expect(events.some((e) => e.kind === 'system' && e.text.includes('was killed'))).toBe(false);
+    expect(events[events.length - 1]).toMatchObject({ kind: 'result', status: 'needs_input' });
+  }, 60_000);
+
+  it('row 9: a disabled question is declined through the protocol and the worker keeps its turn', async () => {
+    // The worker can carry on without an answer: its own result stands, and the question is only a warning.
+    const recovers = await tmpGitRepo('cao-h3-question-recovers-');
+    const carried = await execute(recovers, workflowYaml('appServer', '  - id: ask\n    prompt: do it', HOST), { modes: { ask: 'question-recovers' }, interactionHandler: async () => ({ kind: 'allow', scope: 'once' }) });
+    expect(carried.result.state).toBe('completed');
+    const persisted = await carried.store.loadRun(carried.run.runId);
+    expect(persisted.tasks.ask!.state).toBe('success');
+    expect((await storedResult(carried.store, carried.run.runId, 'ask')).summary).toBe('fake app-server continued without an answer');
+    // Refused with -32601: with the capability off, the method genuinely is not one this client implements.
+    expect(await wireResponses(carried.store, carried.run.runId, 'ask')).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: -32601 }) })]);
+    const events = await attemptEvents(carried.store, carried.run.runId, 'ask', 1);
+    // The process was not killed, so the work the worker did after the decline is still there.
+    expect(events.some((e) => e.kind === 'tool_result' && e.text === 'built')).toBe(true);
+    expect(events.some((e) => e.kind === 'system' && e.text.includes('was killed'))).toBe(false);
+    expect(events.some((e) => e.kind === 'question' && e.answer?.startsWith('declined:'))).toBe(true);
+  }, 60_000);
+
+  it('unknown and permission-affecting server requests keep failing closed', async () => {
+    const repo = await tmpGitRepo('cao-h3-unknown-');
+    const asked: Interaction[] = [];
+    const { run, result, store } = await execute(repo, workflowYaml('appServer', '  - id: probe\n    prompt: do it', `${HOST}\n  experimentalUserInput: true`), {
+      modes: { probe: 'unknown-request' },
+      interactionHandler: async (i) => { asked.push(i); return { kind: 'allow', scope: 'always' }; },
+    });
+    expect(result.state).toBe('completed');
+    // Neither `item/permissions/requestApproval` nor an MCP elicitation is ever put in front of a human or
+    // answered on their behalf, even with a dashboard attached and every experimental switch on.
+    expect(asked).toEqual([]);
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.probe!.state).toBe('success');
+    const events = await attemptEvents(store, run.runId, 'probe', 1);
+    const refusals = events.filter((e) => e.kind === 'system' && e.text.startsWith('refused unsupported Codex request'));
+    expect(refusals.map((e) => (e as Extract<TranscriptEntry, { kind: 'system' }>).text)).toEqual([
+      'refused unsupported Codex request item/permissions/requestApproval',
+      'refused unsupported Codex request mcpServer/elicitation/request',
+    ]);
+    const unsupported = events
+      .filter((e): e is Extract<TranscriptEntry, { kind: 'stderr' }> => e.kind === 'stderr' && e.text.startsWith('unsupported:'))
+      .map((e) => JSON.parse(e.text.slice('unsupported:'.length)) as { error?: { code?: number } });
+    expect(unsupported.map((u) => u.error?.code)).toEqual([-32601, -32601]);
+  }, 60_000);
+
+  for (const attended of [false, true]) {
+    it(`row 10 ${attended ? 'attended' : 'headless'}: codex exec turns a rejected approval into needs_input`, async () => {
+      const repo = await tmpGitRepo(`cao-h3-exec-approval-${attended ? 'on' : 'off'}-`);
+      const asked: Interaction[] = [];
+      const { run, result, store } = await execute(repo, workflowYaml('exec', '  - id: blocked\n    retries: 0\n    prompt: do it'), {
+        modes: { blocked: 'exec-approval' },
+        ...(attended ? { interactionHandler: async (i: Interaction): Promise<InteractionAnswer> => { asked.push(i); return { kind: 'allow', scope: 'once' }; } } : {}),
+      });
+      // `codex exec` has no channel for approvals, so a dashboard changes nothing: it is never asked.
+      expect(asked).toEqual([]);
+      expect(result.state).toBe('paused');
+      const persisted = await store.loadRun(run.runId);
+      expect(persisted.tasks.blocked!.state).toBe('needs_input');
+      expect(persisted.tasks.blocked!.attempts).toHaveLength(1);
+      expect(persisted.tasks.blocked!.attempts[0]!.outcome).toBe('needs_input');
+
+      const stored = await storedResult(store, run.runId, 'blocked');
+      expect(stored.status).toBe('needs_input');
+      // What Codex wanted, quoted, plus the command it was about and the option that would have allowed it.
+      expect(stored.error).toContain('command execution approval is not supported in exec mode');
+      expect(stored.error).toContain('npm publish --tag latest');
+      expect(stored.error).toContain('codex.transport: appServer');
+      expect(stored.error).toContain('codex.approvals: host');
+      expect(stored.warnings).toEqual(['Codex exited with code 1']);
+
+      const events = await attemptEvents(store, run.runId, 'blocked', 1);
+      expect(events[0]).toMatchObject({ kind: 'system', text: expect.stringContaining('cannot reach a human') });
+      expect(events.some((e) => e.kind === 'error' && e.text.includes('not supported in exec mode'))).toBe(true);
+      expect(events[events.length - 1]).toMatchObject({ kind: 'result', status: 'needs_input' });
+
+      // The run log says once, per task, that nobody could have been reached during it.
+      const runEvents = (await fs.readFile(store.paths.eventsFile(run.runId), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; code?: string; taskId?: string; message?: string });
+      const notices = runEvents.filter((e) => e.type === 'workflow.warning' && e.taskId === 'blocked' && e.message?.includes('cannot reach a human'));
+      expect(notices).toHaveLength(1);
+    }, 60_000);
+  }
+
+  it('states the exec transport limit once per task, not once per attempt', async () => {
+    const repo = await tmpGitRepo('cao-h3-exec-notice-');
+    // Two attempts (the nudge resumes the same session) and two tasks: two notices, not four.
+    const yaml = workflowYaml('exec', '  - id: chatty\n    prompt: do it\n  - id: quiet\n    prompt: do it');
+    const { run, store } = await execute(repo, yaml, { modes: { chatty: 'invalid' } });
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.chatty!.attempts).toHaveLength(2);
+    const runEvents = (await fs.readFile(store.paths.eventsFile(run.runId), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; taskId?: string; message?: string });
+    const notices = runEvents.filter((e) => e.type === 'workflow.warning' && e.message?.includes('cannot reach a human'));
+    expect(notices.map((n) => n.taskId).sort()).toEqual(['chatty', 'quiet']);
+    // Both attempts still open their own log with it, so `cao logs` on either says so.
+    for (const attempt of [1, 2]) {
+      const events = await attemptEvents(store, run.runId, 'chatty', attempt);
+      expect(events.some((e) => e.kind === 'system' && e.text.includes('cannot reach a human'))).toBe(true);
+    }
+  }, 60_000);
+
+  it('row 10: codex exec turns a rejected question into needs_input naming the option that enables one', async () => {
+    const repo = await tmpGitRepo('cao-h3-exec-question-');
+    const { run, result, store } = await execute(repo, workflowYaml('exec', '  - id: asked\n    retries: 0\n    prompt: do it'), { modes: { asked: 'exec-user-input' } });
+    expect(result.state).toBe('paused');
+    const persisted = await store.loadRun(run.runId);
+    expect(persisted.tasks.asked!.state).toBe('needs_input');
+    // Exit 0 and no schema-valid final answer: this used to be an `invalid_result`, which spent a nudge and
+    // then a retry on a session that could never have finished.
+    expect(persisted.tasks.asked!.attempts).toHaveLength(1);
+    const stored = await storedResult(store, run.runId, 'asked');
+    expect(stored.error).toContain('request_user_input is not supported in exec mode');
+    expect(stored.error).toContain('codex.experimentalUserInput: true');
+    expect(stored.followUp).toEqual([expect.stringContaining('codex.transport: appServer')]);
+  }, 60_000);
 });

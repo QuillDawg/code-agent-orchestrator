@@ -25,9 +25,23 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   the supported minimum, so `npm test` stays offline and unchanged.
 - Small documentation smoke tests make it easy to verify Codex alone, Claude alone, and a Codex-to-Claude
   review handoff with cost-appropriate models.
+- `cao validate` now names, once per workflow, the tasks that run on Codex transport `exec`, and states
+  that no human can be reached during them. The run log records the same thing once per such task.
 
 ### Changed
 
+- A worker blocked on a human now always ends in one of two documented states, on either agent and whether
+  or not a dashboard is attached: `waiting` while the request can still be answered, or `needs_input` once
+  the attempt is over. Several paths that used to end as `failed`/`crash` when the real cause was an
+  unanswered question now pause the run holding the question instead (see Fixed).
+- Every denial a worker receives now names what was refused and tells it to finish with
+  `status: needs_input`, whoever produced the denial — the dashboard, a host handler or the interaction
+  timeout. The task result an operator reads therefore carries the question or the permission rather than a
+  bare "Denied by the user".
+- Codex `appServer`: a `item/tool/requestUserInput` that cannot be answered is now declined through the
+  protocol instead of killing the app-server process, so the worker keeps its turn and the work in it. Only
+  a worker that cannot finish without an answer ends the attempt, and then the result quotes the question
+  Codex asked. If the process still has to be killed, the attempt's transcript says so.
 - Runner failures now preserve provider codes, HTTP/request metadata, retry timing, session identity, and
   partial-work state. The scheduler honours provider delays and does not retry permanent failures.
 - Claude supports explicit inherited or isolated configuration and treats reported MCP/plugin startup
@@ -35,6 +49,22 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- `codex exec` rejects approvals and questions itself, and the rejection used to fall through to
+  `invalid_result` or `crash` depending on the exit code, spending a nudge and a retry on a session that
+  could never have finished. The rejection is now recognised, the attempt ends as `needs_input` quoting
+  what Codex wanted (including the command it was about), and the result names the transport limit and the
+  option that would have allowed an answer (`codex.transport: appServer`, `codex.approvals: host`,
+  `codex.experimentalUserInput: true`).
+- A Claude session whose prompts the CLI denied itself (`claude.permissionPrompts: deny`, which is what a
+  headless run uses) and which then gave up now ends as `needs_input` naming the denied tools, instead of
+  `crash`.
+- A Codex `appServer` task configured with `codex.approvals: host` and run without a dashboard now pauses
+  with `needs_input` explaining the two ways to fix it, instead of failing the task as an invalid result.
+- Codex `appServer` answers to `item/tool/requestUserInput` are keyed by the server's own question id, as
+  the protocol requires; they used to be keyed by the question text, so a worker never received an answer
+  it could match to its question. "Allow for the rest of this task" now sends the proposed execpolicy
+  amendment for a command approval and an accept-for-the-session for a granted file-change root, rather
+  than an accept-for-the-session in both cases.
 - The completion object a worker ends on is no longer shown as something the agent said. `cao logs`,
   `cao logs --follow`, `cao peek`, `cao report`, the dashboard follow view and the one-line activity column
   used to print `{"status":"success","summary":"…"` where the agent's own words belong, on both agents. It

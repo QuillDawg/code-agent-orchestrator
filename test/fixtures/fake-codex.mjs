@@ -12,8 +12,14 @@
  *
  * Behaviour is controlled by env FAKE_CODEX_MODE, or per task by FAKE_CODEX_TASK_MODES='{"a":"hang"}':
  *   success (default) | invalid | api-error | hang | strict-schema | interim
- *   app-server only: approval | file-approval | question | failure | interrupted | mcp-failure |
- *                    malformed | overload-once | wrong-model | missing-policy
+ *   exec only:       exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
+ *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
+ *   app-server only: approval | approval-always | approval-decline | file-approval | question |
+ *                    question-multi | question-recovers | unknown-request | failure | interrupted |
+ *                    mcp-failure | malformed | overload-once | wrong-model | missing-policy
+ * Responses to the server's own requests are validated against the app-server protocol schemas of
+ * codex-cli 0.154.0 the way the real server would: a decision or an answer map of the wrong shape fails
+ * the turn with the violation, instead of being quietly accepted.
  * `interim` emits a completion object mid-turn, keeps working, and finishes with a different one.
  * `invalid`, `api-error` and `failure` recover when the session is resumed, so a run can exercise
  * nudge-then-success and transient-error-then-resume.
@@ -212,6 +218,21 @@ if (line.scope.startsWith('exec')) {
     process.exit(1);
   }
   emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
+  // `codex exec` has no channel for approvals or questions: the CLI rejects the request itself, and the
+  // wording below is the shipped binary's. The two shapes it can arrive in are both covered.
+  if (mode === 'exec-approval') {
+    emit({ type: 'turn.started' });
+    emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm publish --tag latest' } });
+    emit({ type: 'error', message: 'command execution approval is not supported in exec mode for thread `codex-exec-thread-1`' });
+    emit({ type: 'turn.failed', error: { message: 'command execution approval is not supported in exec mode for thread `codex-exec-thread-1`' } });
+    process.exit(1);
+  }
+  if (mode === 'exec-user-input') {
+    emit({ type: 'turn.started' });
+    emit({ type: 'item.completed', item: { type: 'error', id: 'err-1', message: 'request_user_input is not supported in exec mode for thread `codex-exec-thread-1`' } });
+    emit({ type: 'turn.completed', usage: { input_tokens: 4, cached_input_tokens: 0, output_tokens: 1 } });
+    process.exit(0);
+  }
   if (mode === 'hang') {
     setInterval(() => {}, 1000); // An unresolved promise alone would let node exit.
     await new Promise(() => {});
@@ -265,9 +286,57 @@ const recallThread = (id) => {
   }
 };
 
+let unsupportedOutstanding = 2;
 let threadId = 'codex-thread-1';
 let overloaded = false;
 let isResume = false;
+/** Questions the fake asked, by request id, so their answers can be checked against what it sent. */
+const askedQuestions = new Map();
+
+/** Fail the turn the way the server would if a client answered off-protocol; the test then says why. */
+function protocolViolation(detail) {
+  process.stderr.write(`protocol violation: ${detail}\n`);
+  emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'failed', items: [], itemsView: 'full', error: { message: `client response violates the app-server protocol: ${detail}`, codexErrorInfo: 'badRequest', additionalDetails: null } } } });
+}
+
+const COMMAND_DECISIONS = ['accept', 'acceptForSession', 'decline', 'cancel'];
+
+/**
+ * Validate a response the way the schemas do (CommandExecutionRequestApprovalResponse,
+ * FileChangeRequestApprovalResponse, ToolRequestUserInputResponse). Returns false when it failed the turn.
+ */
+function validateResponse(message) {
+  const result = message.result;
+  if (!result || typeof result !== 'object') return protocolViolation('the response carries no result object') ?? false;
+  if (message.id === 99 || message.id === 98) {
+    const decision = result.decision;
+    if (typeof decision === 'string') {
+      if (!COMMAND_DECISIONS.includes(decision)) return protocolViolation(`unknown decision "${decision}"`) ?? false;
+      return true;
+    }
+    // Only a command approval has an amendment variant; a file change response has none at all.
+    if (message.id === 98) return protocolViolation(`a file change decision must be one of ${COMMAND_DECISIONS.join(', ')}, got ${JSON.stringify(decision)}`) ?? false;
+    const amendment = decision?.acceptWithExecpolicyAmendment?.execpolicy_amendment;
+    if (!Array.isArray(amendment) || !amendment.every((v) => typeof v === 'string')) {
+      return protocolViolation(`acceptWithExecpolicyAmendment needs execpolicy_amendment: string[], got ${JSON.stringify(decision)}`) ?? false;
+    }
+    return true;
+  }
+  const answers = result.answers;
+  if (!answers || typeof answers !== 'object') return protocolViolation('a requestUserInput response needs an answers object') ?? false;
+  const asked = askedQuestions.get(message.id) ?? [];
+  const expected = asked.map((q) => q.id).sort();
+  const got = Object.keys(answers).sort();
+  if (expected.join('|') !== got.join('|')) {
+    return protocolViolation(`answers must be keyed by question id (${expected.join(', ')}), got ${got.join(', ') || '(none)'}`) ?? false;
+  }
+  for (const [id, value] of Object.entries(answers)) {
+    if (!value || !Array.isArray(value.answers) || !value.answers.every((v) => typeof v === 'string')) {
+      return protocolViolation(`answer for "${id}" must be {answers: string[]}, got ${JSON.stringify(value)}`) ?? false;
+    }
+  }
+  return true;
+}
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (raw) => {
   const message = JSON.parse(raw);
@@ -302,12 +371,24 @@ rl.on('line', (raw) => {
       return;
     }
     emit({ id: message.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null } } });
-    if (mode === 'approval') {
-      emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), proposedExecpolicyAmendment: { command: ['npm', 'test'] } } });
+    if (mode === 'approval' || mode === 'approval-decline') {
+      // No amendment proposed and no acceptForSession offered: "allow for the rest of this task" is not on.
+      emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'decline'], proposedExecpolicyAmendment: null } });
+    } else if (mode === 'approval-always') {
+      emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'acceptForSession', 'decline'], proposedExecpolicyAmendment: ['npm', 'test'] } });
     } else if (mode === 'file-approval') {
-      emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', reason: 'update fixture', grantRoot: process.cwd() } });
-    } else if (mode === 'question') {
-      emit({ id: 100, method: 'item/tool/requestUserInput', params: { threadId, turnId: 'turn-1', itemId: 'q-1', isBlocking: true, autoResolutionMs: null, questions: [{ id: 'choice', header: 'Choice', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'first' }] }] } });
+      emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', startedAtMs: Date.now(), reason: 'update fixture', grantRoot: process.cwd() } });
+    } else if (mode === 'question' || mode === 'question-recovers') {
+      ask(100, [{ id: 'choice', header: 'Choice', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'first' }] }]);
+    } else if (mode === 'question-multi') {
+      ask(100, [
+        { id: 'db', header: 'Database', question: 'Which database?', isOther: false, isSecret: false, options: [{ label: 'postgres', description: 'Relational' }, { label: 'mongo', description: 'Document' }] },
+        { id: 'deploy', header: 'Deploy', question: 'Deploy where?', isOther: true, isSecret: false, options: null },
+      ]);
+    } else if (mode === 'unknown-request') {
+      // Neither is answerable, and both are permission-affecting: the client must refuse, not guess.
+      emit({ id: 97, method: 'item/permissions/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'perm-1' } });
+      emit({ id: 96, method: 'mcpServer/elicitation/request', params: { threadId, turnId: 'turn-1', itemId: 'elicit-1' } });
     } else if (mode === 'failure' && !isResume) {
       emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'failed', items: [], itemsView: 'full', error: { message: 'overloaded', codexErrorInfo: 'serverOverloaded', additionalDetails: null } } } });
     } else if (mode === 'interrupted') {
@@ -329,12 +410,37 @@ rl.on('line', (raw) => {
       emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-0b', text: 'Now running the tests.', phase: null, memoryCitation: null, delivery: null, questions: null } } });
       finish();
     } else finish(mode === 'strict-schema' ? strictResult : { ...result, summary: isResume ? `fake app-server resumed ${taskId}` : result.summary });
+  } else if (message.id === 96 || message.id === 97) {
+    // The client refused an unsupported request. A -32601 is the only acceptable answer; anything else
+    // (least of all a result) would mean it had decided a permission question on its own.
+    process.stderr.write(`unsupported:${JSON.stringify(message)}\n`);
+    if (message.error?.code !== -32601) protocolViolation(`an unsupported request must be refused with -32601, got ${JSON.stringify(message)}`);
+    else if (--unsupportedOutstanding === 0) finish();
   } else if (message.id === 98 || message.id === 99 || message.id === 100) {
-    if (process.env.FAKE_CODEX_TRACE) process.stderr.write(`response:${JSON.stringify(message)}\n`);
-    finish();
+    process.stderr.write(`response:${JSON.stringify(message)}\n`);
+    if (message.error) {
+      // Declined through the protocol. A worker that can carry on does; one that truly needed the answer
+      // ends its turn without the completion object, which is what the operator has to be told about.
+      if (mode === 'question-recovers') {
+        // Keep working for a moment before finishing: a client that killed the process instead of
+        // declining through the protocol would never see this, or the turn that follows it.
+        setTimeout(() => {
+          emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'commandExecution', id: 'cmd-9', command: 'npm run docs', status: 'completed', exitCode: 0, aggregatedOutput: 'built' } } });
+          finish({ ...result, summary: 'fake app-server continued without an answer' });
+        }, 300);
+      } else finish({ note: 'I cannot continue without an answer' });
+    } else if (validateResponse(message)) {
+      finish({ ...result, summary: `fake app-server honoured ${JSON.stringify(message.result)}` });
+    }
   }
 });
 rl.on('close', () => process.exit(0));
+
+/** Ask the client something, remembering the questions so the answer can be checked against them. */
+function ask(id, questions) {
+  askedQuestions.set(id, questions);
+  emit({ id, method: 'item/tool/requestUserInput', params: { threadId, turnId: 'turn-1', itemId: 'q-1', isBlocking: true, autoResolutionMs: null, questions } });
+}
 
 function finish(value = result) {
   emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-1', text: JSON.stringify(value), phase: 'final_answer', memoryCitation: null, delivery: null, questions: null } } });

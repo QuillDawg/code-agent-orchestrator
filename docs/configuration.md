@@ -152,7 +152,11 @@ codex:
 
 `exec` is the stable, unattended transport. `auto` maps to the workspace-write sandbox and Codex automatic approval review, so a model-requested approval cannot leave CI waiting on a terminal that does not exist. On this transport automatic review is a combined Codex preset and requires `sandbox: workspace-write`; validation rejects a different raw sandbox instead of silently overriding it. `readOnly` denies approvals and `fullAccess` uses danger-full-access with approvals disabled; use the latter only in an externally isolated environment.
 
-`appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. Free-form Codex questions remain disabled unless `experimentalUserInput: true`; when disabled, a question ends the task as `needs_input` instead of hanging.
+`appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. A task set to `host` and then run without a dashboard pauses with `needs_input` explaining the two ways to fix it, rather than failing.
+
+**`exec` cannot reach a human.** The Codex CLI answers approval and user-input requests itself, with a rejection, so nothing an `exec` worker asks can ever reach you. `cao validate` names the tasks that run on this transport and the run log records it once per task; if a worker does need a decision, the task ends as `needs_input` quoting what Codex wanted and naming the option that would have allowed an answer. Switch the task to `transport: appServer` (with `approvals: host`, and `experimentalUserInput: true` for questions) if it needs to ask.
+
+Free-form Codex questions stay disabled unless `experimentalUserInput: true`. A question that cannot be answered — the switch is off, or nobody is attached — is declined through the protocol rather than by killing the worker, so it keeps its turn and the work in it; only a worker that cannot finish without an answer ends the task, and then the result quotes the question it asked.
 
 `configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors. The `readOnly` and `fullAccess` presets are security envelopes: raw sandbox/policy values cannot widen or contradict them.
 Security-affecting flags (`--sandbox`, approval/bypass flags, `--add-dir`, and equivalent `-c` overrides) are
@@ -339,7 +343,9 @@ hooks:
   onInputRequired: [ "..." ]    # notify yourself
 ```
 
-When nobody answers in time, or no dashboard is attached, the prompt is denied with a message telling the worker to finish with `status: needs_input`. Codex `exec` uses automatic approval review or denial; Codex `appServer` can route stable command and file-change approvals through the same dashboard interaction flow.
+When nobody answers in time, or no dashboard is attached, the prompt is denied with a message that names what was refused and tells the worker to finish with `status: needs_input` — so the task result you read later carries the question or the command, not a bare "denied". A worker blocked on a human always ends in one of two states: `waiting` while it can still be answered, or `needs_input` once the attempt is over. It never fails because nobody was there.
+
+Codex `appServer` routes stable command and file-change approvals, and (with `experimentalUserInput: true`) questions, through the same flow. Codex `exec` cannot be asked anything at all: see [`codex`](#codex-workflow-template-or-task-level) above.
 
 ## `hooks`
 

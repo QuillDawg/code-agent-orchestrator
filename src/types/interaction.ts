@@ -4,6 +4,11 @@ import type { AgentName } from './workflow.js';
 export type InteractionKind = 'permission' | 'question';
 
 export interface InteractionQuestion {
+  /**
+   * The runner's own id for this question, when it has one, so an answer can be routed back on the wire.
+   * A dashboard keys its answers by `question` text; a runner that needs the id maps them itself.
+   */
+  id?: string;
   question: string;
   header?: string;
   options: Array<{ label: string; description?: string }>;

@@ -192,7 +192,9 @@ Questions list their options (`1-9` or `↑↓` + `Enter`, `T` to type an answer
 
 What the box shows is what you are deciding about: the command and description are stripped of escape sequences and carriage returns first, so a worker cannot make a dangerous command display as a harmless one.
 
-Without a dashboard (`--no-tui`, CI) or after `execution.interactionTimeout` (default 30 minutes) the prompt is denied and the worker is told to finish with `status: needs_input`.
+Without a dashboard (`--no-tui`, CI) or after `execution.interactionTimeout` (default 30 minutes, `never` to disable it) the prompt is denied and the worker is told to finish with `status: needs_input`. The denial names what was refused, so the paused task tells you which command or question is waiting rather than just "denied".
+
+A worker that needs a human always ends in one of two states — `waiting` while the request can still be answered, or `needs_input` once the attempt is over — on either agent, attended or not. It never fails or crashes because nobody was there. Codex adds one caveat: on the default `exec` transport the Codex CLI refuses approvals and questions itself, so an `exec` task cannot be asked anything. `cao validate` says which tasks those are, and if one does need a decision it pauses with `needs_input` quoting what Codex wanted. Use `codex.transport: appServer` for a Codex task that should be able to ask.
 
 ### Let a worker ask a question after it stopped
 

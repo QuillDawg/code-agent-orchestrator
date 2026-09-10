@@ -21,6 +21,7 @@ import { nowIso, truncate } from '../../util/misc.js';
 import { runCodexAppServer } from './app-server.js';
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { codexAutomaticReviewSandboxConflict, codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
+import { CODEX_EXEC_NO_HUMAN, codexExecHumanRequest, codexExecNeedsInput, type CodexExecBlock } from './exec-limits.js';
 
 export interface CodexRunnerOptions {
   processManager: ProcessManager;
@@ -67,6 +68,8 @@ export class CodexRunner implements TaskRunner {
   private readonly pm: ProcessManager;
   private readonly defaults: CodexOptions;
   private readonly bufferLines: number;
+  /** Tasks whose run-log notice has already been written; the limit belongs to the task, not the attempt. */
+  private readonly noticed = new Set<string>();
 
   constructor(opts: CodexRunnerOptions) {
     this.pm = opts.processManager;
@@ -99,6 +102,13 @@ export class CodexRunner implements TaskRunner {
     };
     // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
     if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
+    // Say up front, in the attempt's own log and once per task in the run log, that nobody can be asked
+    // anything during this transport: an operator should not have to learn it from a failure.
+    entry({ kind: 'system', ts: nowIso(), text: CODEX_EXEC_NO_HUMAN });
+    if (!this.noticed.has(input.task.id)) {
+      this.noticed.add(input.task.id);
+      hooks.onWarning?.(CODEX_EXEC_NO_HUMAN);
+    }
     let sessionId = input.resumeSessionId;
     const model = input.task.model;
     const usage: RunnerUsage = { sessionId, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };
@@ -106,6 +116,17 @@ export class CodexRunner implements TaskRunner {
     const stderr: string[] = [];
     const commands = new Map<string, string>();
     let typedFailure: ReturnType<typeof normalizeCodexFailure> | undefined;
+    // The rejection names the kind of decision Codex wanted but not the work behind it, so the command it
+    // started and never completed is kept, to quote alongside the rejection.
+    let pendingCommand: string | undefined;
+    let blocked: CodexExecBlock | undefined;
+    /** `codex exec` answers approvals and questions itself, with a rejection: recognise it, do not just log it. */
+    const noteHumanRequest = (message: string): void => {
+      const kind = codexExecHumanRequest(message);
+      if (!kind) return;
+      blocked ??= { kind, message, wanted: kind === 'command' ? pendingCommand : undefined };
+      hooks.onWarning?.(`Codex needed a human decision that \`codex exec\` rejected: ${message}`);
+    };
 
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !ENV_TO_STRIP.includes(key)) env[key] = value;
@@ -135,10 +156,12 @@ export class CodexRunner implements TaskRunner {
           const id = String(item.id ?? command);
           if (event.type === 'item.started' || !commands.has(id)) {
             commands.set(id, command);
+            pendingCommand = command;
             hooks.onActivity(`$ ${command.split(/\r?\n/)[0] ?? command}`);
             entry({ kind: 'command', ts, command, tool: 'shell' });
           }
           if (event.type === 'item.completed') {
+            if (pendingCommand === command) pendingCommand = undefined;
             const output = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
             const failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
             if (output.trim() || failed) entry({ kind: 'tool_result', ts, text: truncate(output.trim() || `exit ${item.exit_code ?? '?'}`, MAX_OUTPUT_CHARS), isError: failed });
@@ -173,7 +196,9 @@ export class CodexRunner implements TaskRunner {
           return;
         }
         if (item?.type === 'error') {
-          entry({ kind: 'error', ts, text: String(item.message ?? 'agent error') });
+          const message = String(item.message ?? 'agent error');
+          noteHumanRequest(message);
+          entry({ kind: 'error', ts, text: message });
           return;
         }
         if (event.type === 'turn.completed') {
@@ -192,6 +217,7 @@ export class CodexRunner implements TaskRunner {
           const message = String(event.message ?? event.error?.message ?? event.error ?? line);
           const info = event.error?.codexErrorInfo ?? event.error?.codex_error_info ?? event.codexErrorInfo ?? event.codex_error_info;
           if (info !== undefined && info !== null) typedFailure = normalizeCodexFailure(info, { ...codexFailureMetadata(event.error), sessionId });
+          noteHumanRequest(message);
           entry({ kind: 'error', ts, text: message });
         }
       },
@@ -224,14 +250,29 @@ export class CodexRunner implements TaskRunner {
         try {
           const parsed = CODEX_COMPLETION_CONTRACT.validate(JSON.parse(final));
           if (parsed.ok) {
+            // The worker carried on after the rejection and answered the contract: its result stands.
+            if (blocked) hooks.onWarning?.(`Codex was refused a human decision and finished the turn anyway: ${blocked.message}`);
             finish({ kind: 'result', status: parsed.result.status, summary: parsed.result.summary, isError: false, error: parsed.result.error });
             return { kind: 'result', result: parsed.result, exitCode: exit.code, usage: finalUsage, rawResultText: final };
+          }
+          if (blocked) {
+            const result = codexExecNeedsInput(blocked, [parsed.error]);
+            finish({ kind: 'result', status: result.status, summary: result.summary, isError: false, error: result.error });
+            return { kind: 'result', result, exitCode: exit.code, usage: finalUsage };
           }
           finish({ kind: 'error', text: parsed.error });
           return { kind: 'error', outcome: 'invalid_result', message: parsed.error, exitCode: exit.code, usage: finalUsage };
         } catch { /* fall through to process result */ }
       }
       const detail = stderr.join('\n');
+      // The CLI rejected an approval or a question of its own accord. Whatever the exit code says, the
+      // attempt is over because a human was needed, not because the worker or the transport broke.
+      if (blocked) {
+        const why = exit.code !== 0 || exit.spawnError ? `Codex exited with code ${exit.code ?? 'null'}` : 'Codex finished without a schema-valid final response';
+        const result = codexExecNeedsInput(blocked, [why]);
+        finish({ kind: 'result', status: result.status, summary: result.summary, isError: false, error: result.error });
+        return { kind: 'result', result, exitCode: exit.code, usage: finalUsage };
+      }
       if (exit.code !== 0 || exit.spawnError) {
         const message = `Codex exited with code ${exit.code ?? 'null'}${detail ? `\nstderr:\n${detail}` : ''}`;
         finish({ kind: 'error', text: message });

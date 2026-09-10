@@ -103,8 +103,10 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
 - **Templates, variables and `foreach`.** Reuse a task shape, fan out over a list of issues, interpolate
   `{{variables.*}}` into prompts.
 - **Conditions and gates.** `when:` expressions skip tasks; `type: approval` pauses for a human decision.
-- **Interactive workers.** Claude Code permission prompts and `AskUserQuestion` questions appear in the
-  dashboard. Headless runs deny them instead of hanging.
+- **Interactive workers.** Claude Code permission prompts and `AskUserQuestion` questions, and Codex
+  app-server approvals, appear in the dashboard. A worker blocked on a human is either `waiting` — the
+  dashboard can answer it — or `needs_input`, which pauses the run holding the question for
+  `cao resume --input`. It never hangs, and it never fails because nobody was there.
 - **Failure handling that costs what you decide.** `retries`, `onFailure: stop | continue | skip_dependents`,
   timeouts, per-task budgets, and previous-failure injection on retry.
 - **Transient API errors resume the same session** (5xx, overload, dropped connection) instead of restarting.
@@ -630,7 +632,7 @@ execution:
     mergeBack: true
     mergeConflictStrategy: agent # agent | claude | codex | fail
     cleanup: onSuccess           # onSuccess | always | never
-  interactionTimeout: 30m        # unanswered prompts are denied after this
+  interactionTimeout: 30m        # unanswered prompts are denied after this ("never" disables it)
 
 defaults:                        # inherited by every task
   timeout: 60m
@@ -804,6 +806,19 @@ prompting mode, which asks before every file write and command; `cao validate` w
 Give it `acceptEdits`, `dontAsk` with an `allowedTools` list, or `bypassPermissions` in an isolated
 environment; `permissionPrompts: deny` keeps the mode but fails fast instead of waiting for you. The full
 table of modes is in [docs/configuration.md](docs/configuration.md#claude-workflow-template-or-task-level).
+
+</details>
+
+<details>
+<summary><strong>A task stopped with <code>needs_input</code> and I never saw a prompt.</strong></summary>
+
+Something asked for a human and nobody could answer. `cao status` and `cao task <run> <task>` show what
+it was: the command, the file change or the question, quoted. The usual causes are a headless run
+(`--no-tui`, CI), a prompt nobody answered within `execution.interactionTimeout`, or a Codex task on the
+default `exec` transport — that transport cannot be asked anything at all, which `cao validate` says up
+front. Answer it with `cao resume <run> --task <id> --input "..."`, or change the task so it can ask:
+`claude.permissionPrompts: ask` with the dashboard attached, or `codex.transport: appServer` with
+`codex.approvals: host`.
 
 </details>
 

@@ -127,12 +127,30 @@ function sessionResumable(task: ResolvedTask): boolean {
 }
 
 /**
- * A hook environment value derived from agent-controlled text (an interaction title is, for Bash, the first
- * line of the command). Hooks run through a shell, so it is collapsed to one bounded line with no control
- * characters — a hook that forgets to quote the variable then has much less to work with.
+ * Agent-controlled text, reduced to one bounded line with no control characters. Used for a hook's
+ * environment (hooks run through a shell, so a hook that forgets to quote the variable has much less to
+ * work with) and for the deny messages below, which travel back to the worker and on into its result.
  */
-function hookValue(text: string): string {
+function oneLine(text: string): string {
   return sanitizeText(text).replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+/**
+ * What a denied worker is told to do about it. Every deny reaches the worker through `handleInteraction`,
+ * whoever produced it — the dashboard, a host handler, the timeout — so the instruction is added in one
+ * place rather than trusted to each of them.
+ */
+const NEEDS_INPUT_HINT = 'finish with status needs_input if you cannot continue';
+
+/**
+ * A deny message the worker can act on: what was refused, and how to end the attempt. Without the title a
+ * dashboard's "Denied by the user" reaches the operator again as a task result that says nothing about
+ * which prompt it was.
+ */
+function denyMessage(message: string, title: string): string {
+  const subject = oneLine(title);
+  const named = !subject || message.includes(subject) ? message : `${message} (${subject})`;
+  return named.includes(NEEDS_INPUT_HINT) ? named : `${named}; ${NEEDS_INPUT_HINT}`;
 }
 
 /** Prompt for a resumed session: the transcript already holds the task and context, so only explain the interruption. */
@@ -804,7 +822,9 @@ export class WorkflowScheduler {
       this.markLive(true);
       return answer;
     };
-    const deny = (message: string): InteractionAnswer => ({ kind: 'deny', message: `${message}; finish with status needs_input if you cannot continue` });
+    const deny = (message: string): InteractionAnswer => ({ kind: 'deny', message: denyMessage(message, interaction.title) });
+    /** Whatever answered, a denied worker is told what was refused and how to finish. */
+    const normalize = (answer: InteractionAnswer): InteractionAnswer => (answer.kind === 'deny' ? { kind: 'deny', message: denyMessage(answer.message, interaction.title) } : answer);
     if (!this.interactionHandler || !state || !a || state.currentAttempt !== attempt) {
       return finish(deny(`No human is available to answer ${interaction.title}`), 'no_handler');
     }
@@ -822,8 +842,8 @@ export class WorkflowScheduler {
           env: {
             ...this.hookEnv(task, a.workspace),
             CAO_INTERACTION_KIND: interaction.kind,
-            CAO_INTERACTION_TITLE: hookValue(interaction.title),
-            CAO_INTERACTION_TOOL: hookValue(interaction.toolName),
+            CAO_INTERACTION_TITLE: oneLine(interaction.title),
+            CAO_INTERACTION_TOOL: oneLine(interaction.toolName),
           },
         })
         .catch(() => undefined);
@@ -850,7 +870,7 @@ export class WorkflowScheduler {
         if (signal.aborted) onAbort();
         else signal.addEventListener('abort', onAbort, { once: true });
         this.interactionHandler!(interaction, handler.signal).then(
-          (res) => resolve({ answer: res, source: 'handler' }),
+          (res) => resolve({ answer: normalize(res), source: 'handler' }),
           (err: unknown) => resolve({ answer: deny(`The dashboard could not answer (${(err as Error)?.message ?? String(err)})`), source: 'aborted' }),
         );
       });
