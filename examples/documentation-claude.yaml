@@ -1,0 +1,35 @@
+# Small Claude-only smoke test. Run after the Codex test, or independently:
+#   cao validate examples/documentation-claude.yaml
+#   cao run examples/documentation-claude.yaml --no-tui
+version: 1
+name: Documentation smoke test - Claude
+repository: .
+
+agent: claude
+model: sonnet
+effort: low
+
+execution:
+  maxConcurrency: 1
+
+claude:
+  configMode: isolated
+  permissionMode: acceptEdits
+  permissionPrompts: deny
+  maxBudgetUsd: 1
+  allowedTools: [Read, Edit]
+  disallowedTools: [Bash, WebFetch]
+
+tasks:
+  - id: improve-inspection-docs
+    type: documentation
+    timeout: 10m
+    prompt: |
+      Review examples/documentation-smoke-target.md for a first-time CAO user.
+      Make exactly one small improvement: add an "Inspect a run" section containing
+      `cao status <run-id>` and `cao logs <run-id> <task-id>`, with one concise
+      sentence explaining each command.
+
+      Touch only examples/documentation-smoke-target.md. Preserve its existing style
+      and report the changed file in the structured result.
+

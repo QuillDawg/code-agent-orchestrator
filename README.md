@@ -248,6 +248,13 @@ cd path/to/my-project
 cao run path/to/examples/parallel-issues.yaml
 ```
 
+To smoke-test the agent integrations with a tiny, bounded documentation edit, run
+[`documentation-codex.yaml`](examples/documentation-codex.yaml), then
+[`documentation-claude.yaml`](examples/documentation-claude.yaml), and finally the cross-agent
+[`documentation-combined.yaml`](examples/documentation-combined.yaml). All three use
+[`documentation-smoke-target.md`](examples/documentation-smoke-target.md), so their edits are easy to inspect
+or discard.
+
 ### 1. Implement a batch of issues, some in parallel
 
 *You have a milestone of issues. Some are independent and could be done at the same time; some must wait
@@ -819,7 +826,7 @@ change; `cao clean --branches` removes the branches once you are done with them.
 | [docs/configuration.md](docs/configuration.md) | The complete workflow YAML schema reference |
 | [docs/agent-cli-integration.md](docs/agent-cli-integration.md) | The exact command line each agent receives and how results are interpreted |
 | [docs/architecture.md](docs/architecture.md) | Internals: state machines, scheduler, persistence, isolation |
-| [examples/](examples/) | Runnable workflows: sequential, parallel, PRD implementation, reviews, context passing, model selection |
+| [examples/](examples/) | Runnable workflows: sequential, parallel, PRD implementation, reviews, context passing, model selection, agent smoke tests |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 
 ## Development

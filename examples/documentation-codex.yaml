@@ -1,0 +1,33 @@
+# Small Codex-only smoke test. Run from this repository root:
+#   cao validate examples/documentation-codex.yaml
+#   cao run examples/documentation-codex.yaml --no-tui
+version: 1
+name: Documentation smoke test - Codex
+repository: .
+
+agent: codex
+model: gpt-5.6-luna
+effort: low
+
+execution:
+  maxConcurrency: 1
+
+codex:
+  transport: exec
+  approvals: auto
+  configMode: isolated
+  permissionMode: auto
+
+tasks:
+  - id: improve-validation-docs
+    type: documentation
+    timeout: 10m
+    prompt: |
+      Review examples/documentation-smoke-target.md for a first-time CAO user.
+      Make exactly one small improvement: add a "Validate before running" section
+      containing `cao validate workflow.yaml` and `cao run workflow.yaml --dry-run`,
+      with one concise sentence explaining each command.
+
+      Touch only examples/documentation-smoke-target.md. Preserve its existing style,
+      inspect the final diff, and report the changed file in the structured result.
+

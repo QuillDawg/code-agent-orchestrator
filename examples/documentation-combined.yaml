@@ -1,0 +1,53 @@
+# Cross-agent smoke test: Codex reviews, then Claude applies the review.
+#   cao validate examples/documentation-combined.yaml
+#   cao run examples/documentation-combined.yaml --no-tui
+version: 1
+name: Documentation smoke test - Codex and Claude
+repository: .
+
+execution:
+  mode: dag
+  maxConcurrency: 1
+
+codex:
+  transport: exec
+  approvals: deny
+  configMode: isolated
+  permissionMode: readOnly
+
+claude:
+  configMode: isolated
+  permissionMode: acceptEdits
+  permissionPrompts: deny
+  maxBudgetUsd: 1
+  allowedTools: [Read, Edit]
+  disallowedTools: [Bash, WebFetch]
+
+tasks:
+  - id: codex-review
+    agent: codex
+    model: gpt-5.6-luna
+    effort: low
+    type: review
+    timeout: 10m
+    prompt: |
+      Review examples/documentation-smoke-target.md without editing it. Check whether
+      it tells users where CAO stores run artifacts. Put the single most useful,
+      concrete improvement in the structured result's warnings list.
+
+  - id: claude-improve
+    agent: claude
+    model: sonnet
+    effort: medium
+    type: documentation
+    dependsOn: [codex-review]
+    context:
+      from: [codex-review]
+      include: [summary, warnings, decisions]
+    timeout: 10m
+    prompt: |
+      Apply at most one valid documentation improvement from the Codex review in the
+      supplied task context. Touch only examples/documentation-smoke-target.md,
+      preserve its style, and report the changed file in the structured result.
+      If the review contains no actionable warning, make no edit and explain why.
+
