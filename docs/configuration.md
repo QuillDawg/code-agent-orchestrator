@@ -423,7 +423,7 @@ A fresh `cao run` skips marked tasks. Selecting a task with `--task` or `--from`
         prompt.md
         stdout.log              # raw stream-json from Claude
         stderr.log
-        events.jsonl            # normalized activity/text/result events
+        events.jsonl            # normalized activity/text/result entries (a completion object is a result, not text)
   worktrees/<task-id>/          # parallel task worktrees
 ```
 

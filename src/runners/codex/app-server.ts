@@ -8,6 +8,7 @@ import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
+import { agentTextEvents } from '../claude/completion-text.js';
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -280,7 +281,13 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
           if (message.method === 'item/started') { hooks.onActivity(`$ ${String(item.command ?? '').split(/\r?\n/)[0]}`); entry({ kind: 'command', ts: nowIso(), command: String(item.command ?? ''), tool: 'shell' }); }
           else if (item.aggregatedOutput || item.status === 'failed') entry({ kind: 'tool_result', ts: nowIso(), text: truncate(String(item.aggregatedOutput ?? `exit ${item.exitCode ?? '?'}`), MAX_OUTPUT_CHARS), isError: item.status === 'failed' || Number(item.exitCode ?? 0) > 0 });
         } else if (item.type === 'agentMessage' && message.method === 'item/completed') {
-          finalText = String(item.text ?? ''); hooks.onActivity(finalText.split(/\r?\n/)[0] ?? ''); entry({ kind: 'text', ts: nowIso(), text: finalText });
+          // The last agent message is still the authoritative result, decided once the turn completes; here a
+          // completion object is only classified, so that no surface renders it as something the agent said.
+          finalText = String(item.text ?? '');
+          for (const produced of agentTextEvents(finalText, nowIso(), { activity: (text) => text.split(/\r?\n/)[0] ?? '', validate: CODEX_COMPLETION_CONTRACT.validate })) {
+            hooks.onActivity(produced.activity);
+            entry(produced.entry);
+          }
         } else if (item.type === 'fileChange' && message.method === 'item/completed') {
           for (const change of Array.isArray(item.changes) ? item.changes : []) {
             const filePath = String(change.path ?? ''); if (!filePath) continue;

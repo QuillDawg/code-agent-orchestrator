@@ -131,11 +131,16 @@ function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: 
     }
     case 'result': {
       const ok = !entry.isError && entry.status !== 'failed' && entry.status !== 'blocked';
-      const head = `${sanitizeText(entry.status ?? (entry.isError ? 'error' : 'done'))}${entry.summary ? ` ${glyph('dash')} ${textLines(entry.summary)[0]}` : ''}`;
-      const lines = [paint(head, ok ? ['green', 'bold'] : ['red', 'bold'], color)];
-      if (entry.error) lines.push(paint(textLines(entry.error)[0] ?? '', 'red', color));
+      // A completion object the worker emitted and then kept working past is a checkpoint, not the outcome:
+      // it says so, and it is drawn dim rather than as a second green tick at the end of the attempt.
+      const label = entry.intermediate ? 'intermediate result: ' : '';
+      const head = `${label}${sanitizeText(entry.status ?? (entry.isError ? 'error' : 'done'))}${entry.summary ? ` ${glyph('dash')} ${textLines(entry.summary)[0]}` : ''}`;
+      const style: Style[] = entry.intermediate ? ['dim'] : ok ? ['green', 'bold'] : ['red', 'bold'];
+      const lines = [paint(head, style, color)];
+      if (entry.error) lines.push(paint(textLines(entry.error)[0] ?? '', entry.intermediate ? 'dim' : 'red', color));
       if (entry.costUsd !== undefined) lines.push(paint(`cost $${entry.costUsd.toFixed(4)}`, 'dim', color));
-      return block(lines, ok ? `${glyph('ok')} ` : `${glyph('error')} `, ok ? 'green' : 'red', color, width);
+      const gutter = entry.intermediate ? `${glyph('bullet')} ` : ok ? `${glyph('ok')} ` : `${glyph('error')} `;
+      return block(lines, gutter, entry.intermediate ? 'dim' : ok ? 'green' : 'red', color, width);
     }
     case 'error':
       return block([paint(sanitizeText(entry.text), 'red', color)], `${glyph('error')} `, ['red', 'bold'], color, width);

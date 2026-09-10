@@ -533,7 +533,8 @@ Orchestrator (cao)
   the task's working directory. Claude uses `claude -p`; Codex uses `codex exec --json --output-schema`
   with an explicit sandbox and approval policy.
 - **Completion contract.** A worker must finish with a JSON object (`status`, `summary`, `filesChanged`,
-  `commits`, `decisions`, `warnings`, `followUp`, `error`, `data`) that validates against a schema.
+  `commits`, `decisions`, `warnings`, `followUp`, `error`, `data`) that validates against a schema. That
+  object is protocol, not speech: every surface shows it as a result with its summary, never as agent prose.
 - **Scheduling.** The workflow is a DAG. Tasks in the same layer may run together up to
   `execution.maxConcurrency`, in worktrees so no two agents share a working tree.
 - **Worktrees.** Created from the run's base commit on `orchestrator/<task-id>` branches and merged back on

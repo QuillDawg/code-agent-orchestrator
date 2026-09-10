@@ -42,7 +42,7 @@ claude -p \
 | `system` / `subtype: init` | session id, model → `task.process`; transcript `system` entry |
 | `system` / `subtype: compact_boundary` | transcript `system` entry "context compacted"; usage `compactions` |
 | `assistant` — every `tool_use` block | transcript `command` (Bash/PowerShell) or `tool` entry (`Read src/x.ts`, `Edit …`, `Grep: …`, `Agent: …`); Edit/Write/MultiEdit/NotebookEdit also report a file change |
-| `assistant` — every `text` block | transcript `text` entry (rendered as markdown) |
+| `assistant` — every `text` block | transcript `text` entry (rendered as markdown), or a `result` entry when the message is (or contains) the completion object — see [the completion contract](#the-completion-object-is-protocol-not-prose) |
 | `assistant` — `message.usage` | live usage: cumulative tokens (de-duplicated by message id) and the current context size (`input + cache_read + cache_creation`). The window it is measured against is estimated from the model id (`src/runners/claude/models.ts`: 1M for Fable and for Opus/Sonnet 4.6+, 200K for Haiku and older models) until the `result` event supplies the CLI's own `contextWindow` |
 | `user` (tool results) | transcript `tool_result` entry, truncated to 20 lines / 2 KB |
 | `control_request` / `can_use_tool` | a permission prompt or `AskUserQuestion` → `Interaction` for the dashboard (ask mode only) |
@@ -149,7 +149,7 @@ Use `fullAccess` only in an appropriately isolated environment.
 | `thread.started` | session id → `task.process`; transcript `system` entry |
 | `item.type: command_execution` | transcript `command` entry on start, `tool_result` (aggregated output, exit code) on completion |
 | `item.type: file_change` | transcript `tool` entries per path and a file-change report (`task.files`) |
-| `item.type: agent_message` | transcript `text` entry |
+| `item.type: agent_message` | transcript `text` entry, or a `result` entry when the message is (or contains) the completion object — see [the completion contract](#the-completion-object-is-protocol-not-prose) |
 | `item.type: mcp_tool_call` / `web_search` | transcript `tool` entry |
 | `turn.completed` | usage: input / cached / output tokens, turn count, context size |
 | `error` / `turn.failed` / `item.type: error` | transcript `error` entry (this is where rejected approvals show up) |
@@ -188,6 +188,25 @@ Codex strict structured output requires a closed object with every declared fiel
 therefore requires all fields, uses `null` for absent `error`/`data`, and carries free-form `data` as a
 JSON-encoded string. The Codex runner decodes that string before applying the shared completion validator,
 so stored results and downstream context retain the object shape above.
+
+### The completion object is protocol, not prose
+
+The object arrives as an ordinary agent message on every transport, and it is not something the agent said.
+Each runner routes its agent text through one shared classifier (`src/runners/claude/completion-text.ts`,
+built on `extractJsonObject` and the contract validator), so all three agree on what is protocol:
+
+- a message that **is** the object — bare, or in a fenced block — becomes a `result` transcript entry;
+- a message with **prose around** an object becomes both: the prose as `text`, the object as the `result`;
+- anything else stays a `text` entry. A JSON object with no `status`, one whose `status` is not the
+  contract's, malformed JSON, and text that merely talks about JSON are all prose. This is not a "hide
+  JSON" feature: a config a worker was showing off renders exactly as it did before.
+
+A `result` entry made this way is marked `intermediate: true` and keeps the object verbatim in `raw`, so
+`events.jsonl` still holds what the worker produced and `cao logs --json` can still recover it. It is
+rendered as `intermediate result: <status> — <summary>` rather than as an outcome, because it is not one:
+a worker may answer the contract mid-turn and keep working. The authoritative result is still `final.json`
+for Codex `exec`, the last agent message for Codex `appServer` and `structured_output` for Claude, and the
+attempt's log still ends with that outcome as its own `result` entry.
 
 ---
 

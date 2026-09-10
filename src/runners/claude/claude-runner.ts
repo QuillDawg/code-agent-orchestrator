@@ -19,6 +19,7 @@ import { ProcessManager } from '../../execution/process-manager.js';
 import { detectClaude, splitCommand } from './detect.js';
 import { parseClaudeEvents, activityFromText, type ClaudeResultEvent } from './event-parser.js';
 import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA_STRING, extractJsonObject, validateTaskResult } from './contract.js';
+import { agentTextEvents } from './completion-text.js';
 import { isTransientApiError } from './transient.js';
 import { contextWindowFor, supportsAutoMode, supportsEffort } from './models.js';
 import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, summarizeAnswer, PendingInteractions } from './protocol.js';
@@ -254,8 +255,13 @@ export class ClaudeRunner implements TaskRunner {
               entry({ kind: 'command', ts, command: ev.command, tool: ev.tool, toolUseId: ev.toolUseId, parentToolUseId: ev.parentToolUseId });
               break;
             case 'text':
-              hooks.onActivity(activityFromText(ev.text));
-              entry({ kind: 'text', ts, text: ev.text, parentToolUseId: ev.parentToolUseId });
+              // The final answer of a structured-output session is the completion object itself, and a worker
+              // can emit one mid-session and keep going: both are recorded as results rather than as prose.
+              // The attempt's outcome still comes from the result event's structured_output below.
+              for (const produced of agentTextEvents(ev.text, ts, { activity: activityFromText, parentToolUseId: ev.parentToolUseId })) {
+                hooks.onActivity(produced.activity);
+                entry(produced.entry);
+              }
               break;
             // Thinking is recorded but never announced: it stays out of the activity line, live.json and the
             // run-level log, and only surfaces where someone asked for it (T in the viewer, `cao logs --thinking`).

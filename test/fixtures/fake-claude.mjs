@@ -170,6 +170,11 @@ const result = (status, extra = {}) => ({
 });
 
 const finish = (structured, opts = {}) => {
+  // The real CLI says its final answer twice: once as the last assistant message (which, in a structured-output
+  // session, is the completion object itself) and once in the result event. A fake that only emits the second
+  // one agrees with any runner that renders the first as agent prose.
+  const finalMessage = opts.text ?? (structured ? JSON.stringify(structured) : '');
+  if (finalMessage && !opts.isError) text(finalMessage);
   emit({
     type: 'result',
     subtype: opts.subtype ?? 'success',
@@ -402,9 +407,7 @@ switch (effectiveMode) {
       finish(result('success', { summary: `Nudged ${taskId}` }));
       break;
     }
-    const prose = 'Success - implemented the change and ran the tests.';
-    text(prose);
-    finish(undefined, { text: prose });
+    finish(undefined, { text: 'Success - implemented the change and ran the tests.' });
     break;
   }
   case 'error-result':

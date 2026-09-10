@@ -8,6 +8,7 @@ import { tmpDir } from '../helpers/index.js';
 import { parseTranscriptLine, transcriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
 import { paint, sanitizeText, stripAnsi, useColor, visibleLength } from '../../src/cli/color.js';
 import { formatCost, formatElapsed, formatTokens, bar, contextRatio } from '../../src/tui/format.js';
+import { agentTextEvents, splitCompletionObject } from '../../src/runners/claude/completion-text.js';
 
 const ts = '2026-09-03T10:11:12.000Z';
 // Transcript stamps are local wall clock, like every other absolute time this CLI prints.
@@ -481,5 +482,86 @@ describe('number formatting', () => {
     expect(bar(0.5, 4)).toBe('██░░');
     expect(contextRatio({ contextTokens: 50, contextWindow: 200 })).toBe(0.25);
     expect(contextRatio({ contextTokens: 50 })).toBeUndefined();
+  });
+});
+
+/**
+ * The completion object is the wire format of the worker contract, not something the agent said. Every runner
+ * routes its agent text through this classifier, so all three agree on what is protocol and what is prose.
+ */
+describe('telling the completion object apart from agent prose', () => {
+  const object = '{"status":"success","summary":"Added the requested docs"}';
+
+  it('reads a bare completion object as the result it is, leaving no prose behind', () => {
+    const parts = splitCompletionObject(object);
+    expect(parts.prose).toBe('');
+    expect(parts.completion?.result).toMatchObject({ status: 'success', summary: 'Added the requested docs' });
+    expect(parts.completion?.raw).toBe(object);
+  });
+
+  it('reads one inside a fenced block, and keeps the object itself rather than the fence', () => {
+    const parts = splitCompletionObject('```json\n{"status":"needs_input","summary":"Which database?"}\n```');
+    expect(parts.prose).toBe('');
+    expect(parts.completion?.raw).toBe('{"status":"needs_input","summary":"Which database?"}');
+    expect(parts.completion?.result.status).toBe('needs_input');
+  });
+
+  it('keeps the prose on both sides of an object and takes only the object out of it', () => {
+    const parts = splitCompletionObject(`Here is what I did.\n\n${object}\n\nShout if you want it differently.`);
+    expect(parts.prose).toBe('Here is what I did.\n\nShout if you want it differently.');
+    expect(parts.completion?.result.summary).toBe('Added the requested docs');
+  });
+
+  it('leaves JSON that is not a completion result exactly where the agent put it', () => {
+    // No `status` at all: a config the worker was showing off.
+    const config = 'The workflow now reads:\n\n```json\n{"model":"opus","effort":"high"}\n```';
+    expect(splitCompletionObject(config)).toEqual({ prose: config });
+    // A `status` that is not the contract's: a tool result the worker pasted.
+    const dump = 'The queue says: {"jobs":[{"status":"running"}]}';
+    expect(splitCompletionObject(dump)).toEqual({ prose: dump });
+  });
+
+  it('leaves broken JSON, and text that is merely about JSON, as prose', () => {
+    const broken = '{"status":"success","summary":"the file I was writing when I ran out of';
+    expect(splitCompletionObject(broken)).toEqual({ prose: broken });
+    const chatty = 'I will finish with a JSON object whose "status" field is "success" once the tests pass.';
+    expect(splitCompletionObject(chatty)).toEqual({ prose: chatty });
+  });
+
+  it('still finds the object at the end of a very large message', () => {
+    const dump = Array.from({ length: 20_000 }, (_, i) => `{"level":"info","status":"running","step":${i}}`).join('\n');
+    const parts = splitCompletionObject(`${dump}\n\n{"status":"success","summary":"Processed every line"}`);
+    expect(parts.completion?.result.summary).toBe('Processed every line');
+    expect(parts.prose).toBe(dump);
+  });
+
+  it('gives up on a huge blob of unbalanced braces instead of scanning it for minutes', () => {
+    // Without a scan budget this is quadratic: 200k closing braces each scanned back to the start of the text.
+    const noisy = `${'} '.repeat(200_000)}the "status" here is only a word`;
+    const started = Date.now();
+    expect(splitCompletionObject(noisy).completion).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it('turns one message into the entries it really is, and never puts a brace on the activity line', () => {
+    const events = agentTextEvents(`Done!\n\n${object}`, ts, { activity: (t) => t.split('\n')[0] ?? '' });
+    expect(events.map((e) => e.entry.kind)).toEqual(['text', 'result']);
+    expect(events[0]!.entry).toMatchObject({ kind: 'text', text: 'Done!' });
+    // The object survives verbatim on the entry, so events.jsonl still holds what the worker produced.
+    expect(events[1]!.entry).toMatchObject({ kind: 'result', status: 'success', summary: 'Added the requested docs', intermediate: true, raw: object });
+    for (const e of events) expect(e.activity.startsWith('{')).toBe(false);
+    expect(events[1]!.activity).toContain('Added the requested docs');
+
+    // Prose alone is untouched: same entry, same activity line, as before there was a classifier.
+    const prose = agentTextEvents('Looking at auth', ts, { activity: (t) => t.split('\n')[0] ?? '' });
+    expect(prose).toEqual([{ entry: { kind: 'text', ts, text: 'Looking at auth' }, activity: 'Looking at auth' }]);
+  });
+
+  it('renders an intermediate result as a checkpoint rather than a second outcome', () => {
+    const entry: TranscriptEntry = { kind: 'result', ts, status: 'needs_input', summary: 'Which database?', isError: false, intermediate: true, raw: '{"status":"needs_input"}' };
+    expect(transcriptLine(entry)).toBe('intermediate result: needs_input - Which database?');
+    const lines = renderTranscript([entry, { kind: 'result', ts, status: 'success', summary: 'done', isError: false }], { color: false, width: 0 });
+    expect(lines).toEqual(['· intermediate result: needs_input — Which database?', '✓ success — done']);
+    expect(lines.join('\n')).not.toContain('"status"');
   });
 });

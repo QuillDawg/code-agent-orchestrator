@@ -14,6 +14,7 @@ import { ProcessManager } from '../../execution/process-manager.js';
 import { detectCodex } from './detect.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
+import { agentTextEvents } from '../claude/completion-text.js';
 import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -56,6 +57,8 @@ export function buildCodexArgs(options: CodexOptions, schemaPath: string, output
   if (options.extraArgs?.length) args.push(...options.extraArgs);
   return args;
 }
+
+const firstLine = (text: string): string => text.split(/\r?\n/)[0] ?? '';
 
 const FILE_OPS: Record<string, FileOp> = { add: 'write', create: 'write', update: 'edit', modify: 'edit', delete: 'delete', remove: 'delete' };
 
@@ -155,8 +158,12 @@ export class CodexRunner implements TaskRunner {
           return;
         }
         if (item?.type === 'agent_message' && typeof item.text === 'string' && event.type === 'item.completed') {
-          hooks.onActivity(item.text.split(/\r?\n/)[0] ?? '');
-          entry({ kind: 'text', ts, text: item.text });
+          // A completion object is protocol, not prose: it becomes a result entry. The attempt's own outcome
+          // still comes from final.json below, so one the worker emitted mid-turn does not end anything.
+          for (const produced of agentTextEvents(item.text, ts, { activity: firstLine, validate: CODEX_COMPLETION_CONTRACT.validate })) {
+            hooks.onActivity(produced.activity);
+            entry(produced.entry);
+          }
           return;
         }
         if ((item?.type === 'mcp_tool_call' || item?.type === 'web_search') && event.type === 'item.started') {

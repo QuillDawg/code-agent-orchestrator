@@ -11,6 +11,7 @@ import type { RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.j
 import type { ResolvedTask } from '../../src/types/workflow.js';
 import { renderTranscript } from '../../src/tui/transcript.js';
 import { FAKE_CLAUDE, tmpDir } from '../helpers/index.js';
+import { splitCompletionObject } from '../../src/runners/claude/completion-text.js';
 
 type ModelBits = Pick<ResolvedTask, 'claude' | 'model' | 'effort'>;
 
@@ -305,5 +306,38 @@ describe('Claude runner: tool timing and subagent entries', () => {
     // The activity line feeds the table, live.json and the plain renderer, so a thought must never reach it.
     expect(activity.some((l) => l.includes('consider the options'))).toBe(false);
     expect(activity.some((l) => l.startsWith('Working on '))).toBe(true);
+  });
+});
+
+describe('Claude runner: the completion object is never agent prose', () => {
+  afterEach(() => clearDetectionCache());
+
+  /** The classifier the runner uses, applied to what a surface would render as agent text. */
+  const proseThatIsReallyAResult = (entries: TranscriptEntry[]): string[] =>
+    entries.filter((e) => e.kind === 'text' && splitCompletionObject(e.text).completion !== undefined).map((e) => (e.kind === 'text' ? e.text : ''));
+
+  it('turns the final answer into a result entry, leaving structured_output authoritative', async () => {
+    const { outcome, persisted, activity } = await runFake('success');
+
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success' } });
+    expect(proseThatIsReallyAResult(persisted)).toEqual([]);
+    // The prose the worker wrote on the way is untouched.
+    expect(persisted.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual([expect.stringMatching(/^Working on /)]);
+    // The object the session ended on is a result that says it is not yet the outcome, and keeps its own bytes.
+    const results = persisted.filter((e): e is Extract<TranscriptEntry, { kind: 'result' }> => e.kind === 'result');
+    expect(results[0]).toMatchObject({ status: 'success', intermediate: true });
+    expect(results[0]!.raw).toContain('"status":"success"');
+    expect(persisted.at(-1)).toMatchObject({ kind: 'result', status: 'success' });
+    expect(persisted.at(-1)).not.toHaveProperty('intermediate');
+    // Nothing on the activity line - the dashboard task column, live.json - starts with a brace.
+    expect(activity.some((line) => line.trimStart().startsWith('{'))).toBe(false);
+  });
+
+  it('splits prose from a fenced completion object in the same message', async () => {
+    const { outcome, persisted } = await runFake('prose');
+
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success' } });
+    expect(proseThatIsReallyAResult(persisted)).toEqual([]);
+    expect(persisted.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['Done!']);
   });
 });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { buildCodexArgs, CodexRunner } from '../../src/runners/codex/codex-runner.js';
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
 import { ProcessManager } from '../../src/execution/process-manager.js';
@@ -7,6 +8,28 @@ import type { RunnerHooks } from '../../src/runners/task-runner.js';
 import type { ResolvedTask } from '../../src/types/workflow.js';
 import type { Interaction } from '../../src/types/interaction.js';
 import { FAKE_CODEX, tmpDir } from '../helpers/index.js';
+import { parseTranscriptLine, type TranscriptEntry } from '../../src/types/transcript.js';
+import { splitCompletionObject } from '../../src/runners/claude/completion-text.js';
+import { eventLineRenderer } from '../../src/cli/commands/logs.js';
+
+/** The lines of an attempt's events.jsonl, as a surface reads them back. */
+async function readEventLines(attemptDir: string): Promise<string[]> {
+  const log = await fs.readFile(path.join(attemptDir, 'events.jsonl'), 'utf8');
+  return log.trim().split(/\r?\n/);
+}
+
+/** The attempt's events.jsonl, as the entries every surface renders. */
+async function readEntries(attemptDir: string): Promise<TranscriptEntry[]> {
+  return (await readEventLines(attemptDir)).map(parseTranscriptLine).filter((e): e is TranscriptEntry => e !== null);
+}
+
+/**
+ * What H2 forbids: an entry a surface renders as agent prose whose text is in fact the completion object.
+ * Checked with the same classifier the runners use, which is what "parses as a completion result" means.
+ */
+function proseThatIsReallyAResult(entries: TranscriptEntry[]): string[] {
+  return entries.filter((e) => e.kind === 'text' && splitCompletionObject(e.text).completion !== undefined).map((e) => (e.kind === 'text' ? e.text : ''));
+}
 
 describe('Codex runner arguments', () => {
   it('uses the Codex automatic-review preset without its mutually exclusive sandbox flag', () => {
@@ -114,6 +137,50 @@ describe('Codex exec transport', () => {
     expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', data: { risk: 'low', nested: { count: 2 } } } });
   });
 
+  /**
+   * The bug H2 is about, on the transport it was seen on: a worker that answers the contract mid-turn, keeps
+   * working, and answers again. Neither object may reach a surface as something the agent said, and the first
+   * one may not end the attempt.
+   */
+  it('records a completion object as a result, mid-turn and at the end, never as agent prose', async () => {
+    const root = await tmpDir('cao-codex-interim-');
+    const attemptDir = path.join(root, 'attempt');
+    const activities: string[] = [];
+    const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
+    const outcome = await runner.run({
+      runId: 'r1', attempt: 1, prompt: 'do it', cwd: root, attemptDir, env: { FAKE_CODEX_MODE: 'interim' }, timeoutMs: 5000,
+      signal: new AbortController().signal, canInteract: false,
+      task: { id: 'a', model: 'fake-codex', codex: { transport: 'exec' }, claude: {} } as ResolvedTask,
+    }, {
+      onActivity: (value) => activities.push(value), onOutput: () => {}, onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {},
+      onUsage: () => {}, onInteraction: async () => ({ kind: 'deny', message: 'headless test' }),
+    });
+
+    // The mid-turn object did not end the attempt: final.json is still what the task result comes from.
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', summary: 'fake exec completed' } });
+
+    const entries = await readEntries(attemptDir);
+    expect(proseThatIsReallyAResult(entries)).toEqual([]);
+    // The prose the worker wrote between the two objects is untouched.
+    expect(entries.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['Now running the tests.']);
+    // The mid-turn object is a result, and says it is not the outcome; the outcome is the last entry.
+    const results = entries.filter((e): e is Extract<TranscriptEntry, { kind: 'result' }> => e.kind === 'result');
+    expect(results[0]).toMatchObject({ status: 'needs_input', summary: 'Checking whether the docs still build', intermediate: true });
+    expect(results[0]!.raw).toContain('"status":"needs_input"');
+    expect(entries.at(-1)).toMatchObject({ kind: 'result', status: 'success', summary: 'fake exec completed' });
+    expect(entries.at(-1)).not.toHaveProperty('intermediate');
+
+    // The activity line - hooks.onActivity, live.json, the dashboard task column - never shows the wire format.
+    expect(activities.some((line) => line.trimStart().startsWith('{'))).toBe(false);
+    expect(activities.some((line) => line.includes('Checking whether the docs still build'))).toBe(true);
+
+    // And what `cao logs` / `cao peek` print for this attempt is the summary, not the object.
+    const rendered = eventLineRenderer('never').batch(await readEventLines(attemptDir)).join('\n');
+    expect(rendered).toContain('Checking whether the docs still build');
+    expect(rendered).toContain('fake exec completed');
+    expect(rendered).not.toContain('"status":');
+  });
+
   it('rejects raw arguments that could override the security envelope', () => {
     expect(() => buildCodexArgs({ permissionMode: 'readOnly', extraArgs: ['--sandbox', 'danger-full-access'] }, 'schema.json', 'final.json')).toThrow(/cannot override security/i);
     expect(() => buildCodexArgs({ extraArgs: ['-c', 'approval_policy="never"'] }, 'schema.json', 'final.json')).toThrow(/approval_policy/i);
@@ -147,7 +214,7 @@ describe('Codex app-server transport', () => {
       timeoutMs: 5000, signal: controller.signal, canInteract: true, resumeSessionId,
       task: { id: 'a', model: 'fake-codex', effort: 'high', codex: { transport: 'appServer', approvals: 'host', experimentalUserInput }, claude: {} } as ResolvedTask,
     }, hooks);
-    return { outcome, interactions, usage, warnings, rawOutput };
+    return { outcome, interactions, usage, warnings, rawOutput, attemptDir: path.join(root, 'attempt') };
   }
 
   it('runs a schema-constrained turn and reports usage', async () => {
@@ -198,6 +265,20 @@ describe('Codex app-server transport', () => {
     const mcp = await run('mcp-failure');
     expect(mcp.outcome).toMatchObject({ kind: 'error', failure: { providerCode: 'badRequest', retryable: false } });
     expect(mcp.warnings).toEqual([expect.stringMatching(/required.*failed to start/i)]);
+  });
+
+  it('records a completion object as a result here too, and keeps the last agent message authoritative', async () => {
+    const { outcome, attemptDir } = await run('interim');
+    expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success', summary: 'fake app-server completed' } });
+
+    const entries = await readEntries(attemptDir);
+    expect(proseThatIsReallyAResult(entries)).toEqual([]);
+    expect(entries.filter((e) => e.kind === 'text').map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['Now running the tests.']);
+    expect(entries.filter((e) => e.kind === 'result')).toMatchObject([
+      { status: 'needs_input', intermediate: true },
+      { status: 'success', summary: 'fake app-server completed' },
+      { status: 'success', summary: 'fake app-server completed' },
+    ]);
   });
 
   it('interrupts and cancels a hanging turn', async () => {

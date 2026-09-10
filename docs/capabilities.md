@@ -409,7 +409,11 @@ reference at all say which task ids they were expecting rather than printing a p
 `--json` on `cao logs` and `cao peek` writes JSON Lines: one normalized transcript entry per line, no header,
 so `cao logs implement-102 --json | jq 'select(.kind == "command")'` works and `--follow` keeps streaming
 them. Those entries only exist in `events.jsonl`, so `--json` beside `--raw`, `--stderr` or `--prompt` is
-refused rather than silently overriding them. `cao peek --json` puts one `{"kind":"peek", …}` status object first, with the state, agent, pid,
+refused rather than silently overriding them. The completion object a worker ends on is one of those
+entries: it is recorded as `kind: "result"`, never as agent text, so no surface prints
+`{"status":"success",…}` where the agent's own words belong. One the worker emitted mid-run carries
+`intermediate: true` and reads `intermediate result: …`; either way `raw` holds the object exactly as the
+worker wrote it ([agent-cli-integration.md](agent-cli-integration.md#the-completion-object-is-protocol-not-prose)). `cao peek --json` puts one `{"kind":"peek", …}` status object first, with the state, agent, pid,
 attempt, usage, working directory and branch the text output shows.
 
 `cao status` prints where the run lives (`Directory:`) and who owns it (`Orchestrator: pid 1234 running`), so
@@ -714,4 +718,4 @@ replays the attempt on a checkout of its base. The same per-file records ride al
 `git.files`, and `cao diff` prints all of it. See
 [`git.captureDiff` and `git.maxDiffBytes`](configuration.md#git).
 
-The two `events.jsonl` files serve different purposes. The **attempt** log is the verbatim transcript — every agent message, command, tool result and permission prompt exactly as the worker produced it, ending with a `result` or `error` entry recording how the attempt finished. The **run** log is the summary the orchestrator keeps: state transitions, and for an interaction only its id, kind, tool and title. Bulk and sensitive agent detail — worker output, transcripts, usage and raw tool input (whole file contents, complete shell commands) — deliberately stays in the per-attempt directory rather than the run log.
+The two `events.jsonl` files serve different purposes. The **attempt** log is the verbatim transcript — every agent message, command, tool result and permission prompt exactly as the worker produced it, ending with a `result` or `error` entry recording how the attempt finished. A completion object the worker emitted is stored as a `result` entry too (with `intermediate: true` and the object itself in `raw`) rather than as agent text. The **run** log is the summary the orchestrator keeps: state transitions, and for an interaction only its id, kind, tool and title. Bulk and sensitive agent detail — worker output, transcripts, usage and raw tool input (whole file contents, complete shell commands) — deliberately stays in the per-attempt directory rather than the run log.

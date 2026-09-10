@@ -11,9 +11,10 @@
  * is not OpenAI-strict fails with the `invalid_json_schema` 400, whatever the mode.
  *
  * Behaviour is controlled by env FAKE_CODEX_MODE, or per task by FAKE_CODEX_TASK_MODES='{"a":"hang"}':
- *   success (default) | invalid | api-error | hang | strict-schema
+ *   success (default) | invalid | api-error | hang | strict-schema | interim
  *   app-server only: approval | file-approval | question | failure | interrupted | mcp-failure |
  *                    malformed | overload-once | wrong-model | missing-policy
+ * `interim` emits a completion object mid-turn, keeps working, and finishes with a different one.
  * `invalid`, `api-error` and `failure` recover when the session is resumed, so a run can exercise
  * nudge-then-success and transient-error-then-resume.
  * FAKE_CODEX_AUTH=0 makes `login status` fail. FAKE_CODEX_TRACE=<file> appends one JSON line per
@@ -225,6 +226,12 @@ if (line.scope.startsWith('exec')) {
   // No `status` at all: prose that reads like a result but does not satisfy the completion contract.
   const text = mode === 'invalid' && !resumed ? '{"note":"I finished the work"}' : JSON.stringify(execResult);
   if (outputPath) writeFileSync(outputPath, text, 'utf8');
+  if (mode === 'interim' && !resumed) {
+    // A worker that answers the completion contract mid-turn and then keeps working, as run 2026-09-10-004
+    // did: the attempt must not end here, and neither object may be rendered as something the agent said.
+    emit({ type: 'item.completed', item: { type: 'agent_message', id: 'msg-0', text: JSON.stringify({ ...result, status: 'needs_input', summary: 'Checking whether the docs still build' }) } });
+    emit({ type: 'item.completed', item: { type: 'agent_message', id: 'msg-0b', text: 'Now running the tests.' } });
+  }
   emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test' } });
   emit({ type: 'item.completed', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test', status: 'completed', exit_code: 0, aggregated_output: 'ok' } });
   emit({ type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text } });
@@ -316,6 +323,11 @@ rl.on('line', (raw) => {
       finish({ unrelated: true });
     } else if (mode === 'hang') {
       // Wait for the orchestrator to interrupt and terminate this process.
+    } else if (mode === 'interim' && !isResume) {
+      // A completion object mid-turn, then more work, then the real one: only the last is the outcome.
+      emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-0', text: JSON.stringify({ ...result, status: 'needs_input', summary: 'Checking whether the docs still build' }), phase: null, memoryCitation: null, delivery: null, questions: null } } });
+      emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-0b', text: 'Now running the tests.', phase: null, memoryCitation: null, delivery: null, questions: null } } });
+      finish();
     } else finish(mode === 'strict-schema' ? strictResult : { ...result, summary: isResume ? `fake app-server resumed ${taskId}` : result.summary });
   } else if (message.id === 98 || message.id === 99 || message.id === 100) {
     if (process.env.FAKE_CODEX_TRACE) process.stderr.write(`response:${JSON.stringify(message)}\n`);

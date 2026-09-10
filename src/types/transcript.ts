@@ -27,7 +27,12 @@ export type TranscriptEntry =
   | { kind: 'question'; ts: string; id: string; questions: InteractionQuestion[]; answer?: string }
   /** The worker needed a permission decision. */
   | { kind: 'permission'; ts: string; id: string; tool: string; title: string; decision?: 'allow' | 'deny'; message?: string }
-  | { kind: 'result'; ts: string; status?: string; summary?: string; costUsd?: number; isError: boolean; error?: string }
+  /**
+   * A completion result. The attempt's own outcome is written by the runner once, at the end; an
+   * `intermediate` one is a completion object the worker emitted mid-turn and then kept working past, and
+   * `raw` is that object exactly as the worker wrote it, so nothing an agent produced is lost by classifying it.
+   */
+  | { kind: 'result'; ts: string; status?: string; summary?: string; costUsd?: number; isError: boolean; error?: string; intermediate?: boolean; raw?: string }
   | { kind: 'error'; ts: string; text: string }
   /** Session start/resume, compaction, orchestrator notes. */
   | { kind: 'system'; ts: string; text: string };
@@ -59,7 +64,8 @@ export function transcriptLine(entry: TranscriptEntry): string {
     case 'permission':
       return `? ${entry.title}${entry.decision ? ` -> ${entry.decision}` : ''}`;
     case 'result':
-      return `result: ${entry.status ?? (entry.isError ? 'error' : 'done')}${entry.summary ? ` - ${firstLine(entry.summary)}` : ''}`;
+      // Never the raw object: this line is the activity column, live.json and the failure context.
+      return `${entry.intermediate ? 'intermediate result' : 'result'}: ${entry.status ?? (entry.isError ? 'error' : 'done')}${entry.summary ? ` - ${firstLine(entry.summary)}` : ''}`;
     case 'error':
       return `error: ${firstLine(entry.text)}`;
     case 'system':

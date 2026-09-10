@@ -167,30 +167,62 @@ function parseObject(text: string): Record<string, unknown> | undefined {
   }
 }
 
+/** Where a JSON object sits inside a piece of agent text. */
+export interface JsonObjectMatch {
+  /** The parsed object. */
+  value: Record<string, unknown>;
+  /** The object's own source text, without the fence it may have been wrapped in. */
+  text: string;
+  /** Span of the message the object occupies, fence included: what is left once it is taken out is the prose. */
+  start: number;
+  end: number;
+}
+
 /**
- * Fallback: find the completion object in free-form text. Fenced blocks are tried last-to-first, preferring
- * one that carries a `status` over a trailing fence that merely happens to be JSON (a config the worker was
- * showing off); then the last balanced object with a `status` key.
+ * How many characters the balanced-object scan may look at before giving up. The scan is quadratic on text
+ * that is full of unbalanced braces, and it now runs on every agent message rather than only on a final
+ * answer; a budget keeps a pathological tool dump from stalling the runner. Real completion objects sit far
+ * inside it - the whole scan of a normal message costs its own length.
  */
-export function extractJsonObject(text: string): unknown | undefined {
+const SCAN_BUDGET = 2_000_000;
+
+function fencedObjects(text: string): JsonObjectMatch[] {
+  const out: JsonObjectMatch[] = [];
+  for (const m of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) {
+    const body = (m[1] ?? '').trim();
+    const value = parseObject(body);
+    if (value && m.index !== undefined) out.push({ value, text: body, start: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+/**
+ * Fallback: find the completion object in free-form text, and say where it is. Fenced blocks are tried
+ * last-to-first, preferring one that carries a `status` over a trailing fence that merely happens to be JSON
+ * (a config the worker was showing off); then the last balanced object with a `status` key.
+ */
+export function findJsonObject(text: string): JsonObjectMatch | undefined {
   if (!text) return undefined;
-  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => parseObject((m[1] ?? '').trim())).filter((o): o is Record<string, unknown> => o !== undefined);
-  const withStatus = [...fences].reverse().find((o) => 'status' in o);
+  const fences = fencedObjects(text);
+  const withStatus = [...fences].reverse().find((f) => 'status' in f.value);
   if (withStatus) return withStatus;
   // Scan for a balanced object from the last "{" that contains "status".
   let end = text.length;
+  let budget = SCAN_BUDGET;
   while (end > 0) {
     const close = text.lastIndexOf('}', end - 1);
     if (close < 0) break;
     let depth = 0;
     for (let i = close; i >= 0; i--) {
+      if (budget-- <= 0) return fences[fences.length - 1];
       const ch = text[i];
       if (ch === '}') depth++;
       else if (ch === '{') {
         depth--;
         if (depth === 0) {
-          const parsed = parseObject(text.slice(i, close + 1));
-          if (parsed && 'status' in parsed) return parsed;
+          const source = text.slice(i, close + 1);
+          const parsed = parseObject(source);
+          if (parsed && 'status' in parsed) return { value: parsed, text: source, start: i, end: close + 1 };
           break;
         }
       }
@@ -198,4 +230,9 @@ export function extractJsonObject(text: string): unknown | undefined {
     end = close;
   }
   return fences[fences.length - 1];
+}
+
+/** The completion object in free-form text, when only the object itself is wanted. */
+export function extractJsonObject(text: string): unknown | undefined {
+  return findJsonObject(text)?.value;
 }
