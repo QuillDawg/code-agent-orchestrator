@@ -255,6 +255,14 @@ To smoke-test the agent integrations with a tiny, bounded documentation edit, ru
 [`documentation-smoke-target.md`](examples/documentation-smoke-target.md), so their edits are easy to inspect
 or discard.
 
+```bash
+cao doctor examples/documentation-combined.yaml
+cao run examples/documentation-codex.yaml --no-tui
+cao run examples/documentation-claude.yaml --no-tui
+cao run examples/documentation-combined.yaml --no-tui
+git diff -- examples/documentation-*
+```
+
 ### 1. Implement a batch of issues, some in parallel
 
 *You have a milestone of issues. Some are independent and could be done at the same time; some must wait

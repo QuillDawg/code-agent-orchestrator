@@ -1,6 +1,3 @@
-# Small Codex-only smoke test. Run from this repository root:
-#   cao validate examples/documentation-codex.yaml
-#   cao run examples/documentation-codex.yaml --no-tui
 version: 1
 name: Documentation smoke test - Codex
 repository: .
@@ -30,4 +27,3 @@ tasks:
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style,
       inspect the final diff, and report the changed file in the structured result.
-

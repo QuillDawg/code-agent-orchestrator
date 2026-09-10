@@ -1,6 +1,3 @@
-# Small Claude-only smoke test. Run after the Codex test, or independently:
-#   cao validate examples/documentation-claude.yaml
-#   cao run examples/documentation-claude.yaml --no-tui
 version: 1
 name: Documentation smoke test - Claude
 repository: .
@@ -32,4 +29,3 @@ tasks:
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style
       and report the changed file in the structured result.
-

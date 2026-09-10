@@ -1,6 +1,3 @@
-# Cross-agent smoke test: Codex reviews, then Claude applies the review.
-#   cao validate examples/documentation-combined.yaml
-#   cao run examples/documentation-combined.yaml --no-tui
 version: 1
 name: Documentation smoke test - Codex and Claude
 repository: .
@@ -50,4 +47,3 @@ tasks:
       supplied task context. Touch only examples/documentation-smoke-target.md,
       preserve its style, and report the changed file in the structured result.
       If the review contains no actionable warning, make no edit and explain why.
-

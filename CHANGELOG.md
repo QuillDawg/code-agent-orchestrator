@@ -18,6 +18,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   providers and transports that workflow needs.
 - Mixed-provider examples cover both Claude implementation with Codex review and Codex implementation with
   Claude review.
+- Small documentation smoke tests make it easy to verify Codex alone, Claude alone, and a Codex-to-Claude
+  review handoff with cost-appropriate models.
 
 ### Changed
 
