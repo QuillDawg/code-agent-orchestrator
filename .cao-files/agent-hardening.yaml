@@ -1,0 +1,202 @@
+# Implements docs/research/agent-integration-hardening.md (H1-H6): take the Claude and Codex
+# runners to a production-ready release.
+#
+# Task scopes live in .cao-files/scope/agent-hardening/<task>.md; shared rules are in
+# .cao-files/scope/agent-hardening/RULES.md. The spec on disk is the source of truth, so tasks
+# receive only upstream summaries as context.
+#
+# Six work tasks, in dependency order:
+#   harness              a test harness that can actually fail (H1)
+#   transcript-fidelity  never render the completion object as agent prose (H2)
+#   blocked-on-human     one "waiting for a human" mechanism for both agents (H3.1-H3.4)
+#   blocked-on-human-iterate  the round trip and the headless contract, driven as a user (H3.5-H3.7)
+#   failure-consistency  fail fast, classify honestly, never retry a config error (H4)
+#   docs-and-changelog   make the documentation match the code (H5)
+# wrapped in baseline -> review -> fix-if-findings -> release-gate (H6).
+#
+# Model policy: claude-opus-5 at high effort; xhigh for the two hardest steps. The agents under
+# test are driven by the tasks themselves (fakes in npm test, real CLIs in the gate) rather than
+# used as the workers here, so a broken integration cannot take the repair run down with it.
+#
+# Before running: commit or stash pending changes - every task commits its own work.
+#   cao validate .cao-files/agent-hardening.yaml
+#   cao run .cao-files/agent-hardening.yaml
+
+version: 1
+name: Agent integration hardening
+repository: .
+
+agent: claude
+model: claude-opus-5
+effort: high
+
+execution:
+  maxConcurrency: 1
+  workspaceStrategy:
+    sequential: shared
+    parallel: shared
+  interactionTimeout: 30m
+
+defaults:
+  timeout: 90m
+  retry:
+    attempts: 1
+    includePreviousFailure: true
+  onFailure: stop
+
+hooks:
+  afterWorkflow:
+    - git log --oneline -30
+
+templates:
+  feature:
+    type: implementation
+    prompt: Implement `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the Feature rules
+      in `.cao-files/scope/agent-hardening/RULES.md`.
+
+  iterate:
+    type: implementation
+    prompt: Work through `.cao-files/scope/agent-hardening/{{scope}}.md`. Follow the Iterate
+      rules in `.cao-files/scope/agent-hardening/RULES.md`. The previous pass's result is in
+      context.
+
+  review:
+    type: review
+    prompt: Review {{sections}}. Follow the Review rules in
+      `.cao-files/scope/agent-hardening/RULES.md`.
+
+  fix:
+    type: implementation
+    prompt: Fix the review findings in context. Follow the Fix rules in
+      `.cao-files/scope/agent-hardening/RULES.md`.
+
+tasks:
+  # --- baseline ---------------------------------------------------------------
+  - id: baseline
+    type: test
+    effort: medium
+    timeout: 30m
+    prompt: Follow `.cao-files/scope/agent-hardening/baseline.md`.
+
+  # --- phase 1: make failures visible (H1, H2) --------------------------------
+  - id: harness
+    template: feature
+    scope: harness
+    effort: xhigh
+    timeout: 120m
+    dependsOn: [baseline]
+    context:
+      from:
+        - task: baseline
+          include: [summary, decisions, warnings]
+
+  - id: transcript-fidelity
+    template: feature
+    scope: transcript-fidelity
+    timeout: 60m
+    dependsOn: [harness]
+    context:
+      from:
+        - task: harness
+          include: [summary, warnings]
+
+  # --- phase 2: waiting for a human (H3) --------------------------------------
+  - id: blocked-on-human
+    template: feature
+    scope: blocked-on-human
+    effort: xhigh
+    timeout: 150m
+    dependsOn: [transcript-fidelity]
+    context:
+      from:
+        - task: harness
+          include: [summary, decisions, warnings]
+        - task: transcript-fidelity
+          include: [summary]
+
+  - id: blocked-on-human-iterate
+    template: iterate
+    scope: blocked-on-human-iterate
+    timeout: 120m
+    dependsOn: [blocked-on-human]
+    context:
+      from:
+        - task: blocked-on-human
+          include: [summary, decisions, warnings, followUp]
+
+  # --- phase 3: honest failures (H4) ------------------------------------------
+  - id: failure-consistency
+    template: feature
+    scope: failure-consistency
+    timeout: 120m
+    dependsOn: [blocked-on-human-iterate]
+    context:
+      from:
+        - task: harness
+          include: [summary, warnings]
+        - task: blocked-on-human-iterate
+          include: [summary, followUp]
+
+  # --- phase 4: documentation (H5) --------------------------------------------
+  - id: docs-and-changelog
+    type: documentation
+    effort: medium
+    timeout: 60m
+    dependsOn: [failure-consistency]
+    prompt: Follow `.cao-files/scope/agent-hardening/docs-and-changelog.md`.
+    context:
+      from:
+        - harness
+        - transcript-fidelity
+        - blocked-on-human
+        - blocked-on-human-iterate
+        - failure-consistency
+      include: [summary, decisions]
+      maxChars: 30000
+
+  # --- phase 5: review and gate (H6) ------------------------------------------
+  - id: review
+    template: review
+    sections: |
+      the whole run against all of docs/research/agent-integration-hardening.md. Pay particular
+      attention to sections H3.7 (every row of the acceptance matrix, attended and headless) and
+      H2 (no completion object rendered as agent text on any surface), to the compatibility rule
+      that no existing workflow file changes behaviour, and to any agent-controlled text reaching
+      the terminal unsanitised
+    timeout: 90m
+    dependsOn: [docs-and-changelog]
+    context:
+      from:
+        - task: baseline
+          include: [summary, decisions]
+
+  - id: fix
+    template: fix
+    timeout: 90m
+    dependsOn: [review]
+    when:
+      expr: tasks.review.warnings.length > 0
+    # A fix that cannot finish must not hide the gate: let the gate run and report it.
+    onFailure: continue
+    context:
+      from:
+        - task: review
+          include: [summary, warnings, followUp]
+
+  - id: release-gate
+    type: verification
+    effort: xhigh
+    timeout: 90m
+    dependsOn: [review, fix]
+    retry:
+      attempts: 0
+    prompt: Follow `.cao-files/scope/agent-hardening/release-gate.md`.
+    context:
+      from:
+        - task: baseline
+          include: [summary, decisions, data]
+        - task: review
+          include: [summary, warnings]
+        - task: fix
+          include: [summary, warnings, followUp]
+      includeFailed: true

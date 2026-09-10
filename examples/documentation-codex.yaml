@@ -27,3 +27,7 @@ tasks:
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style,
       inspect the final diff, and report the changed file in the structured result.
+    state: completed
+    completion:
+      completedAt: 2026-09-10T14:31:21.362Z
+      runId: 2026-09-10-004

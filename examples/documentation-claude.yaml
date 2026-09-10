@@ -14,8 +14,8 @@ claude:
   permissionMode: acceptEdits
   permissionPrompts: deny
   maxBudgetUsd: 1
-  allowedTools: [Read, Edit]
-  disallowedTools: [Bash, WebFetch]
+  allowedTools: [ Read, Edit ]
+  disallowedTools: [ Bash, WebFetch ]
 
 tasks:
   - id: improve-inspection-docs
@@ -29,3 +29,7 @@ tasks:
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style
       and report the changed file in the structured result.
+    state: completed
+    completion:
+      completedAt: 2026-09-10T14:32:51.269Z
+      runId: 2026-09-10-006
