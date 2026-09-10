@@ -48,7 +48,7 @@ export const TASK_RESULT_JSON_SCHEMA_STRING = JSON.stringify(TASK_RESULT_JSON_SC
  * Free-form object keys cannot be expressed in that subset, so `data` crosses the runner boundary as JSON text
  * and is decoded before the shared completion validator sees it.
  */
-export const CODEX_TASK_RESULT_JSON_SCHEMA = {
+const CODEX_TASK_RESULT_JSON_SCHEMA = {
   type: 'object',
   properties: {
     ...RESULT_PROPERTIES,
@@ -66,8 +66,8 @@ export const CONTRACT_SYSTEM_PROMPT = [
   'Use "success" only if the requested work is actually done and verified. Use "failed" when you could not complete it.',
 ].join('\n');
 
-export const CODEX_CONTRACT_SYSTEM_PROMPT = [
-  'You are an autonomous worker inside an orchestrated workflow. Do not request permissions or user input: if either is required, finish with status "needs_input" (or "blocked") and explain exactly what you need.',
+const CODEX_CONTRACT_SYSTEM_PROMPT = [
+  'You are an autonomous worker inside an orchestrated workflow. Ask with AskUserQuestion only when you are truly blocked on a decision only the user can make; a human may take a while to answer or may be unavailable. If a permission or question is denied, do not retry it: finish with status "needs_input" (or "blocked") and explain exactly what you need.',
   'When your work is complete, your FINAL response must be a single JSON object (no surrounding prose) matching this shape; every field is required:',
   '{"status":"success|failed|blocked|needs_input|skipped","summary":"...","filesChanged":["..."],"commits":["..."],"decisions":["..."],"warnings":["..."],"followUp":["..."],"error":null,"data":null}',
   'Use null for error when there is no error. Use null for data when there is no structured data; otherwise data must be a JSON-encoded object string, for example "{\\"key\\":\\"value\\"}".',
@@ -139,7 +139,7 @@ export function validateTaskResult(value: unknown): ParsedResult | ParseFailure 
   return { ok: true, result };
 }
 
-export function validateCodexTaskResult(value: unknown): ParsedResult | ParseFailure {
+function validateCodexTaskResult(value: unknown): ParsedResult | ParseFailure {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return validateTaskResult(value);
   const candidate = { ...(value as Record<string, unknown>) };
   if (typeof candidate.data === 'string') {
@@ -151,6 +151,12 @@ export function validateCodexTaskResult(value: unknown): ParsedResult | ParseFai
   }
   return validateTaskResult(candidate);
 }
+
+export const CODEX_COMPLETION_CONTRACT = {
+  outputSchema: CODEX_TASK_RESULT_JSON_SCHEMA,
+  systemPrompt: CODEX_CONTRACT_SYSTEM_PROMPT,
+  validate: validateCodexTaskResult,
+} as const;
 
 function parseObject(text: string): Record<string, unknown> | undefined {
   try {

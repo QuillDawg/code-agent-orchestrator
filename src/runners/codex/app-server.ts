@@ -7,7 +7,7 @@ import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js'
 import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
-import { CODEX_CONTRACT_SYSTEM_PROMPT, CODEX_TASK_RESULT_JSON_SCHEMA, validateCodexTaskResult } from '../claude/contract.js';
+import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -190,7 +190,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         const method = input.resumeSessionId ? 'thread/resume' : 'thread/start';
         const params = (input.resumeSessionId ? { threadId: input.resumeSessionId } : {
           cwd: input.cwd, model: input.task.model ?? null, approvalPolicy: resolved.approvalPolicy, approvalsReviewer: resolved.reviewer, sandbox: resolved.sandbox,
-          developerInstructions: [CODEX_CONTRACT_SYSTEM_PROMPT, input.systemPromptAddendum].filter(Boolean).join('\n\n'), ephemeral: false,
+          developerInstructions: [CODEX_COMPLETION_CONTRACT.systemPrompt, input.systemPromptAddendum].filter(Boolean).join('\n\n'), ephemeral: false,
         }) as JsonObject;
         request(threadRequestId, method, params);
         return;
@@ -253,7 +253,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
           threadId, input: [{ type: 'text', text: input.prompt, text_elements: [] }], cwd: input.cwd,
           approvalPolicy: resolved.approvalPolicy, approvalsReviewer: resolved.reviewer,
           sandboxPolicy: sandboxPolicy(resolved.sandbox, input.cwd, options.addDirs ?? []), model: input.task.model ?? null,
-          effort: input.task.effort && input.task.effort !== 'none' ? input.task.effort : null, outputSchema: CODEX_TASK_RESULT_JSON_SCHEMA,
+          effort: input.task.effort && input.task.effort !== 'none' ? input.task.effort : null, outputSchema: CODEX_COMPLETION_CONTRACT.outputSchema,
         });
         return;
       }
@@ -325,7 +325,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     }
     let parsed: unknown;
     try { parsed = JSON.parse(finalText); } catch { parsed = undefined; }
-    const valid = validateCodexTaskResult(parsed);
+    const valid = CODEX_COMPLETION_CONTRACT.validate(parsed);
     outcome = valid.ok
       ? { kind: 'result', result: valid.result, exitCode: exit.code, usage, rawResultText: finalText }
       : { kind: 'error', outcome: 'invalid_result', message: valid.error, exitCode: exit.code, usage };
