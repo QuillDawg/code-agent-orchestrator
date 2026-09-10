@@ -97,7 +97,9 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
 - **Explicit context passing.** A task declares `context.from` or `context.fromType`, and the orchestrator
   prepends a rendered `# Previous Task Context` section to its prompt. Nothing else is shared.
 - **Two agents, mixed freely.** Claude Code and Codex in the same workflow. Set `agent`, `model` and
-  `effort` per workflow, per template or per task.
+  `effort` per workflow, per template or per task. See the
+  [Claude-to-Codex](examples/mixed-agents.yaml) and
+  [Codex-to-Claude](examples/codex-implementation-claude-review.yaml) review loops.
 - **Templates, variables and `foreach`.** Reuse a task shape, fan out over a list of issues, interpolate
   `{{variables.*}}` into prompts.
 - **Conditions and gates.** `when:` expressions skip tasks; `type: approval` pauses for a human decision.
@@ -109,7 +111,7 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
 - **Everything on disk.** `.orchestrator/runs/<run-id>/` holds every prompt, result, transcript, diff and
   cost figure. Secrets are redacted.
 - **Per-task diffs and a run report.** `cao diff`, `cao report`, and `report.md` written at the end of every run.
-- **Cross-platform.** Linux, macOS and Windows; CI runs on all of them.
+- **Cross-platform.** Linux, macOS and Windows; CI exercises Linux and Windows.
 
 ## Installation
 
@@ -142,7 +144,7 @@ Everything below writes `cao` for brevity.
 cao doctor
 ```
 
-`doctor` checks Node, git, each agent CLI, stale lock files and leftover worktrees, and prints a fix hint
+`doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities, stale lock files and leftover worktrees, and prints a fix hint
 under anything that needs one. Run it first whenever something does not work.
 
 ## Quick start

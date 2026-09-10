@@ -28,6 +28,53 @@ describe('workflow schema', () => {
 });
 
 describe('normalize', () => {
+  it('normalizes reliable provider transport, approval and isolation options', async () => {
+    const { workflow, validation } = await buildWorkflow(`
+name: reliable-agents
+claude:
+  configMode: isolated
+codex:
+  transport: appServer
+  approvals: host
+  configMode: isolated
+  experimentalUserInput: true
+tasks:
+  - id: review
+    prompt: review
+`, { gitRoot: process.cwd() });
+    expect(errors(validation.diagnostics)).toEqual([]);
+    expect(workflow.claude.configMode).toBe('isolated');
+    expect(workflow.tasks[0]!.codex).toMatchObject({
+      transport: 'appServer',
+      approvals: 'host',
+      configMode: 'isolated',
+      experimentalUserInput: true,
+    });
+  });
+
+  it('rejects Codex host approvals on the exec transport and conflicting legacy approval settings', async () => {
+    const host = await buildWorkflow(`
+name: invalid-host
+codex: { transport: exec, approvals: host }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(host.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/host.*appServer/i)]));
+
+    const conflict = await buildWorkflow(`
+name: invalid-conflict
+codex: { approvals: deny, approvalPolicy: on-request }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(conflict.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/approvalPolicy.*conflicts/i)]));
+
+    const isolation = await buildWorkflow(`
+name: invalid-isolation
+codex: { transport: appServer, configMode: isolated }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(isolation.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/isolated.*appServer/i)]));
+  });
+
   it('resolves generic agent, model, effort and Codex permissions per task', async () => {
     const { workflow, diagnostics } = await buildWorkflow(`
 name: multi-agent

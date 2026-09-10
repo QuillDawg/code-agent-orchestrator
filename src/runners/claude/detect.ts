@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { MINIMUM_AGENT_VERSIONS, versionAtLeast } from '../capabilities.js';
 
 export interface ClaudeDetection {
   command: string;
@@ -9,6 +10,10 @@ export interface ClaudeDetection {
   error?: string;
   /** True when `--help` lists `--forward-subagent-text`; older CLIs reject the flag, so it is only passed when advertised. */
   forwardSubagentText?: boolean;
+  authenticated?: boolean;
+  supportedVersion?: boolean;
+  minimumVersion?: string;
+  capabilities?: string[];
 }
 
 const cache = new Map<string, ClaudeDetection>();
@@ -16,13 +21,28 @@ const cache = new Map<string, ClaudeDetection>();
 const FORWARD_SUBAGENT_TEXT = '--forward-subagent-text';
 
 /** One `--help` probe per command: the flag is new, and passing it to a CLI that does not know it fails the run. */
-async function probeFlags(cmd: string): Promise<boolean> {
+async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: string[] }> {
   try {
     const { file, args } = splitCommand(cmd);
-    const res = await execa(file, [...args, '--help'], { windowsHide: true, timeout: 15_000, reject: false });
-    return `${res.stdout ?? ''}${res.stderr ?? ''}`.includes(FORWARD_SUBAGENT_TEXT);
+    const [help, auth] = await Promise.all([
+      execa(file, [...args, '--help'], { windowsHide: true, timeout: 15_000, reject: false }),
+      execa(file, [...args, 'auth', 'status', '--json'], { windowsHide: true, timeout: 15_000, reject: false }),
+    ]);
+    const text = `${help.stdout ?? ''}${help.stderr ?? ''}`;
+    let authenticated = auth.exitCode === 0;
+    try {
+      authenticated = authenticated && JSON.parse(String(auth.stdout ?? '{}')).loggedIn === true;
+    } catch {
+      authenticated = false;
+    }
+    authenticated ||= Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+    const capabilities = [];
+    if (text.includes('stream-json')) capabilities.push('streamJson');
+    if (text.includes('--json-schema')) capabilities.push('structuredOutput');
+    if (text.includes('--safe-mode')) capabilities.push('isolatedConfig');
+    return { forwardSubagentText: text.includes(FORWARD_SUBAGENT_TEXT), authenticated, capabilities };
   } catch {
-    return false;
+    return { forwardSubagentText: false, authenticated: false, capabilities: [] };
   }
 }
 
@@ -37,7 +57,15 @@ export async function detectClaude(command?: string): Promise<ClaudeDetection> {
     const res = await execa(file, [...args, '--version'], { windowsHide: true, timeout: 15_000, reject: false });
     if (res.exitCode === 0) {
       const version = String(res.stdout ?? '').trim().split(/\r?\n/)[0] ?? '';
-      detection = { command: cmd, version, found: true, forwardSubagentText: await probeFlags(cmd) };
+      const runtime = await probeRuntime(cmd);
+      detection = {
+        command: cmd,
+        version,
+        found: true,
+        ...runtime,
+        supportedVersion: versionAtLeast(version, MINIMUM_AGENT_VERSIONS.claude),
+        minimumVersion: MINIMUM_AGENT_VERSIONS.claude,
+      };
     } else {
       detection = { command: cmd, found: false, error: String(res.stderr || res.stdout || `exit ${res.exitCode}`) };
     }

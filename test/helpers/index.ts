@@ -13,7 +13,7 @@ import type { AttemptDiff, EnrichedTaskResult, GitInfo, TaskResult } from '../..
 import type { WorkflowEvent } from '../../src/types/events.js';
 import type { RunStore, RunLock, RunListEntry } from '../../src/persistence/run-store.js';
 import { createRunPaths } from '../../src/persistence/paths.js';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../../src/runners/task-runner.js';
+import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../../src/runners/task-runner.js';
 import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
 import type { WorkspaceManager, RunPreparation, FinalizeResult } from '../../src/workspace/workspace-manager.js';
 import type { CapturedDiff } from '../../src/workspace/diff.js';
@@ -24,6 +24,7 @@ import { KeyedMutex } from '../../src/util/async-queue.js';
 import { nowIso } from '../../src/util/misc.js';
 
 export const FAKE_CLAUDE = `node ${path.resolve(process.cwd(), 'test/fixtures/fake-claude.mjs').replace(/\\/g, '/')}`;
+export const FAKE_CODEX = `node ${path.resolve(process.cwd(), 'test/fixtures/fake-codex.mjs').replace(/\\/g, '/')}`;
 
 /** Temp directory as a canonical path (Windows tmp dirs are otherwise 8.3 short names). */
 export async function tmpDir(prefix = 'cao-test-'): Promise<string> {
@@ -241,7 +242,7 @@ export type MockBehaviour =
    */
   | { kind: 'interact'; interaction: Partial<Interaction>; withdrawAfterMs?: number; concurrent?: number; then: MockBehaviour }
   | { kind: 'status'; status: TaskResult['status']; error?: string; delayMs?: number }
-  | { kind: 'error'; outcome: 'timeout' | 'crash' | 'api_error' | 'invalid_result'; message?: string; delayMs?: number }
+  | { kind: 'error'; outcome: 'timeout' | 'crash' | 'api_error' | 'invalid_result'; message?: string; delayMs?: number; failure?: RunnerFailure }
   | { kind: 'hang' }
   | { kind: 'throw' };
 
@@ -349,7 +350,7 @@ export class MockRunner implements TaskRunner {
     if (input.signal.aborted) return finish({ kind: 'error', outcome: 'cancelled', message: 'aborted' });
     if (beh.kind === 'success') return finish({ kind: 'result', result: { ...base, ...beh.result }, exitCode: 0, usage: { costUsd: 0.01 } });
     if (beh.kind === 'status') return finish({ kind: 'result', result: { ...base, status: beh.status, error: beh.error, summary: `${beh.status} ${input.task.id}` }, exitCode: 0 });
-    return finish({ kind: 'error', outcome: beh.outcome, message: beh.message ?? beh.outcome, exitCode: 1, usage: { sessionId: `s-${this.calls.length}` } });
+    return finish({ kind: 'error', outcome: beh.outcome, message: beh.message ?? beh.outcome, exitCode: 1, usage: { sessionId: `s-${this.calls.length}` }, failure: beh.failure });
   }
 }
 

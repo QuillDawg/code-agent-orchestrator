@@ -6,7 +6,7 @@ import { buildGraph } from '../../workflow/validator.js';
 import { loadWorkflow } from '../../config/loader.js';
 import { OrchestratorError, UsageError } from '../../util/errors.js';
 import { pathExists } from '../../util/fs.js';
-import { applyWorkflowOverrides, detectRunnersForWorkflow } from '../app.js';
+import { applyWorkflowOverrides, detectRunnersForWorkflow, runnerReadinessError } from '../app.js';
 import { warnLine } from '../../util/marks.js';
 import type { PermissionMode } from '../../types/workflow.js';
 
@@ -66,8 +66,8 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   }
 
   const runners = await detectRunnersForWorkflow(run.workflow);
-  const missing = runners.find((runner) => !runner.found);
-  if (missing) throw new OrchestratorError(`${missing.runner} CLI not found (${missing.command}): ${missing.error ?? ''}`);
+  const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
+  if (unavailable) throw new OrchestratorError(unavailable);
   const layers = buildGraph(run.workflow).layers();
   out(renderHeader({ workflow: run.workflow, runId, runners, layers, resumed: true, verbose: opts.verbose }));
   if (reconciliation.rerun.length) out(`Re-running: ${reconciliation.rerun.join(', ')}\n`);

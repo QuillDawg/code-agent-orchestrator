@@ -59,6 +59,10 @@ export interface AgentFacts {
   found: boolean;
   version?: string;
   error?: string;
+  authenticated?: boolean;
+  supportedVersion?: boolean;
+  minimumVersion?: string;
+  capabilities?: string[];
 }
 
 export interface StaleLockFacts {
@@ -201,9 +205,9 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
   };
 
   const claude = await deps.detectClaude();
-  facts.agents.push({ runner: 'claude', command: claude.command, found: claude.found, ...(claude.version ? { version: claude.version } : {}), ...(claude.error ? { error: claude.error } : {}) });
+  facts.agents.push({ runner: 'claude', command: claude.command, found: claude.found, ...(claude.version ? { version: claude.version } : {}), ...(claude.error ? { error: claude.error } : {}), ...(claude.authenticated !== undefined ? { authenticated: claude.authenticated } : {}), ...(claude.supportedVersion !== undefined ? { supportedVersion: claude.supportedVersion } : {}), ...(claude.minimumVersion ? { minimumVersion: claude.minimumVersion } : {}), ...(claude.capabilities ? { capabilities: claude.capabilities } : {}) });
   const codex = await deps.detectCodex();
-  facts.agents.push({ runner: 'codex', command: codex.command, found: codex.found, ...(codex.version ? { version: codex.version } : {}), ...(codex.error ? { error: codex.error } : {}) });
+  facts.agents.push({ runner: 'codex', command: codex.command, found: codex.found, ...(codex.version ? { version: codex.version } : {}), ...(codex.error ? { error: codex.error } : {}), ...(codex.authenticated !== undefined ? { authenticated: codex.authenticated } : {}), ...(codex.supportedVersion !== undefined ? { supportedVersion: codex.supportedVersion } : {}), ...(codex.minimumVersion ? { minimumVersion: codex.minimumVersion } : {}), ...(codex.capabilities ? { capabilities: codex.capabilities } : {}) });
 
   // Runs: which of them an orchestrator still owns, and which locks are left over from one that is gone.
   const runs = storeRoot ? await readRuns(createRunPaths(storeRoot).runsDir) : [];
@@ -322,12 +326,27 @@ export function evaluate(facts: DoctorFacts): DoctorCheck[] {
   // agent. With neither, nothing can run at all, so both checks fail and the command exits 1.
   const anyAgent = facts.agents.some((a) => a.found);
   for (const agent of facts.agents) {
+    const unsupported = agent.found && agent.supportedVersion === false;
+    const loggedOut = agent.found && agent.authenticated === false;
+    const status: CheckStatus = unsupported || loggedOut ? 'fail' : agent.found ? 'ok' : anyAgent ? 'warn' : 'fail';
+    const detail = !agent.found
+      ? `not found  (${agent.command})${agent.error ? `: ${agent.error.split('\n')[0]}` : ''}`
+      : unsupported
+        ? `${agent.version ?? 'installed'} is below supported minimum ${agent.minimumVersion ?? 'unknown'}  (${agent.command})`
+        : loggedOut
+          ? `${agent.version ?? 'installed'}, not authenticated  (${agent.command})`
+          : `${agent.version ?? 'installed'}${agent.capabilities?.length ? ` [${agent.capabilities.join(', ')}]` : ''}  (${agent.command})`;
+    const hint = unsupported
+      ? `upgrade ${agent.runner} to ${agent.minimumVersion} or newer`
+      : loggedOut
+        ? agent.runner === 'claude' ? 'authenticate with `claude auth login` or provide supported CI credentials' : 'authenticate with `codex login` or provide OPENAI_API_KEY/CODEX_API_KEY for CI'
+        : !agent.found ? agentHint(agent.runner) : undefined;
     checks.push({
       id: `agent:${agent.runner}`,
       label: agent.runner,
-      status: agent.found ? 'ok' : anyAgent ? 'warn' : 'fail',
-      detail: agent.found ? `${agent.version ?? 'installed'}  (${agent.command})` : `not found  (${agent.command})${agent.error ? `: ${agent.error.split('\n')[0]}` : ''}`,
-      ...(agent.found ? {} : { hint: agentHint(agent.runner) }),
+      status,
+      detail,
+      ...(hint ? { hint } : {}),
     });
   }
 

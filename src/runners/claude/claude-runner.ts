@@ -10,7 +10,7 @@
  */
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
+import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../task-runner.js';
 import type { ClaudeOptions, ResolvedTask } from '../../types/workflow.js';
 import type { RunnerUsage } from '../../types/result.js';
 import type { TranscriptEntry, TranscriptEntryInput } from '../../types/transcript.js';
@@ -59,6 +59,7 @@ export function buildClaudeArgs(
   forwardSubagentText = false,
 ): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--json-schema', TASK_RESULT_JSON_SCHEMA_STRING];
+  if (options.configMode === 'isolated') args.push('--safe-mode');
   args.push('--permission-mode', options.permissionMode ?? 'auto');
   if (prompts === 'ask') args.push('--input-format', 'stream-json', '--permission-prompt-tool', 'stdio');
   else args.push('--permission-prompts', 'none');
@@ -97,6 +98,11 @@ export function permissionModeDowngrade(requested: string, reported: string | un
 /** Which prompt mode an attempt runs in: the explicit option wins, otherwise ask only when someone can answer. */
 export function resolvePromptMode(options: ClaudeOptions, canInteract: boolean): PromptMode {
   return options.permissionPrompts ?? (canInteract ? 'ask' : 'deny');
+}
+
+function claudeFailure(message: string, retryable: boolean, sessionId: string | undefined, providerCode?: string): RunnerFailure {
+  const status = /\b(?:HTTP\s*)?(\d{3})\b/i.exec(message)?.[1];
+  return { retryable, sessionId, ...(providerCode ? { providerCode } : {}), ...(status ? { httpStatus: Number(status) } : {}) };
 }
 
 export class ClaudeRunner implements TaskRunner {
@@ -265,6 +271,12 @@ export class ClaudeRunner implements TaskRunner {
               entry({ kind: 'system', ts, text: 'context compacted' });
               hooks.onUsage({ ...usage });
               break;
+            case 'api_retry': {
+              const detail = `Claude API retry ${ev.attempt}/${ev.maxRetries}${ev.httpStatus ? ` (HTTP ${ev.httpStatus})` : ''} in ${ev.retryDelayMs}ms${ev.message ? `: ${ev.message}` : ''}`;
+              hooks.onActivity(detail);
+              entry({ kind: 'system', ts, text: detail });
+              break;
+            }
             case 'control_request':
               if (ev.subtype === 'can_use_tool') answer(ev.requestId, ev.request);
               else proc?.writeStdin(encodeErrorResponse(ev.requestId, `${ev.subtype} is not supported by the orchestrator`));
@@ -343,7 +355,7 @@ export class ClaudeRunner implements TaskRunner {
           // A 5xx/overloaded/network failure ends the print-mode process; the session itself is intact and resumable.
           const outcome = isTransientApiError(detail) || isTransientApiError(stderrTail.join('\n')) ? 'api_error' : 'crash';
           finishEntry({ kind: 'result', status: resultEvent.subtype ?? 'error', costUsd: finalUsage.costUsd, isError: true, error: `${detail}${denials}` });
-          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage };
+          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, resultEvent.subtype) };
         }
         const message = `Claude finished without a machine-readable result (subtype: ${resultEvent.subtype ?? 'n/a'}, stop: ${resultEvent.stopReason ?? 'n/a'})`;
         finishEntry({ kind: 'error', text: message });
@@ -360,6 +372,7 @@ export class ClaudeRunner implements TaskRunner {
           exitCode: exit.code,
           signal: exit.signal,
           usage: finalUsage,
+          failure: claudeFailure(stderrTail.join('\n'), isTransientApiError(stderrTail.join('\n')), finalUsage.sessionId),
         };
       }
       const message = hadStdout ? 'Claude exited without emitting a result message' : `Claude produced no output${stderrSummary}`;

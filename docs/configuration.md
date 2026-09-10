@@ -137,6 +137,10 @@ agent: codex
 model: gpt-5.6-terra
 effort: high
 codex:
+  transport: exec                # exec (default) | appServer
+  approvals: auto                # auto | host | autoReview | deny
+  configMode: inherit            # inherit | isolated
+  experimentalUserInput: false   # appServer only; opts into an experimental Codex API
   permissionMode: auto           # auto | readOnly | fullAccess
   # Optional raw overrides; these win over the preset:
   sandbox: workspace-write       # read-only | workspace-write | danger-full-access
@@ -146,7 +150,11 @@ codex:
   profile: team-default
 ```
 
-`auto` maps to Codex's workspace-write sandbox with on-request approvals. `fullAccess` uses danger-full-access with approvals disabled; use it only in an appropriately isolated environment.
+`exec` is the stable, unattended transport. `auto` maps to the workspace-write sandbox and Codex automatic approval review, so a model-requested approval cannot leave CI waiting on a terminal that does not exist. `readOnly` denies approvals and `fullAccess` uses danger-full-access with approvals disabled; use the latter only in an externally isolated environment.
+
+`appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. Free-form Codex questions remain disabled unless `experimentalUserInput: true`; when disabled, a question ends the task as `needs_input` instead of hanging.
+
+`configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors.
 
 ## `claude` (workflow, template or task level)
 
@@ -163,6 +171,7 @@ claude:
   sessionPersistence: true       # false adds --no-session-persistence
   appendSystemPrompt: "Project conventions: ..."
   permissionPrompts: ask         # ask | deny (see below)
+  configMode: inherit            # inherit | isolated (`--safe-mode`)
   extraArgs: []                  # passed verbatim to claude
 ```
 
@@ -179,7 +188,7 @@ claude:
 
 **`auto` depends on the model.** Auto mode exists only for Sonnet 5, Opus 4.7 and later, and Fable. For any other model, Haiku included, Claude Code accepts `--permission-mode auto` and then silently starts the session in its ordinary prompting mode, which asks before every file write and command (the worker's init event reports `default`). `cao validate` warns about such a task, and the run log reports the mode a worker actually started in. On a model that does have auto mode, how often it asks depends on what the worker does: coarse shell commands (`rm -rf`, `git checkout --`, `sed -i`), work outside the repository or malformed tool input trip the classifier more often. For an unattended run, or any Haiku task, choose `bypassPermissions` in a sandbox, or `dontAsk` with an `allowedTools` list, or `acceptEdits` to at least stop the prompts for file edits; `permissionPrompts: deny` keeps the mode but fails fast instead of waiting for a human.
 
-The worker also inherits your Claude Code settings (`~/.claude/settings.json`, the repository's `.claude/settings.json` and `settings.local.json`): `ask` rules and `PreToolUse` / `PermissionRequest` hooks there are evaluated before the permission mode and can prompt under any mode. `cao` does not pass `--bare`.
+With `configMode: inherit` the worker inherits your Claude Code settings (`~/.claude/settings.json`, the repository's `.claude/settings.json` and `settings.local.json`): `ask` rules and `PreToolUse` / `PermissionRequest` hooks there are evaluated before the permission mode and can prompt under any mode. `isolated` passes `--safe-mode`, disabling ambient customizations while preserving the normal authentication path. CAO never adds `--bare` implicitly.
 
 **Permission prompts and questions.** With `permissionPrompts: ask` (the default whenever a dashboard is attached) a worker's permission prompts and `AskUserQuestion` calls are routed to the dashboard over Claude Code's stdio control protocol: the task shows as **Needs you**, you answer with a key, the worker continues. Without a dashboard (`--no-tui`, CI, non-TTY) the worker runs with `--permission-prompts none` and everything that would prompt is denied, exactly as with `permissionPrompts: deny`. A denied worker is told to finish with `status: needs_input`, which pauses the run for `cao resume --input`. `execution.interactionTimeout` bounds how long a worker waits for you; `hooks.onInputRequired` lets you get notified.
 
@@ -328,7 +337,7 @@ hooks:
   onInputRequired: [ "..." ]    # notify yourself
 ```
 
-When nobody answers in time, or no dashboard is attached, the prompt is denied with a message telling the worker to finish with `status: needs_input`. Codex workers never prompt: `codex exec` rejects approvals itself.
+When nobody answers in time, or no dashboard is attached, the prompt is denied with a message telling the worker to finish with `status: needs_input`. Codex `exec` uses automatic approval review or denial; Codex `appServer` can route stable command and file-change approvals through the same dashboard interaction flow.
 
 ## `hooks`
 

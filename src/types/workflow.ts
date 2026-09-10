@@ -53,11 +53,21 @@ export interface ClaudeOptions {
    * deny: never prompt, anything that would is denied (the only option without a dashboard).
    */
   permissionPrompts?: 'ask' | 'deny';
+  /** Whether CAO inherits ambient hooks/plugins/MCP/rules, or asks Claude Code to use its safe automation mode. */
+  configMode?: 'inherit' | 'isolated';
 }
 
 /** Codex CLI controls. `permissionMode` is an ergonomic preset; raw controls win when supplied. */
 export interface CodexOptions {
   command?: string;
+  /** Stable one-shot CLI by default; appServer enables host-mediated interactions and typed failures. */
+  transport?: 'exec' | 'appServer';
+  /** Who resolves tool approvals. `auto` uses the host when interactive and auto-review otherwise. */
+  approvals?: 'auto' | 'host' | 'autoReview' | 'deny';
+  /** Ignore ambient user configuration and rules for reproducible automation. */
+  configMode?: 'inherit' | 'isolated';
+  /** Opt in to Codex app-server's experimental requestUserInput method. */
+  experimentalUserInput?: boolean;
   permissionMode?: 'auto' | 'readOnly' | 'fullAccess';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   approvalPolicy?: 'on-request' | 'never';

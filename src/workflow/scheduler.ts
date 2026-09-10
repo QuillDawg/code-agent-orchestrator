@@ -962,6 +962,7 @@ export class WorkflowScheduler {
       attempt.exitCode = outcome.exitCode ?? null;
       attempt.signal = outcome.signal ?? null;
       attempt.usage = mergeUsage(outcome.usage);
+      attempt.failure = outcome.failure;
     }
     this.clearInteractions(taskId);
     if (attempt.outcome === 'cancelled' && this.stop?.cause !== 'signal' && !entry.abort.signal.aborted) attempt.outcome = 'crash';
@@ -1219,7 +1220,10 @@ export class WorkflowScheduler {
       const sessionId = attempt.usage?.sessionId ?? attempt.sessionId;
       const resumeSession = sessionResumable(task) && Boolean(sessionId);
       state.resumeSessionId = resumeSession ? sessionId : undefined;
-      const delayMs = transientBackoffMs(budget.transientStreak, task.retry.transientDelayMs, task.retry.transientMaxDelayMs);
+      const delayMs = Math.max(
+        transientBackoffMs(budget.transientStreak, task.retry.transientDelayMs, task.retry.transientMaxDelayMs),
+        attempt.failure?.retryAfterMs ?? 0,
+      );
       state.retryNotBefore = new Date(this.clock.now() + delayMs).toISOString();
       this.setState(state, 'ready', 'api_error', message);
       this.logger.warn(
@@ -1248,7 +1252,7 @@ export class WorkflowScheduler {
 
     const failedAttempts = budget.counted;
     const retriesLeft = task.retry.attempts - (failedAttempts - 1);
-    if (!mergeFailed && retriesLeft > 0 && !this.stop) {
+    if (!mergeFailed && retriesLeft > 0 && attempt.failure?.retryable !== false && !this.stop) {
       const delayMs = task.retry.delayMs;
       state.retryNotBefore = new Date(this.clock.now() + delayMs).toISOString();
       this.setState(state, 'ready', failureReason, message);

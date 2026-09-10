@@ -31,7 +31,7 @@ jobs:
           cache: npm
 
       # The integration suites drive a real `git` (worktrees, diffs). They never call Claude or
-      # Codex: every agent process is the fake CLI in test/fixtures/fake-claude.mjs.
+      # Codex: every agent process is one of the fake CLIs in test/fixtures.
       - name: Configure git
         run: |
           git --version

@@ -108,36 +108,36 @@ For fully unattended runs in an isolated environment use `bypassPermissions`; fo
 
 ## Codex
 
-### Invocation
+### Exec invocation
 
 ```
-codex --sandbox <read-only|workspace-write|danger-full-access> \
+codex [--approve-for-me] --sandbox <read-only|workspace-write|danger-full-access> \
       -c approval_policy="<on-request|never>" \
       [--profile P] [--add-dir D]... \
       exec [resume <session id>] \
-      --json \
-      --output-schema <attemptDir>/result.schema.json \
+      --json --output-schema <attemptDir>/result.schema.json \
       --output-last-message <attemptDir>/final.json \
-      [extraArgs...] \
-      [--model X] [-c model_reasoning_effort="<effort>"]
+      [extraArgs...] [--model X] [-c model_reasoning_effort="<effort>"]
 ```
 
-- The prompt — completion contract, optional addendum, then the task prompt — is written to stdin.
-- Codex writes its schema-validated final answer to `final.json`; JSONL activity arrives on stdout.
-- `--model` and `-c model_reasoning_effort` come from the resolved task `model`/`effort`. There is no `codex.model` key, so those top-level keys are the only way to set a Codex model.
+- The prompt—completion contract, optional addendum, then the task prompt—is written to stdin.
+- The default `exec` transport writes its schema-validated final answer to `final.json`; JSONL activity arrives on stdout.
+- `--model` and `-c model_reasoning_effort` come from the resolved task `model`/`effort`.
 - The binary is resolved from `codex.command`, `CAO_CODEX_COMMAND`, or `codex` on PATH.
 
-### Permission presets
+### Permissions and app-server
 
-`codex.permissionMode` is a preset over the two real controls; `sandbox` and `approvalPolicy` override it individually. The approval policy is passed as a config override (`-c approval_policy=…`) because current Codex releases reject `--ask-for-approval` on `codex exec`; this is also what the official Codex SDK does.
+`codex.permissionMode` is a preset over sandbox and approval controls. An unattended workspace-write `exec` uses `--approve-for-me`; read-only execution uses `approval_policy="never"`. The low-level `approvalPolicy` key remains for compatibility but is deprecated in favor of `approvals`.
 
-**Codex never prompts.** `codex exec` is headless by design: approval requests and `request_user_input` are rejected by Codex itself, so a Codex task cannot wait for you the way a Claude task can. Rejections show up as `error` entries in the transcript. Interactive Codex would need a `codex app-server` runner (JSON-RPC), which is not part of this release.
+Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protocol. CAO initializes the server, starts or resumes a thread, starts a schema-constrained turn, records items and cumulative token usage, and waits for the authoritative `turn/completed` event. The process is private to one attempt. Cancellation sends `turn/interrupt` before process-tree termination.
 
-| `permissionMode` | `--sandbox` | `approval_policy` |
+Stable command and file-change approval requests become the same runner-neutral `Interaction` used by Claude. Unknown server requests are rejected and permission-affecting requests fail closed. `item/tool/requestUserInput` is enabled only with `experimentalUserInput: true`; otherwise the task produces `needs_input`. Typed `codexErrorInfo` values drive retry classification. The transports never silently fall back into one another; `exec` remains the default while app-server is experimental.
+
+| `permissionMode` | sandbox | approvals |
 |---|---|---|
-| `readOnly` | `read-only` | `on-request` |
-| `auto` (default) | `workspace-write` | `on-request` |
-| `fullAccess` | `danger-full-access` | `never` |
+| `readOnly` | `read-only` | denied |
+| `auto` (default) | `workspace-write` | host review when interactive, automatic review headlessly |
+| `fullAccess` | `danger-full-access` | disabled |
 
 Use `fullAccess` only in an appropriately isolated environment.
 

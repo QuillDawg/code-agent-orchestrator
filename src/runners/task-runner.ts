@@ -45,6 +45,18 @@ export interface RunnerHooks {
   onInteraction(interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer>;
 }
 
+/** Provider-neutral diagnostics used for retry policy and operator-facing reports. */
+export interface RunnerFailure {
+  providerCode?: string;
+  httpStatus?: number;
+  requestId?: string;
+  retryAfterMs?: number;
+  retryable: boolean;
+  sessionId?: string;
+  /** The provider may have applied tools before the transport failed. */
+  partialWork?: boolean;
+}
+
 export type RunnerOutcome =
   | { kind: 'result'; result: TaskResult; exitCode: number | null; usage?: RunnerUsage; rawResultText?: string }
   | {
@@ -54,6 +66,7 @@ export type RunnerOutcome =
       exitCode?: number | null;
       signal?: string | null;
       usage?: RunnerUsage;
+      failure?: RunnerFailure;
     };
 
 /** A runner executes exactly one attempt in a fresh, isolated worker session and must never reject. */

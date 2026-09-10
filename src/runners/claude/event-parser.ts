@@ -60,6 +60,14 @@ export interface ClaudeUsageEvent {
 export interface ClaudeCompactEvent {
   kind: 'compact';
 }
+export interface ClaudeApiRetryEvent {
+  kind: 'api_retry';
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  httpStatus?: number;
+  message?: string;
+}
 export interface ClaudeControlRequestEvent {
   kind: 'control_request';
   requestId: string;
@@ -98,6 +106,7 @@ export type ClaudeEvent =
   | ClaudeToolResultEvent
   | ClaudeUsageEvent
   | ClaudeCompactEvent
+  | ClaudeApiRetryEvent
   | ClaudeControlRequestEvent
   | ClaudeControlCancelEvent
   | ClaudeResultEvent
@@ -197,6 +206,13 @@ export function parseClaudeEvents(line: string): ClaudeEvent[] {
       return [{ kind: 'init', sessionId: msg.session_id as string | undefined, model: msg.model as string | undefined, permissionMode: str(msg, 'permissionMode') }];
     }
     if (msg.subtype === 'compact_boundary') return [{ kind: 'compact' }];
+    if (msg.subtype === 'api_retry') {
+      return [{
+        kind: 'api_retry', attempt: num(msg.attempt), maxRetries: num(msg.max_retries), retryDelayMs: num(msg.retry_delay_ms),
+        ...(typeof msg.error_status === 'number' ? { httpStatus: msg.error_status } : {}),
+        ...(typeof msg.error === 'string' ? { message: msg.error } : {}),
+      }];
+    }
     return [{ kind: 'other', type: `system.${String(msg.subtype ?? '')}` }];
   }
   // Set on every message a subagent produced; names the Agent/Task tool call that spawned it.

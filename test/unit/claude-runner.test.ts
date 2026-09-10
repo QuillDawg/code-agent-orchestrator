@@ -122,6 +122,11 @@ describe('Claude stream events: tool ids and subagent parentage', () => {
     const both = parseClaudeEvents(assistant([{ type: 'thinking', thinking: 'first' }, { type: 'text', text: 'then' }]));
     expect(both.map((e) => e.kind)).toEqual(['thinking', 'text']);
   });
+
+  it('surfaces Claude CLI API retries as typed system events', () => {
+    const [retry] = parseClaudeEvents(JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 5, retry_delay_ms: 1500, error_status: 529, error: 'overloaded' }));
+    expect(retry).toEqual({ kind: 'api_retry', attempt: 2, maxRetries: 5, retryDelayMs: 1500, httpStatus: 529, message: 'overloaded' });
+  });
 });
 
 describe('Claude CLI capability probe', () => {

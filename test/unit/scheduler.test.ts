@@ -437,6 +437,25 @@ describe('scheduler: reading a finished attempt', () => {
 });
 
 describe('scheduler: transient API errors resume the session', () => {
+  it('honours a typed provider retry delay when it is longer than local backoff', async () => {
+    const runner = new MockRunner().when('a', [
+      { kind: 'error', outcome: 'api_error', message: 'rate limited', failure: { providerCode: 'rateLimitExceeded', retryable: true, retryAfterMs: 80 } },
+      { kind: 'success' },
+    ]);
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retry:\n      transientDelay: 5ms\n    prompt: p\n'), runner);
+    await h.scheduler.execute();
+    expect(h.store.eventsOf('task.retrying')[0]).toMatchObject({ delayMs: 80, transient: true });
+    expect(h.run.tasks.a!.attempts[0]!.failure).toMatchObject({ providerCode: 'rateLimitExceeded', retryAfterMs: 80 });
+  });
+
+  it('does not spend ordinary retries on a typed permanent provider failure', async () => {
+    const runner = new MockRunner().when('a', { kind: 'error', outcome: 'crash', message: 'unauthorized', failure: { providerCode: 'unauthorized', retryable: false } });
+    const h = harness(await wf('name: t\ntasks:\n  - id: a\n    retries: 3\n    prompt: p\n'), runner);
+    await h.scheduler.execute();
+    expect(runner.calls).toHaveLength(1);
+    expect(h.run.tasks.a).toMatchObject({ state: 'failed', attempts: [{ failure: { providerCode: 'unauthorized', retryable: false } }] });
+  });
+
   const API_500 = 'Claude reported an error: API Error: 500 Internal server error. This is a server-side issue, usually temporary';
 
   it('resumes the same session after a 500 without spending retry.attempts', async () => {

@@ -27,10 +27,14 @@ if (args.includes('--version')) {
   process.stdout.write('9.9.9 (Fake Claude)\n');
   process.exit(0);
 }
+if (args[0] === 'auth' && args[1] === 'status') {
+  process.stdout.write('{"loggedIn":true,"authMethod":"fake"}\n');
+  process.exit(0);
+}
 
 // The capability probe: the runner only passes flags this help text advertises.
 if (args.includes('--help')) {
-  const flags = ['--output-format <fmt>', '--input-format <fmt>', '--permission-prompt-tool <tool>', '--session-id <uuid>', '--resume <uuid>'];
+  const flags = ['--output-format stream-json', '--json-schema <schema>', '--safe-mode', '--input-format <fmt>', '--permission-prompt-tool <tool>', '--session-id <uuid>', '--resume <uuid>'];
   if (process.env.FAKE_CLAUDE_NO_SUBAGENT_TEXT !== '1') flags.push('--forward-subagent-text');
   process.stdout.write(`Usage: claude [options]\n\nOptions:\n${flags.map((f) => `  ${f}\n`).join('')}`);
   process.exit(0);

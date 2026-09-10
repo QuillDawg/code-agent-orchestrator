@@ -36,12 +36,17 @@ export const claudeOptionsSchema = z
     extraArgs: stringList.optional(),
     appendSystemPrompt: z.string().optional(),
     permissionPrompts: z.enum(['ask', 'deny']).optional(),
+    configMode: z.enum(['inherit', 'isolated']).optional(),
   })
   .strict();
 
 export const codexOptionsSchema = z
   .object({
     command: z.string().min(1).optional(),
+    transport: z.enum(['exec', 'appServer']).optional(),
+    approvals: z.enum(['auto', 'host', 'autoReview', 'deny']).optional(),
+    configMode: z.enum(['inherit', 'isolated']).optional(),
+    experimentalUserInput: z.boolean().optional(),
     permissionMode: z.enum(['auto', 'readOnly', 'fullAccess']).optional(),
     sandbox: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
     approvalPolicy: z.enum(['on-request', 'never']).optional(),

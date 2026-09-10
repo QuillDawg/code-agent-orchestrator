@@ -131,21 +131,55 @@ export async function detectClaudeForWorkflow(workflow: ResolvedWorkflow): Promi
   return { version: d.version, command: d.command, found: d.found, error: d.error };
 }
 
-export interface RunnerDetection { runner: 'claude' | 'codex'; version?: string; command: string; found: boolean; error?: string }
+export interface RunnerDetection {
+  runner: 'claude' | 'codex';
+  version?: string;
+  command: string;
+  found: boolean;
+  error?: string;
+  authenticated?: boolean;
+  supportedVersion?: boolean;
+  minimumVersion?: string;
+  capabilities?: string[];
+  requiredCapabilities?: string[];
+}
+
+export function runnerReadinessError(runner: RunnerDetection): string | undefined {
+  if (!runner.found) return `${runner.runner} CLI not found (${runner.command}): ${runner.error ?? 'unknown error'}`;
+  if (runner.authenticated === false) return `${runner.runner} CLI is not authenticated (${runner.command})`;
+  if (runner.supportedVersion === false) return `${runner.runner} ${runner.version ?? 'version'} is unsupported; minimum ${runner.minimumVersion ?? 'version is unknown'}`;
+  const available = new Set(runner.capabilities ?? []);
+  const missing = (runner.requiredCapabilities ?? []).filter((capability) => !available.has(capability));
+  return missing.length ? `${runner.runner} CLI lacks required capabilities: ${missing.join(', ')}` : undefined;
+}
 
 /** Detect only runners that can be launched by this workflow. */
 export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow): Promise<RunnerDetection[]> {
   const active = workflow.tasks.filter((task) => !task.completed);
-  const claudeCommands = new Set(active.filter((task) => task.agent === 'claude').map((task) => task.claude.command));
-  const codexCommands = new Set(active.filter((task) => task.agent === 'codex').map((task) => task.codex.command));
-  const detected: RunnerDetection[] = [];
-  for (const command of claudeCommands) {
-    const value = await detectClaude(command ?? workflow.claude.command);
-    detected.push({ runner: 'claude', version: value.version, command: value.command, found: value.found, error: value.error });
+  const claudeCommands = new Map<string | undefined, Set<string>>();
+  const codexCommands = new Map<string | undefined, Set<string>>();
+  for (const task of active) {
+    if (task.agent === 'claude') {
+      const required = claudeCommands.get(task.claude.command) ?? new Set(['streamJson', 'structuredOutput']);
+      if (task.claude.configMode === 'isolated') required.add('isolatedConfig');
+      claudeCommands.set(task.claude.command, required);
+    } else if (task.agent === 'codex') {
+      const required = codexCommands.get(task.codex.command) ?? new Set(['exec']);
+      if ((task.codex.transport ?? 'exec') === 'appServer') required.add('appServer');
+      if (task.codex.configMode === 'isolated') required.add('isolatedConfig');
+      const approvals = task.codex.approvals ?? 'auto';
+      if ((task.codex.transport ?? 'exec') === 'exec' && approvals !== 'deny' && (task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
+      codexCommands.set(task.codex.command, required);
+    }
   }
-  for (const command of codexCommands) {
+  const detected: RunnerDetection[] = [];
+  for (const [command, required] of claudeCommands) {
+    const value = await detectClaude(command ?? workflow.claude.command);
+    detected.push({ runner: 'claude', ...value, requiredCapabilities: [...required] });
+  }
+  for (const [command, required] of codexCommands) {
     const value = await detectCodex(command ?? workflow.codex.command);
-    detected.push({ runner: 'codex', version: value.version, command: value.command, found: value.found, error: value.error });
+    detected.push({ runner: 'codex', ...value, requiredCapabilities: [...required] });
   }
   return detected;
 }

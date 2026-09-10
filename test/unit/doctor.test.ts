@@ -109,6 +109,22 @@ describe('doctor checks', () => {
     expect(check(none, 'agent:claude').hint).toContain('CAO_CLAUDE_COMMAND');
   });
 
+  it('fails installed agents that are logged out or below the supported minimum', () => {
+    const loggedOut = evaluate(facts({ agents: [
+      { runner: 'claude', command: 'claude', found: true, version: '2.1.265', authenticated: true, supportedVersion: true, minimumVersion: '2.1.259' },
+      { runner: 'codex', command: 'codex', found: true, version: '0.153.0', authenticated: false, supportedVersion: true, minimumVersion: '0.153.0', capabilities: ['exec'] },
+    ] }));
+    expect(check(loggedOut, 'agent:codex')).toMatchObject({ status: 'fail' });
+    expect(check(loggedOut, 'agent:codex').detail).toContain('not authenticated');
+
+    const old = evaluate(facts({ agents: [
+      { runner: 'claude', command: 'claude', found: true, version: '2.0.1', authenticated: true, supportedVersion: false, minimumVersion: '2.1.259' },
+      { runner: 'codex', command: 'codex', found: false },
+    ] }));
+    expect(check(old, 'agent:claude')).toMatchObject({ status: 'fail' });
+    expect(check(old, 'agent:claude').hint).toContain('2.1.259');
+  });
+
   it('warns about a stale lock and names the file to delete', () => {
     const checks = evaluate(
       facts({ staleLocks: [{ runId: '2026-01-01-001', pid: 4242, heartbeatAt: '2026-01-01T00:00:00.000Z', file: '/repo/.orchestrator/runs/2026-01-01-001/lock.json' }] }),

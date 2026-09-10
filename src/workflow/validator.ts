@@ -58,6 +58,22 @@ export function validateWorkflow(
     if (t.agent === 'claude' && t.claude.permissionMode === 'bypassPermissions' && t.claude.permissionPrompts === 'ask') {
       warn(`Task "${t.id}": permissionPrompts "ask" has no effect with permissionMode "bypassPermissions"`, t.id);
     }
+    if (t.agent === 'codex') {
+      const transport = t.codex.transport ?? 'exec';
+      if (t.codex.approvals === 'host' && transport !== 'appServer') {
+        error(`Task "${t.id}": Codex approvals "host" requires transport "appServer"`, t.id);
+      }
+      if (t.codex.experimentalUserInput && transport !== 'appServer') {
+        error(`Task "${t.id}": Codex experimentalUserInput requires transport "appServer"`, t.id);
+      }
+      if (t.codex.configMode === 'isolated' && transport === 'appServer') {
+        error(`Task "${t.id}": Codex configMode "isolated" is not supported by transport "appServer" because the CLI cannot ignore ambient config while preserving saved authentication`, t.id);
+      }
+      if (t.codex.approvalPolicy && t.codex.approvals) {
+        const compatible = t.codex.approvals === 'deny' ? t.codex.approvalPolicy === 'never' : t.codex.approvalPolicy === 'on-request';
+        if (!compatible) error(`Task "${t.id}": Codex approvalPolicy "${t.codex.approvalPolicy}" conflicts with approvals "${t.codex.approvals}"`, t.id);
+      }
+    }
     if (t.agent === 'claude' && (t.effort === 'none' || t.effort === 'minimal')) {
       warn(`Task "${t.id}": effort "${t.effort}" is Codex-only; Claude accepts low, medium, high, xhigh or max, so it will be ignored`, t.id);
     }

@@ -1,0 +1,40 @@
+version: 1
+name: Codex implementation with Claude review
+repository: .
+
+execution:
+  mode: dag
+  maxConcurrency: 1
+
+claude:
+  configMode: isolated
+
+codex:
+  transport: exec
+  approvals: auto
+  configMode: isolated
+
+tasks:
+  - id: implement
+    agent: codex
+    type: implementation
+    prompt: Implement the requested change and run the focused tests.
+
+  - id: cross-review
+    agent: claude
+    type: review
+    dependsOn: [implement]
+    context:
+      from: [implement]
+      include: [summary, decisions, warnings, git]
+    prompt: Review the implementation in the current worktree and its Git diff. Report concrete correctness, security, and test gaps as warnings.
+
+  - id: remediate
+    agent: codex
+    type: implementation
+    dependsOn: [cross-review]
+    when:
+      expr: tasks.cross-review.warnings.length > 0
+    context:
+      from: [cross-review]
+    prompt: Address the Claude review findings, run the relevant tests, and leave unrelated code unchanged.

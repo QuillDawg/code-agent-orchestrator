@@ -17,6 +17,8 @@ import { TASK_RESULT_JSON_SCHEMA, validateTaskResult, CONTRACT_SYSTEM_PROMPT } f
 import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
+import { runCodexAppServer } from './app-server.js';
+import { normalizeCodexFailure } from './failure.js';
 
 export interface CodexRunnerOptions {
   processManager: ProcessManager;
@@ -27,14 +29,20 @@ export interface CodexRunnerOptions {
 const ENV_TO_STRIP = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_CHILD_SESSION'];
 const MAX_OUTPUT_CHARS = 2000;
 
-function resolvedPermissions(options: CodexOptions): { sandbox: NonNullable<CodexOptions['sandbox']>; approval: NonNullable<CodexOptions['approvalPolicy']> } {
+function resolvedPermissions(options: CodexOptions): { sandbox: NonNullable<CodexOptions['sandbox']>; approval: NonNullable<CodexOptions['approvalPolicy']>; autoReview: boolean } {
   const preset = options.permissionMode ?? 'auto';
   const base = preset === 'readOnly'
-    ? { sandbox: 'read-only' as const, approval: 'on-request' as const }
+    ? { sandbox: 'read-only' as const, approval: 'never' as const }
     : preset === 'fullAccess'
       ? { sandbox: 'danger-full-access' as const, approval: 'never' as const }
       : { sandbox: 'workspace-write' as const, approval: 'on-request' as const };
-  return { sandbox: options.sandbox ?? base.sandbox, approval: options.approvalPolicy ?? base.approval };
+  const approvals = options.approvals ?? 'auto';
+  const approval = options.approvalPolicy ?? (approvals === 'deny' ? 'never' : base.approval);
+  return {
+    sandbox: options.sandbox ?? base.sandbox,
+    approval,
+    autoReview: approval === 'on-request' && (approvals === 'auto' || approvals === 'autoReview'),
+  };
 }
 
 /**
@@ -45,9 +53,11 @@ function resolvedPermissions(options: CodexOptions): { sandbox: NonNullable<Code
 export function buildCodexArgs(options: CodexOptions, schemaPath: string, outputPath: string, resumeSessionId?: string, model?: string, effort?: string): string[] {
   const permissions = resolvedPermissions(options);
   const args = ['--sandbox', permissions.sandbox, '-c', `approval_policy="${permissions.approval}"`];
+  if (permissions.autoReview) args.unshift('--approve-for-me');
   if (options.profile) args.push('--profile', options.profile);
   for (const dir of options.addDirs ?? []) args.push('--add-dir', dir);
   args.push('exec');
+  if (options.configMode === 'isolated') args.push('--ignore-user-config', '--ignore-rules');
   if (resumeSessionId) args.push('resume', resumeSessionId);
   args.push('--json', '--output-schema', schemaPath, '--output-last-message', outputPath);
   if (model) args.push('--model', model);
@@ -75,6 +85,9 @@ export class CodexRunner implements TaskRunner {
     const detection = await detectCodex(options.command);
     if (!detection.found) return { kind: 'error', outcome: 'crash', message: `Codex CLI not found (${detection.command}): ${detection.error ?? 'unknown error'}` };
     if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled before start' };
+    if ((options.transport ?? 'exec') === 'appServer') {
+      return runCodexAppServer({ processManager: this.pm, command: detection.command, options, bufferLines: this.bufferLines }, input, hooks);
+    }
 
     await ensureDir(input.attemptDir);
     const schemaPath = path.join(input.attemptDir, 'result.schema.json');
@@ -94,6 +107,7 @@ export class CodexRunner implements TaskRunner {
     let sawTurn = false;
     const stderr: string[] = [];
     const commands = new Map<string, string>();
+    let typedFailure: ReturnType<typeof normalizeCodexFailure> | undefined;
 
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !ENV_TO_STRIP.includes(key)) env[key] = value;
@@ -174,6 +188,8 @@ export class CodexRunner implements TaskRunner {
         }
         if (event.type === 'error' || event.type === 'turn.failed') {
           const message = String(event.message ?? event.error?.message ?? event.error ?? line);
+          const info = event.error?.codexErrorInfo ?? event.error?.codex_error_info ?? event.codexErrorInfo ?? event.codex_error_info;
+          if (info !== undefined && info !== null) typedFailure = normalizeCodexFailure(info, { sessionId });
           entry({ kind: 'error', ts, text: message });
         }
       },
@@ -217,7 +233,7 @@ export class CodexRunner implements TaskRunner {
       if (exit.code !== 0 || exit.spawnError) {
         const message = `Codex exited with code ${exit.code ?? 'null'}${detail ? `\nstderr:\n${detail}` : ''}`;
         finish({ kind: 'error', text: message });
-        return { kind: 'error', outcome: isTransientApiError(detail) ? 'api_error' : 'crash', message, exitCode: exit.code, signal: exit.signal, usage: finalUsage };
+        return { kind: 'error', outcome: typedFailure?.retryable || isTransientApiError(detail) ? 'api_error' : 'crash', message, exitCode: exit.code, signal: exit.signal, usage: finalUsage, failure: typedFailure };
       }
       finish({ kind: 'error', text: 'Codex finished without a schema-valid final response' });
       return { kind: 'error', outcome: 'invalid_result', message: 'Codex finished without a schema-valid final response', exitCode: exit.code, usage: finalUsage };

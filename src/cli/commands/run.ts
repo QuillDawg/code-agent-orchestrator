@@ -1,6 +1,6 @@
 import path from 'node:path';
 import readline from 'node:readline';
-import { prepareWorkflow, requireValid, createRuntime, detectRunnersForWorkflow } from '../app.js';
+import { prepareWorkflow, requireValid, createRuntime, detectRunnersForWorkflow, runnerReadinessError } from '../app.js';
 import { createRun } from '../../workflow/run-factory.js';
 import { FileRunStore } from '../../persistence/run-store.js';
 import { formatDiagnostics } from '../../workflow/validator.js';
@@ -55,12 +55,15 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
 
   if (opts.dryRun) {
     out(renderHeader({ workflow, runId: '(dry run)', runners, layers, verbose: true }));
-    for (const runner of runners) if (!runner.found) out(warnLine(`${runner.runner} CLI not detected (${runner.command}): ${runner.error ?? ''}`));
+    for (const runner of runners) {
+      const problem = runnerReadinessError(runner);
+      if (problem) out(warnLine(problem));
+    }
     out('Dry run: no agent sessions were started.');
     return 0;
   }
-  const missing = runners.find((runner) => !runner.found);
-  if (missing) throw new OrchestratorError(`${missing.runner} CLI not found (${missing.command}): ${missing.error ?? 'unknown error'}. Install it or configure that runner in the workflow.`);
+  const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
+  if (unavailable) throw new OrchestratorError(unavailable);
 
   const redactor = new Redactor(loaded.secrets);
   const store = new FileRunStore(workflow.repositoryRoot, redactor);
