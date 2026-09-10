@@ -1,0 +1,661 @@
+# Agent CLI help surface - baseline capture
+#
+# Base commit: 7891f26cb709cccc44fe0d3d226a6477fe44dace
+# Captured:    2026-09-10
+# claude:      2.1.267 (Claude Code)
+# codex:       codex-cli 0.154.0
+# Captured with COLUMNS=100 so later diffs are not width noise.
+# All four binaries were present; no section was skipped.
+
+
+===============================================================================
+=== codex --help
+===============================================================================
+
+Codex CLI
+
+If no subcommand is specified, options will be forwarded to the interactive CLI.
+
+Usage: codex [OPTIONS] [PROMPT]
+       codex [OPTIONS] <COMMAND> [ARGS]
+
+Commands:
+  agents            Browse all agent sessions on the shared local app-server daemon
+  exec              Run Codex non-interactively [aliases: e]
+  review            Run a code review non-interactively
+  login             Manage login
+  logout            Remove stored authentication credentials
+  mcp               Manage external MCP servers for Codex
+  plugin            Manage Codex plugins
+  app-server        [experimental] Run the app server or related tooling
+  remote-control    [experimental] Manage the app-server daemon with remote control enabled
+  app               Launch the Desktop app (opens the app installer if missing)
+  completion        Generate shell completion scripts
+  update            Update Codex to the latest version
+  doctor            Diagnose local Codex installation, config, auth, and runtime health
+  sandbox           Run commands within a Codex-provided sandbox
+  debug             Debugging tools
+  apply             Apply the latest diff produced by Codex agent as a `git apply` to your local
+                    working tree [aliases: a]
+  resume            Resume a previous interactive session (picker by default; use --last to continue
+                    the most recent)
+  queue             Queue a message for an existing session
+  archive           Archive a saved session by id or session name
+  delete            Permanently delete a saved session by id or session name
+  migrate-rollouts  Inspect or migrate legacy local sessions to paginated thread history
+  unarchive         Unarchive a saved session by id or session name
+  fork              Fork a previous interactive session (picker by default; use --last to fork the
+                    most recent)
+  cloud             [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally
+  exec-server       [EXPERIMENTAL] Run the standalone exec-server service
+  features          Inspect feature flags
+  help              Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [PROMPT]
+          Optional user prompt to start the session
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+      --remote <ADDR>
+          Connect the TUI to a remote app server endpoint.
+          
+          Accepted forms: `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`.
+
+      --remote-auth-token-env <ENV_VAR>
+          Name of the environment variable containing the bearer token to send to a remote app
+          server websocket
+
+      --strict-config
+          Error out when config.toml contains fields that are not recognized by this version of
+          Codex
+
+  -i, --image <FILE>...
+          Optional image(s) to attach to the initial prompt
+
+  -m, --model <MODEL>
+          Model the agent should use
+
+      --oss
+          Use open-source provider
+
+      --local-provider <OSS_PROVIDER>
+          Specify which local provider to use (lmstudio or ollama). If not specified with --oss,
+          will use config default or show selection
+
+  -p, --profile <CONFIG_PROFILE_V2>
+          Layer $CODEX_HOME/<name>.config.toml on top of the base user config
+
+  -s, --sandbox <SANDBOX_MODE>
+          Select the sandbox policy to use when executing model-generated shell commands
+          
+          [possible values: read-only, workspace-write, danger-full-access]
+
+      --approve-for-me
+          Route approval requests through automatic review using the workspace-write sandbox
+
+      --dangerously-bypass-approvals-and-sandbox
+          Skip all confirmation prompts and execute commands without sandboxing. EXTREMELY
+          DANGEROUS. Intended solely for running in environments that are externally sandboxed
+
+      --dangerously-bypass-hook-trust
+          Run enabled hooks without requiring persisted hook trust for this invocation. DANGEROUS.
+          Intended only for automation that already vets hook sources
+
+  -C, --cd <DIR>
+          Tell the agent to use the specified directory as its working root
+
+      --worktree
+          Run the session in a new managed Git worktree
+
+      --add-dir <DIR>
+          Additional directories that should be writable alongside the primary workspace
+
+  -a, --ask-for-approval <APPROVAL_POLICY>
+          Configure when the model requires human approval before executing a command
+
+          Possible values:
+          - on-request: The model decides when to ask the user for approval
+          - never:      Never ask for user approval Execution failures are immediately returned to
+            the model
+
+      --search
+          Enable live web search. When enabled, the native Responses `web_search` tool is available
+          to the model (no per‑call approval)
+
+      --no-alt-screen
+          Disable alternate screen mode
+          
+          Runs the TUI in inline mode, preserving terminal scrollback history.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+
+===============================================================================
+=== codex exec --help
+===============================================================================
+
+Run Codex non-interactively
+
+Usage: codex exec [OPTIONS] [PROMPT]
+       codex exec [OPTIONS] <COMMAND> [ARGS]
+
+Commands:
+  resume  Resume a previous session by id or pick the most recent with --last
+  fork    Fork a previous session by id into a new session
+  review  Run a code review against the current repository
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [PROMPT]
+          Initial instructions for the agent. If not provided as an argument (or if `-` is used),
+          instructions are read from stdin. If stdin is piped and a prompt is also provided, stdin
+          is appended as a `<stdin>` block
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+      --strict-config
+          Error out when config.toml contains fields that are not recognized by this version of
+          Codex
+
+  -i, --image <FILE>...
+          Optional image(s) to attach to the initial prompt
+
+  -m, --model <MODEL>
+          Model the agent should use
+
+      --oss
+          Use open-source provider
+
+      --local-provider <OSS_PROVIDER>
+          Specify which local provider to use (lmstudio or ollama). If not specified with --oss,
+          will use config default or show selection
+
+  -p, --profile <CONFIG_PROFILE_V2>
+          Layer $CODEX_HOME/<name>.config.toml on top of the base user config
+
+  -s, --sandbox <SANDBOX_MODE>
+          Select the sandbox policy to use when executing model-generated shell commands
+          
+          [possible values: read-only, workspace-write, danger-full-access]
+
+      --approve-for-me
+          Route approval requests through automatic review using the workspace-write sandbox
+
+      --dangerously-bypass-approvals-and-sandbox
+          Skip all confirmation prompts and execute commands without sandboxing. EXTREMELY
+          DANGEROUS. Intended solely for running in environments that are externally sandboxed
+
+      --dangerously-bypass-hook-trust
+          Run enabled hooks without requiring persisted hook trust for this invocation. DANGEROUS.
+          Intended only for automation that already vets hook sources
+
+  -C, --cd <DIR>
+          Tell the agent to use the specified directory as its working root
+
+      --worktree
+          Run the session in a new managed Git worktree
+
+      --add-dir <DIR>
+          Additional directories that should be writable alongside the primary workspace
+
+      --thread-source <SOURCE>
+          Source classification for newly created or forked threads
+
+      --skip-git-repo-check
+          Allow running Codex outside a Git repository
+
+      --ephemeral
+          Run without persisting session files to disk
+
+      --ignore-user-config
+          Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`
+
+      --ignore-rules
+          Do not load user or project execpolicy `.rules` files
+
+      --output-schema <FILE>
+          Path to a JSON Schema file describing the model's final response shape
+
+      --color <COLOR>
+          Specifies color settings for use in the output
+          
+          [default: auto]
+          [possible values: always, never, auto]
+
+      --json
+          Print events to stdout as JSONL
+
+  -o, --output-last-message <FILE>
+          Specifies file where the last message from the agent should be written
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+
+===============================================================================
+=== codex app-server --help
+===============================================================================
+
+[experimental] Run the app server or related tooling
+
+Usage: codex app-server [OPTIONS] [COMMAND]
+
+Commands:
+  daemon                Manage the local app-server daemon
+  proxy                 Proxy stdio bytes to the running app-server control socket
+  generate-ts           [experimental] Generate TypeScript bindings for the app server protocol
+  generate-json-schema  [experimental] Generate JSON Schema for the app server protocol
+  help                  Print this message or the help of the given subcommand(s)
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+      --code-mode-host <URL>
+          Connect to a remote code-mode host instead of starting a local host
+
+      --strict-config
+          Error out when config.toml contains fields that are not recognized by this version of
+          Codex
+
+      --listen <URL>
+          Transport endpoint URL. Supported values: `stdio://` (default), `unix://`, `unix://PATH`,
+          `ws://IP:PORT`, `off`
+          
+          [default: stdio://]
+
+      --stdio
+          Use stdio as the transport (equivalent to `--listen stdio://`)
+
+      --analytics-default-enabled
+          Controls whether analytics are enabled by default.
+          
+          Analytics are disabled by default for app-server. Users have to explicitly opt in via the
+          `analytics` section in the config.toml file.
+          
+          However, for first-party use cases like the VSCode IDE extension, we default analytics to
+          be enabled by default by setting this flag. Users can still opt out by setting this in
+          their config.toml:
+          
+          ```toml [analytics] enabled = false ```
+          
+          See https://developers.openai.com/codex/config-advanced/#metrics for more details.
+
+      --ws-auth <MODE>
+          Websocket auth mode for non-loopback listeners
+          
+          [possible values: capability-token, signed-bearer-token]
+
+      --ws-token-file <PATH>
+          Absolute path to the capability-token file
+
+      --ws-token-sha256 <HEX>
+          Hex-encoded SHA-256 digest of the capability token
+
+      --ws-shared-secret-file <PATH>
+          Absolute path to the shared secret file for signed JWT bearer tokens
+
+      --ws-issuer <ISSUER>
+          Expected issuer for signed JWT bearer tokens
+
+      --ws-audience <AUDIENCE>
+          Expected audience for signed JWT bearer tokens
+
+      --ws-max-clock-skew-seconds <SECONDS>
+          Maximum clock skew when validating signed JWT bearer tokens
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+
+===============================================================================
+=== claude --help
+===============================================================================
+
+Usage: claude [options] [command] [prompt]
+
+Claude Code - starts an interactive session by default, use -p/--print for
+non-interactive output
+
+Arguments:
+  prompt                                Your prompt
+
+Options:
+  --add-dir <directories...>            Additional directories to allow tool
+                                        access to
+  --agent <agent>                       Agent for the current session. Overrides
+                                        the 'agent' setting.
+  --agents <json>                       JSON object defining custom agents (e.g.
+                                        '{"reviewer": {"description": "Reviews
+                                        code", "prompt": "You are a code
+                                        reviewer"}}')
+  --allow-dangerously-skip-permissions  Enable bypassing all permission checks
+                                        as an option, without it being enabled
+                                        by default. Recommended only for
+                                        sandboxes with no internet access.
+  --allowedTools, --allowed-tools <tools...>
+      Comma or space-separated list of tool names to allow (e.g. "Bash(git *)
+      Edit")
+  --append-system-prompt <prompt>       Append a system prompt to the default
+                                        system prompt
+  --autocompact <auto|tokens>           Auto-compact window size (auto, or
+                                        100k–1M tokens)
+  --ax-screen-reader                    Render screen-reader friendly output
+                                        (flat text, no decorative borders or
+                                        animations).
+  --bg, --background                    Start the session in the background and
+                                        return immediately. Prints the id that
+                                        `claude attach`, `logs`, `stop` and `rm`
+                                        take; `claude agents` lists them. With
+                                        --resume <session-id>, continues that
+                                        session in the background under the same
+                                        ID, or starts a copy and says so when
+                                        the session is already running
+  --bare                                Minimal mode: skip hooks, LSP, plugin
+                                        sync, attribution, auto-memory,
+                                        background prefetches, keychain reads,
+                                        and CLAUDE.md auto-discovery. Sets
+                                        CLAUDE_CODE_SIMPLE=1. Anthropic auth is
+                                        strictly ANTHROPIC_API_KEY or
+                                        apiKeyHelper via --settings (OAuth and
+                                        keychain are never read). 3P providers
+                                        (Bedrock/Vertex/Foundry) use their own
+                                        credentials. Skills still resolve via
+                                        /skill-name. Explicitly provide context
+                                        via: --system-prompt[-file],
+                                        --append-system-prompt[-file], --add-dir
+                                        (CLAUDE.md dirs), --mcp-config,
+                                        --settings, --agents, --plugin-dir.
+  --betas <betas...>                    Beta headers to include in API requests
+                                        (API key users only)
+  --brief                               Enable SendUserMessage tool for
+                                        agent-to-user communication
+  --chrome                              Enable Claude in Chrome integration
+  --cloud [description|session_id|url]  Create a cloud session with the given
+                                        description, or attach to an existing
+                                        one by session ID or claude.ai/code URL
+  -c, --continue                        Continue the most recent conversation in
+                                        the current directory
+  --dangerously-skip-permissions        Bypass all permission checks.
+                                        Recommended only for sandboxes with no
+                                        internet access.
+  -d, --debug [filter]                  Enable debug mode with optional category
+                                        filtering (e.g., "api,hooks" or
+                                        "!1p,!file")
+  --debug-file <path>                   Write debug logs to a specific file path
+                                        (implicitly enables debug mode)
+  --disable-slash-commands              Disable all skills
+  --disallowedTools, --disallowed-tools <tools...>
+      Comma or space-separated list of tool names to deny (e.g. "Bash(git *)
+      Edit")
+  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
+  --environment <environment_id>        Create a new cloud session that runs on
+                                        the given self-hosted environment
+                                        (ccpool_...).
+  --exclude-dynamic-system-prompt-sections
+      Move per-machine sections (cwd, env info, memory paths, git status) from
+      the system prompt into the first user message. Improves cross-user
+      prompt-cache reuse. Only applies with the default system prompt (ignored
+      with --system-prompt). (default: false)
+  --fallback-model <model>              Enable automatic fallback to specified
+                                        model(s) when the default model is
+                                        overloaded or not available. Accepts a
+                                        comma-separated list to try each in
+                                        order. Re-tries the primary at the start
+                                        of each user turn.
+  --file <specs...>                     File resources to download at startup.
+                                        Format: file_id:relative_path (e.g.,
+                                        --file file_abc:doc.txt
+                                        file_def:img.png)
+  --fork-session                        When resuming, create a new session ID
+                                        instead of reusing the original (use
+                                        with --resume or --continue)
+  --forward-subagent-text               Forward subagent text and thinking
+                                        blocks as assistant/user messages with
+                                        parent_tool_use_id set (only works with
+                                        --print and --output-format=stream-json)
+  --from-pr [value]                     Resume a session linked to a PR by PR
+                                        number/URL, or open interactive picker
+                                        with optional search term
+  -h, --help                            Display help for command
+  --ide                                 Automatically connect to IDE on startup
+                                        if exactly one valid IDE is available
+  --include-hook-events                 Include all hook lifecycle events in the
+                                        output stream (only works with
+                                        --output-format=stream-json)
+  --include-partial-messages            Include partial message chunks as they
+                                        arrive (only works with --print and
+                                        --output-format=stream-json)
+  --input-format <format>               Input format (only works with --print):
+                                        "text" (default), or "stream-json"
+                                        (realtime streaming input) (choices:
+                                        "text", "stream-json")
+  --json-schema <schema>                JSON Schema for structured output
+                                        validation. Example:
+                                        {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}
+  --max-budget-usd <amount>             Maximum dollar amount to spend on API
+                                        calls (only works with --print)
+  --mcp-config <configs...>             Load MCP servers from JSON files or
+                                        strings (space-separated)
+  --model <model>                       Model for the current session. Provide
+                                        an alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name (e.g.
+                                        'claude-fable-5').
+  -n, --name <name>                     Set a display name for this session
+                                        (shown in the prompt box, /resume
+                                        picker, and terminal title)
+  --no-chrome                           Disable Claude in Chrome integration
+  --no-session-persistence              Disable session persistence - sessions
+                                        will not be saved to disk and cannot be
+                                        resumed (only works with --print)
+  --output-format <format>              Output format (only works with --print):
+                                        "text" (default), "json" (single
+                                        result), or "stream-json" (realtime
+                                        streaming) (choices: "text", "json",
+                                        "stream-json")
+  --permission-mode <mode>              Permission mode to use for the session
+                                        (choices: "acceptEdits", "auto",
+                                        "bypassPermissions", "manual",
+                                        "dontAsk", "plan")
+  --permission-prompts <target>         Who answers permission prompts with
+                                        --print: "host" (the SDK host or
+                                        --permission-prompt-tool) or "none"
+                                        (nobody: anything that would prompt is
+                                        denied automatically; the permission
+                                        mode still decides everything else)
+                                        (choices: "host", "none", default:
+                                        "host")
+  --plugin-dir <path>                   Load a plugin from a directory or .zip
+                                        for this session only; a folder of
+                                        plugins loads each child (repeatable:
+                                        --plugin-dir A --plugin-dir B.zip)
+                                        (default: [])
+  --plugin-url <url>                    Fetch a plugin .zip from a URL for this
+                                        session only (repeatable: --plugin-url A
+                                        --plugin-url B) (default: [])
+  -p, --print                           Print response and exit (useful for
+                                        pipes). Note: The workspace trust dialog
+                                        is skipped when Claude is run in
+                                        non-interactive mode (via -p, or when
+                                        stdout is not a TTY, e.g. piped or
+                                        redirected output). Only use this in
+                                        directories you trust. Settings files
+                                        that fail validation are silently
+                                        ignored in this mode (no error dialog is
+                                        shown).
+  --prompt-suggestions [value]          Enable prompt suggestions. In print/SDK
+                                        mode, emits a prompt_suggestion message
+                                        after each turn with a predicted next
+                                        user prompt (choices: "true", "false",
+                                        "1", "0", "yes", "no", "on", "off",
+                                        preset: "true")
+  --remote-control [name]               Start an interactive session with Remote
+                                        Control enabled (optionally named)
+  --remote-control-session-name-prefix <prefix>
+      Prefix for auto-generated Remote Control session names (default: hostname)
+  --replay-user-messages                Re-emit user messages from stdin back on
+                                        stdout for acknowledgment (only works
+                                        with --input-format=stream-json and
+                                        --output-format=stream-json)
+  --restricted                          Restricted mode: removes the built-in
+                                        tools that run commands or code (Bash,
+                                        PowerShell, REPL and the other
+                                        code-running tools) and WebFetch unless
+                                        --tools names them, and ignores user,
+                                        project and local settings files
+                                        (managed settings and --settings still
+                                        apply; add --strict-mcp-config to skip
+                                        MCP servers too). Also confines the file
+                                        tools to the working directories
+                                        (--add-dir included), refuses
+                                        bypassPermissions, and lets only a
+                                        person or the configured permission
+                                        handler approve writes to settings, git
+                                        and tool-configuration files.
+  -r, --resume [value]                  Resume a conversation by session ID, or
+                                        open interactive picker with optional
+                                        search term
+  --safe-mode                           Start with all customizations
+                                        (CLAUDE.md, skills, plugins, hooks, MCP
+                                        servers, custom commands and agents,
+                                        output styles, workflows, custom themes,
+                                        keybindings, and more) disabled — useful
+                                        for troubleshooting a broken
+                                        configuration. Admin-managed (policy)
+                                        settings still apply. Auth, model
+                                        selection, built-in tools, and
+                                        permissions work normally. Sets
+                                        CLAUDE_CODE_SAFE_MODE=1.
+  --session-id <uuid>                   Use a specific session ID for the
+                                        conversation (must be a valid UUID)
+  --setting-sources <sources>           Comma-separated list of setting sources
+                                        to load (user, project, local).
+  --settings <file-or-json>             Path to a settings JSON file or a JSON
+                                        string to load additional settings from
+  --strict-mcp-config                   Only use MCP servers from --mcp-config,
+                                        ignoring all other MCP configurations
+  --system-prompt <prompt>              System prompt to use for the session
+  --system-prompt-snapshot <on|off>     Record the system prompt once per
+                                        conversation and reuse it verbatim on
+                                        every request and resume. on (the
+                                        default): the prompt is rendered on the
+                                        conversation's first request — a
+                                        --system-prompt or
+                                        --append-system-prompt included — sent,
+                                        and recorded; every later request and
+                                        resume sends the record as-is, even when
+                                        a later launch passes different text,
+                                        until the conversation is compacted.
+                                        off: never record; the prompt is
+                                        rendered fresh every request (for
+                                        iterating on prompt text). No effect
+                                        where system-prompt recording is not yet
+                                        enabled. (choices: "on", "off")
+  --teleport [session]                  Resume a teleport session, optionally
+                                        specify session ID
+  --tmux                                Create a tmux session for the worktree
+                                        (requires --worktree). Uses iTerm2
+                                        native panes when available; use
+                                        --tmux=classic for traditional tmux.
+  --tools <tools...>                    Specify the list of available tools from
+                                        the built-in set. Use "" to disable all
+                                        tools, "default" to use all tools, or
+                                        specify tool names (e.g.
+                                        "Bash,Edit,Read").
+  --verbose                             Override verbose mode setting from
+                                        config
+  -v, --version                         Output the version number
+  -w, --worktree [name]                 Create a new git worktree for this
+                                        session (optionally specify a name)
+
+Commands:
+  agents [options]                      Manage background agents
+  attach <id>                           Open a background session in this
+                                        terminal. <id> is the short id that
+                                        `claude --bg` prints and `claude agents`
+                                        lists
+  auth                                  Manage authentication
+  auto-mode                             Inspect or reset auto mode classifier
+                                        configuration
+  doctor                                Check the health of your Claude Code
+                                        installation. Reads settings files in
+                                        the current directory without a trust
+                                        prompt. For a full checkup that can also
+                                        fix issues, run /doctor in a session.
+  gateway [options]                     Run the enterprise auth/telemetry
+                                        gateway
+  import [options] [source]             Import config from another AI coding
+                                        agent into Claude Code
+  install [options] [target]            Install Claude Code native build. Use
+                                        [target] to specify version (stable,
+                                        latest, or specific version)
+  logs <id>                             Print a background session's recent
+                                        terminal output
+  mcp                                   Configure and manage MCP servers
+  plugin|plugins                        Manage Claude Code plugins
+  project                               Manage Claude Code project state
+  respawn [options] [id]                Restart a background session, or all of
+                                        them with --all, so it runs the current
+                                        Claude Code version
+  rm <id>                               Delete a background session, and its
+                                        worktree when that is safe. Works on
+                                        sessions that have already exited
+  setup-token                           Set up a long-lived authentication token
+                                        (requires Claude subscription)
+  stop|kill <id>                        Stop a background session. Its
+                                        conversation is kept: `claude attach
+                                        <id>` opens it again, `claude --resume`
+                                        works once it is stopped
+  ultrareview [options] [target]        Run a cloud-hosted multi-agent code
+                                        review of the current branch (or a PR
+                                        number / base branch) and print the
+                                        findings
+  update|upgrade                        Check for updates and install if
+                                        available
