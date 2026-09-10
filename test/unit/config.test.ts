@@ -89,6 +89,13 @@ codex: { extraArgs: [--sandbox, danger-full-access] }
 tasks: [{ id: a, agent: codex, prompt: p }]
 `);
     expect(errors(rawOverride.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/extraArgs.*security/i)]));
+
+    const inlineOverride = await buildWorkflow(`
+name: invalid-inline-security
+codex: { extraArgs: [--config=sandbox_workspace_write.network_access=true] }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(inlineOverride.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/sandbox_workspace_write/i)]));
   });
 
   it('resolves generic agent, model, effort and Codex permissions per task', async () => {

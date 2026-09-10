@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { versionAtLeast } from '../../src/runners/capabilities.js';
-import { runnerReadinessError, type RunnerDetection } from '../../src/cli/app.js';
+import { detectRunnersForWorkflow, runnerReadinessError, type RunnerDetection } from '../../src/cli/app.js';
 import { clearCodexDetectionCache, detectCodex } from '../../src/runners/codex/detect.js';
-import { FAKE_CODEX } from '../helpers/index.js';
+import { buildWorkflow, FAKE_CODEX } from '../helpers/index.js';
 
 const ready = (over: Partial<RunnerDetection> = {}): RunnerDetection => ({
   runner: 'codex', command: 'codex', found: true, version: '0.153.0',
@@ -41,5 +41,18 @@ describe('agent runtime readiness', () => {
     process.env.FAKE_CODEX_AUTH = '0';
     expect(await detectCodex(FAKE_CODEX)).toMatchObject({ found: true, authenticated: false, supportedVersion: true });
     expect(await detectCodex(FAKE_CODEX, { OPENAI_API_KEY: 'workflow-secret', FAKE_CODEX_AUTH: '0' })).toMatchObject({ found: true, authenticated: true });
+  });
+
+  it('requires automatic review support for unattended app-server approvals', async () => {
+    const { workflow } = await buildWorkflow(`
+name: app-server-auto
+codex:
+  command: ${JSON.stringify(FAKE_CODEX)}
+  transport: appServer
+  approvals: auto
+tasks: [{ id: review, agent: codex, prompt: review }]
+`);
+    const [codex] = await detectRunnersForWorkflow(workflow);
+    expect(codex).toMatchObject({ runner: 'codex', requiredCapabilities: expect.arrayContaining(['appServer', 'autoReview']) });
   });
 });

@@ -56,6 +56,8 @@ describe('Codex exec transport', () => {
   it('rejects raw arguments that could override the security envelope', () => {
     expect(() => buildCodexArgs({ permissionMode: 'readOnly', extraArgs: ['--sandbox', 'danger-full-access'] }, 'schema.json', 'final.json')).toThrow(/cannot override security/i);
     expect(() => buildCodexArgs({ extraArgs: ['-c', 'approval_policy="never"'] }, 'schema.json', 'final.json')).toThrow(/approval_policy/i);
+    expect(() => buildCodexArgs({ extraArgs: ['--config=approval_policy="never"'] }, 'schema.json', 'final.json')).toThrow(/approval_policy/i);
+    expect(() => buildCodexArgs({ extraArgs: ['-csandbox_workspace_write.network_access=true'] }, 'schema.json', 'final.json')).toThrow(/sandbox_workspace_write/i);
   });
 });
 

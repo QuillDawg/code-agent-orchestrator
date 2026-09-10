@@ -329,4 +329,13 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
     expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['appServer'] })]);
   });
+
+  it('discovers the default workflow relative to --repository', async () => {
+    const repo = await tmpGitRepo('cao-doctor-repository-');
+    await fs.writeFile(path.join(repo, 'workflow.yaml'), `name: discovered\ncodex:\n  command: ${JSON.stringify(FAKE_CODEX)}\ntasks:\n  - id: review\n    agent: codex\n    prompt: review\n`);
+    const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, json: true }));
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
+    expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['exec', 'autoReview'] })]);
+  });
 });
