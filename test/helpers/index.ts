@@ -14,6 +14,7 @@ import type { WorkflowEvent } from '../../src/types/events.js';
 import type { RunStore, RunLock, RunListEntry } from '../../src/persistence/run-store.js';
 import { createRunPaths } from '../../src/persistence/paths.js';
 import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../../src/runners/task-runner.js';
+import type { PreflightProblem } from '../../src/runners/preflight.js';
 import type { Interaction, InteractionAnswer } from '../../src/types/interaction.js';
 import type { WorkspaceManager, RunPreparation, FinalizeResult } from '../../src/workspace/workspace-manager.js';
 import type { CapturedDiff } from '../../src/workspace/diff.js';
@@ -242,7 +243,7 @@ export type MockBehaviour =
    */
   | { kind: 'interact'; interaction: Partial<Interaction>; withdrawAfterMs?: number; concurrent?: number; then: MockBehaviour }
   | { kind: 'status'; status: TaskResult['status']; error?: string; delayMs?: number }
-  | { kind: 'error'; outcome: 'timeout' | 'crash' | 'api_error' | 'invalid_result'; message?: string; delayMs?: number; failure?: RunnerFailure }
+  | { kind: 'error'; outcome: 'timeout' | 'crash' | 'api_error' | 'invalid_result' | 'config_error'; message?: string; delayMs?: number; failure?: RunnerFailure }
   | { kind: 'hang' }
   | { kind: 'throw' };
 
@@ -267,9 +268,17 @@ export class MockRunner implements TaskRunner {
   private resolvers = new Map<string, (o: RunnerOutcome) => void>();
   concurrent = 0;
   maxConcurrent = 0;
+  /** Problems this runner's preflight reports; empty means "the installed CLI can do the job". */
+  preflightProblems: PreflightProblem[] = [];
+  preflightCalls = 0;
 
   constructor(name = 'claude') {
     this.name = name;
+  }
+
+  async preflight(_tasks: ResolvedTask[]): Promise<PreflightProblem[]> {
+    this.preflightCalls++;
+    return this.preflightProblems;
   }
 
   when(taskId: string, behaviour: MockBehaviour | MockBehaviour[]): this {

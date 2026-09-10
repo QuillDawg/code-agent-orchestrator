@@ -233,9 +233,12 @@ describe('Codex app-server transport', () => {
     expect(outcome).toMatchObject({ kind: 'result', result: { status: 'success' } });
   });
 
+  // A server that does not honour the envelope CAO asked for is a misconfiguration (or a CLI too old to
+  // honour it), never something another attempt can fix: `config_error`, not `crash`.
   it('fails closed when the server omits or changes resolved security/model settings', async () => {
-    expect((await run('missing-policy')).outcome).toMatchObject({ kind: 'error', outcome: 'crash', message: expect.stringMatching(/did not report.*approval policy/i) });
-    expect((await run('wrong-model')).outcome).toMatchObject({ kind: 'error', outcome: 'crash', message: expect.stringMatching(/resolved model/i) });
+    expect((await run('missing-policy')).outcome).toMatchObject({ kind: 'error', outcome: 'config_error', message: expect.stringMatching(/did not report.*approval policy/i) });
+    expect((await run('missing-policy')).outcome).toMatchObject({ kind: 'error', message: expect.stringContaining('codex.approvalPolicy') });
+    expect((await run('wrong-model')).outcome).toMatchObject({ kind: 'error', outcome: 'config_error', message: expect.stringMatching(/resolved model/i) });
   });
 
   it('routes stable command approvals through the shared interaction seam', async () => {

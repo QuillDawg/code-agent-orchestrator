@@ -7,7 +7,9 @@
 import path from 'node:path';
 import { promises as fs, createWriteStream } from 'node:fs';
 import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
-import type { CodexOptions } from '../../types/workflow.js';
+import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
+import { codexCapabilityNeeds } from './preflight.js';
+import type { CodexOptions, ResolvedTask } from '../../types/workflow.js';
 import type { RunnerUsage } from '../../types/result.js';
 import type { TranscriptEntry, TranscriptEntryInput, FileOp } from '../../types/transcript.js';
 import { ProcessManager } from '../../execution/process-manager.js';
@@ -19,7 +21,8 @@ import { isTransientApiError } from '../claude/transient.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { runCodexAppServer } from './app-server.js';
-import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
+import { codexConfigRejection, codexFailureMetadata, normalizeCodexFailure } from './failure.js';
+import { configErrorOutcome, killedMessage, openToolMessage } from '../outcomes.js';
 import { codexAutomaticReviewSandboxConflict, codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
 import { CODEX_EXEC_NO_HUMAN, codexExecHumanRequest, codexExecNeedsInput, type CodexExecBlock } from './exec-limits.js';
 
@@ -77,6 +80,24 @@ export class CodexRunner implements TaskRunner {
     this.bufferLines = opts.bufferLines ?? 500;
   }
 
+  /** See ClaudeRunner.preflight: one check per configured command, before the run starts. */
+  async preflight(tasks: ResolvedTask[]): Promise<PreflightProblem[]> {
+    const byCommand = new Map<string, { taskIds: string[]; needs: CapabilityNeed[] }>();
+    for (const task of tasks) {
+      const options: CodexOptions = { ...this.defaults, ...task.codex };
+      const entry = byCommand.get(options.command ?? '') ?? { taskIds: [], needs: [] };
+      entry.taskIds.push(task.id);
+      entry.needs.push(...codexCapabilityNeeds(options));
+      byCommand.set(options.command ?? '', entry);
+    }
+    const problems: PreflightProblem[] = [];
+    for (const [command, entry] of byCommand) {
+      const message = capabilityPreflight('codex', await detectCodex(command || undefined), entry.needs);
+      if (message) problems.push({ taskIds: entry.taskIds, message });
+    }
+    return problems;
+  }
+
   async run(input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
     const options: CodexOptions = { ...this.defaults, ...input.task.codex };
     const unsafeExtraArg = codexExtraArgsSecurityConflict(options.extraArgs);
@@ -114,7 +135,10 @@ export class CodexRunner implements TaskRunner {
     const usage: RunnerUsage = { sessionId, model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };
     let sawTurn = false;
     const stderr: string[] = [];
+    /** Commands the stream started and never completed: what the worker was inside when the process ended. */
     const commands = new Map<string, string>();
+    /** Error text Codex put on the stream, where a rejected output schema arrives (stderr carries argv ones). */
+    const streamErrors: string[] = [];
     let typedFailure: ReturnType<typeof normalizeCodexFailure> | undefined;
     // The rejection names the kind of decision Codex wanted but not the work behind it, so the command it
     // started and never completed is kept, to quote alongside the rejection.
@@ -163,6 +187,7 @@ export class CodexRunner implements TaskRunner {
             entry({ kind: 'command', ts, command, tool: 'shell' });
           }
           if (event.type === 'item.completed') {
+            commands.delete(id);
             if (pendingCommand === command) pendingCommand = undefined;
             const output = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
             const failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
@@ -199,6 +224,7 @@ export class CodexRunner implements TaskRunner {
         }
         if (item?.type === 'error') {
           const message = String(item.message ?? 'agent error');
+          streamErrors.push(message);
           noteHumanRequest(message);
           entry({ kind: 'error', ts, text: message });
           return;
@@ -219,6 +245,7 @@ export class CodexRunner implements TaskRunner {
           const message = String(event.message ?? event.error?.message ?? event.error ?? line);
           const info = event.error?.codexErrorInfo ?? event.error?.codex_error_info ?? event.codexErrorInfo ?? event.codex_error_info;
           if (info !== undefined && info !== null) typedFailure = normalizeCodexFailure(info, { ...codexFailureMetadata(event.error), sessionId });
+          streamErrors.push(message);
           noteHumanRequest(message);
           entry({ kind: 'error', ts, text: message });
         }
@@ -275,10 +302,24 @@ export class CodexRunner implements TaskRunner {
         finish({ kind: 'result', status: result.status, summary: result.summary, isError: false, error: result.error });
         return { kind: 'result', result, exitCode: exit.code, usage: finalUsage };
       }
+      // A rejected flag or output schema is a workflow bug: it ends the task once, without a retry.
+      const rejection = codexConfigRejection({ exitCode: exit.code, stderr: detail, stream: streamErrors.join('\n') });
+      if (rejection) {
+        const rejected = configErrorOutcome('Codex', rejection, { exitCode: exit.code, signal: exit.signal, usage: finalUsage });
+        finish({ kind: 'error', text: rejected.message });
+        return rejected;
+      }
       if (exit.code !== 0 || exit.spawnError) {
-        const message = `Codex exited with code ${exit.code ?? 'null'}${detail ? `\nstderr:\n${detail}` : ''}`;
+        const message = `${killedMessage('Codex', exit.code, exit.signal)}${detail ? `\nstderr:\n${detail}` : ''}`;
         finish({ kind: 'error', text: message });
         return { kind: 'error', outcome: typedFailure?.retryable || isTransientApiError(detail) ? 'api_error' : 'crash', message, exitCode: exit.code, signal: exit.signal, usage: finalUsage, failure: typedFailure };
+      }
+      // The process is gone but a command it started never finished: the turn was cut short, not merely
+      // sloppy about its completion object, and the transcript has to end with the call that was open.
+      if (commands.size) {
+        const message = openToolMessage('Codex', [...commands.values()]);
+        finish({ kind: 'error', text: message });
+        return { kind: 'error', outcome: 'crash', message, exitCode: exit.code, signal: exit.signal, usage: finalUsage };
       }
       finish({ kind: 'error', text: 'Codex finished without a schema-valid final response' });
       return { kind: 'error', outcome: 'invalid_result', message: 'Codex finished without a schema-valid final response', exitCode: exit.code, usage: finalUsage };

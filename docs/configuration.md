@@ -371,13 +371,29 @@ Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TA
 |---|---|---|
 | `success` | validated result with status success | – |
 | `failed` | worker reported failure, or exit without a valid result (`invalid_result`, after the session was asked for it, see below), non-zero exit (`crash`), `timeout` | yes |
-| `api_error` | Claude Code exited because of a transient API/network problem (HTTP 5xx, overloaded, rate limit, connection reset) | yes, by resuming the session |
+| `api_error` | the agent exited because of a transient API/network problem (HTTP 5xx, overloaded, rate limit, connection reset) | yes, by resuming the session |
+| `config_error` | the agent CLI refused what CAO sent it: an argument, the output schema, a JSON-RPC parameter, or a version/capability the workflow needs | no - and it does not spend `retry.attempts` |
 | `blocked` | worker reported it cannot proceed | no |
 | `needs_input` | worker asked a question: run pauses; answer with `cao resume --task <id> --input "..."` | after input |
 | `skipped` | worker reported nothing to do; dependents still run | – |
 | `merge_conflict` | merge-back failed and the Claude resolution session could not fix it | no |
 
 Retries start a brand-new session with the previous failure summarized in the prompt. When retries are exhausted `onFailure` applies: `stop` (default) launches nothing new and cancels the remaining tasks after in-flight tasks finish (`stopMode: cancel` aborts them); `continue` lets dependents run and shows the failure in their context; `skip_dependents` blocks descendants but keeps independent branches running.
+
+### Configuration errors are never retried
+
+`error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'` cannot become true on
+a second attempt, and neither can an output schema the model API refuses. Those failures end the task once,
+as `config_error`, with a message that names the offending option and the workflow key it came from - and
+they leave `retry.attempts` untouched. `onFailure` still decides what the rest of the run does, exactly as it
+does for any other failure.
+
+The same applies before a run starts: each agent is asked once, per run, whether the installed CLI is new
+enough (`MINIMUM_AGENT_VERSIONS`) and advertises what the workflow selected (`codex.transport`,
+`codex.approvals`, `codex.configMode`, `claude.configMode`). A task that cannot run fails at run start,
+naming the option, the workflow key, the version found and the version needed - not halfway through, once
+per task. `cao doctor` reports the same thing, and additionally starts each mode for real; see
+[capabilities.md](capabilities.md#cao-doctor).
 
 ### Transient API errors
 

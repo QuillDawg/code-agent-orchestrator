@@ -8,6 +8,8 @@
  *   subagent (an Agent call whose entries carry parent_tool_use_id, with paired tool results)
  *   subagents (two concurrent Agent calls, one delegating again, plus a call that is never answered)
  *   orphan-tool (a single tool call whose result never arrives)
+ *   open-tool-exit (a tool call, then the process leaves cleanly with no result event at all)
+ *   bad-schema (the API rejects the --json-schema this session was started with)
  *   thinking (thinking blocks around a line of prose, plus a redacted_thinking block)
  *   edge (rename into a path with a space, binary change, delete+recreate, CRLF file) | noop (changes nothing)
  *   permission | permission-always | question | question-multi | permission-cancel | permission-hang
@@ -284,6 +286,23 @@ switch (effectiveMode) {
     toolResult(alpha, 'Found 1 TODO');
     toolResult(beta, 'Tests are fine');
     finish(result('success'));
+    break;
+  }
+  case 'open-tool-exit': {
+    // The process leaves while a tool call it made is still unanswered: the turn was cut short, and there
+    // is no result event to explain it. Nothing may report this as "the worker forgot the JSON".
+    toolUse('Bash', { command: 'npm run build' });
+    await sleep(delay || 20);
+    process.exit(0);
+    break;
+  }
+  case 'bad-schema': {
+    // The `invalid_json_schema` 400 the API returns when the structured-output schema is not strict.
+    finish(undefined, {
+      isError: true,
+      subtype: 'error_during_execution',
+      text: "API Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"invalid_json_schema: output schema is invalid: 'additionalProperties' is required to be supplied and to be false.\"}}",
+    });
     break;
   }
   case 'orphan-tool': {

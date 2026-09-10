@@ -3,6 +3,7 @@ import type { ResolvedTask } from '../types/workflow.js';
 import type { AttemptOutcome } from '../types/run.js';
 import type { TranscriptEntry, FileOp } from '../types/transcript.js';
 import type { Interaction, InteractionAnswer } from '../types/interaction.js';
+import type { PreflightProblem } from './preflight.js';
 
 export interface RunnerInput {
   runId: string;
@@ -61,7 +62,7 @@ export type RunnerOutcome =
   | { kind: 'result'; result: TaskResult; exitCode: number | null; usage?: RunnerUsage; rawResultText?: string }
   | {
       kind: 'error';
-      outcome: Extract<AttemptOutcome, 'timeout' | 'crash' | 'api_error' | 'invalid_result' | 'cancelled'>;
+      outcome: Extract<AttemptOutcome, 'timeout' | 'crash' | 'api_error' | 'invalid_result' | 'cancelled' | 'config_error'>;
       message: string;
       exitCode?: number | null;
       signal?: string | null;
@@ -73,6 +74,13 @@ export type RunnerOutcome =
 export interface TaskRunner {
   readonly name: string;
   run(input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome>;
+  /**
+   * Everything about the installed CLI that can be decided before the first worker is spawned: is it new
+   * enough, does it advertise what these tasks selected. The scheduler calls this once per run, for the
+   * tasks that would use this runner, and fails the ones it names without spending an attempt on them.
+   * Optional: a runner that has nothing to check simply omits it.
+   */
+  preflight?(tasks: ResolvedTask[]): Promise<PreflightProblem[]>;
 }
 
 export class RunnerRegistry {

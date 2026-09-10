@@ -30,6 +30,28 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **An agent CLI that refuses what CAO sent it is now a configuration error, not a crash, and is never
+  retried.** `error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'`,
+  `error: unknown option '--x'`, an `invalid_json_schema` from the model API, a JSON-RPC `-32602`, and an
+  app-server `initialize`/`thread/start` that does not come back with the envelope that was requested all
+  end the task once, as the new `config_error` outcome. The message names the offending option and the
+  workflow key it came from (`codex.approvals`, `codex.sandbox`, `claude.extraArgs`, ...). `retry.attempts`
+  is not spent, and `onFailure` decides what the run does next exactly as before.
+- **Preflight runs once per run, before the first worker.** A CLI below `MINIMUM_AGENT_VERSIONS`, or one
+  that does not advertise a capability the workflow selected (`exec`, `appServer`, `autoReview`,
+  `isolatedConfig`, `streamJson`, `structuredOutput`), now fails every task that would have used it at run
+  start, naming the option, the workflow key, the version found and the version needed - instead of being
+  discovered per task, mid-run, as a retryable crash.
+- **`cao doctor` now starts each mode a workflow can select.** Codex `exec` runs one trivial turn with a
+  minimal strict output schema in a temporary read-only directory; Codex `app-server` is taken through
+  `initialize` + `thread/start` and interrupted; Claude ask-mode and deny-mode are started with the exact
+  argv a run would send and stopped as soon as the session reports it started (so they cost no tokens).
+  Each is one actionable line, nothing is left running, and an agent that is not installed or not
+  authenticated is not probed.
+- Both runners now map the same situation to the same outcome, written down once in
+  `src/runners/outcomes.ts` and checked against the table in `docs/agent-cli-integration.md` by a test. A
+  process killed from outside now names the signal it died from, and a worker that exits while a tool call
+  it made is still unanswered is a `crash` naming that call rather than "no result".
 - `cao resume <run> --task <id> --input "..."` now **continues the session that asked** instead of running
   the task again from the top, wherever the paused attempt left a resumable one (both Claude and both Codex
   transports). The answer arrives as that session's next message, quoted next to the question it answers.

@@ -12,6 +12,9 @@ import { detectClaude } from '../runners/claude/detect.js';
 import { CodexRunner } from '../runners/codex/codex-runner.js';
 import { detectCodex } from '../runners/codex/detect.js';
 import type { AgentCapability, AgentRuntimeDetection } from '../runners/capabilities.js';
+import { mergeCapabilityNeeds, runnerReadinessError, type CapabilityNeed } from '../runners/preflight.js';
+import { claudeCapabilityNeeds } from '../runners/claude/preflight.js';
+import { codexCapabilityNeeds } from '../runners/codex/preflight.js';
 import { GitWorkspaceManager, SharedOnlyWorkspaceManager, type WorkspaceManager } from '../workspace/workspace-manager.js';
 import { WorkflowEventBus } from '../events/event-bus.js';
 import { ShellHookRunner } from '../execution/hooks.js';
@@ -135,48 +138,34 @@ export async function detectClaudeForWorkflow(workflow: ResolvedWorkflow): Promi
 export interface RunnerDetection extends AgentRuntimeDetection {
   runner: 'claude' | 'codex';
   requiredCapabilities?: AgentCapability[];
+  /** The same capabilities with the option and the workflow key that asked for each of them. */
+  capabilityNeeds?: CapabilityNeed[];
 }
 
-export function runnerReadinessError(runner: RunnerDetection): string | undefined {
-  if (!runner.found) return `${runner.runner} CLI not found (${runner.command}): ${runner.error ?? 'unknown error'}`;
-  if (runner.authenticated === false) return `${runner.runner} CLI is not authenticated (${runner.command})`;
-  if (runner.minimumVersion && runner.supportedVersion === undefined) return `could not verify ${runner.runner} version "${runner.version ?? 'unknown'}"; minimum ${runner.minimumVersion}`;
-  if (runner.supportedVersion === false) return `${runner.runner} ${runner.version ?? 'version'} is unsupported; minimum ${runner.minimumVersion ?? 'version is unknown'}`;
-  const available = new Set(runner.capabilities ?? []);
-  const missing = (runner.requiredCapabilities ?? []).filter((capability) => !available.has(capability));
-  return missing.length ? `${runner.runner} CLI lacks required capabilities: ${missing.join(', ')}` : undefined;
-}
+export { runnerReadinessError };
 
 /** Detect only runners that can be launched by this workflow. */
 export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow, environment?: Record<string, string>): Promise<RunnerDetection[]> {
   const active = workflow.tasks.filter((task) => !task.completed);
-  const claudeCommands = new Map<string | undefined, Set<AgentCapability>>();
-  const codexCommands = new Map<string | undefined, Set<AgentCapability>>();
+  const claudeCommands = new Map<string | undefined, CapabilityNeed[]>();
+  const codexCommands = new Map<string | undefined, CapabilityNeed[]>();
   for (const task of active) {
     if (task.agent === 'claude') {
-      const required = claudeCommands.get(task.claude.command) ?? new Set(['streamJson', 'structuredOutput']);
-      if (task.claude.configMode === 'isolated') required.add('isolatedConfig');
-      claudeCommands.set(task.claude.command, required);
+      claudeCommands.set(task.claude.command, [...(claudeCommands.get(task.claude.command) ?? []), ...claudeCapabilityNeeds(task.claude)]);
     } else if (task.agent === 'codex') {
-      const transport = task.codex.transport ?? 'exec';
-      const required = codexCommands.get(task.codex.command) ?? new Set<AgentCapability>();
-      required.add(transport === 'appServer' ? 'appServer' : 'exec');
-      if (task.codex.configMode === 'isolated') required.add('isolatedConfig');
-      const approvals = task.codex.approvals ?? 'auto';
-      if ((transport === 'exec' && approvals !== 'deny') || (transport === 'appServer' && approvals !== 'deny' && approvals !== 'host')) {
-        if ((task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
-      }
-      codexCommands.set(task.codex.command, required);
+      codexCommands.set(task.codex.command, [...(codexCommands.get(task.codex.command) ?? []), ...codexCapabilityNeeds(task.codex)]);
     }
   }
   const detected: RunnerDetection[] = [];
-  for (const [command, required] of claudeCommands) {
+  for (const [command, needs] of claudeCommands) {
     const value = await detectClaude(command ?? workflow.claude.command, environment);
-    detected.push({ runner: 'claude', ...value, requiredCapabilities: [...required] });
+    const merged = mergeCapabilityNeeds(needs);
+    detected.push({ runner: 'claude', ...value, requiredCapabilities: merged.map((need) => need.capability), capabilityNeeds: merged });
   }
-  for (const [command, required] of codexCommands) {
+  for (const [command, needs] of codexCommands) {
     const value = await detectCodex(command ?? workflow.codex.command, environment);
-    detected.push({ runner: 'codex', ...value, requiredCapabilities: [...required] });
+    const merged = mergeCapabilityNeeds(needs);
+    detected.push({ runner: 'codex', ...value, requiredCapabilities: merged.map((need) => need.capability), capabilityNeeds: merged });
   }
   return detected;
 }

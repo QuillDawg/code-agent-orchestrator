@@ -148,8 +148,10 @@ cao doctor
 cao doctor workflow.yaml --json
 ```
 
-`doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities, stale lock files and leftover worktrees, and prints a fix hint
-under anything that needs one. Run it first whenever something does not work.
+`doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities,
+stale lock files and leftover worktrees, and prints a fix hint under anything that needs one. It also
+**starts each mode a run can use** — Codex `exec` and `app-server`, Claude ask-mode and deny-mode — so a
+green `doctor` means more than "the binary exists". Run it first whenever something does not work.
 
 ## Quick start
 
@@ -700,7 +702,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
-| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, with a fix hint under each failing check. `--repository <dir>`, `--json` |
+| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, and start each agent mode a run can use, with a fix hint under each failing check. `--repository <dir>`, `--json` |
 
 **Exit codes**
 
@@ -741,8 +743,8 @@ See [docs/configuration.md](docs/configuration.md#hooks).
 <summary><strong>Something does not work. Where do I start?</strong></summary>
 
 `cao doctor`. It checks Node, git, each agent CLI, stale `lock.json` files, leftover worktrees and whether
-`.orchestrator/` is git-ignored, and prints the fix under each failing line. Attach `cao doctor --json` to a
-bug report.
+`.orchestrator/` is git-ignored, starts every agent mode a run can use, and prints the fix under each
+failing line. Attach `cao doctor --json` to a bug report.
 
 </details>
 

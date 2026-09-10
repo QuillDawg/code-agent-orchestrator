@@ -13,7 +13,12 @@ import {
   type DoctorFacts,
 } from '../../src/cli/commands/doctor.js';
 import { createRunPaths } from '../../src/persistence/paths.js';
-import { buildWorkflow, captureCli, FAKE_CODEX, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
+import { buildWorkflow, captureCli, FAKE_CLAUDE, FAKE_CODEX, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
+import { ProcessManager } from '../../src/execution/process-manager.js';
+import { probeCodexAppServer, probeCodexExec } from '../../src/runners/codex/probe.js';
+import { probeClaudePromptMode } from '../../src/runners/claude/probe.js';
+import { probeInstalledAgents } from '../../src/cli/commands/doctor.js';
+import type { AgentProbe } from '../../src/runners/probe.js';
 import { stripAnsi } from '../../src/cli/color.js';
 import type { WorkflowRun } from '../../src/types/run.js';
 
@@ -43,10 +48,14 @@ const check = (checks: DoctorCheck[], id: string): DoctorCheck => {
   return found;
 };
 
-/** Detection stubs: nothing in these tests may reach a real `claude`, `codex` or PATH lookup. */
+/**
+ * Detection stubs: nothing in these tests may reach a real `claude`, `codex` or PATH lookup — including the
+ * live probes, which would otherwise start whatever `claude`/`codex` happens to be on this machine's PATH.
+ */
 const stubDetect = (opts: { claude?: boolean; codex?: boolean } = {}): Partial<DoctorDeps> => ({
   detectClaude: async () => (opts.claude === false ? { command: 'claude', found: false, error: 'spawn claude ENOENT' } : { command: 'claude', found: true, version: '9.9.9 (Fake Claude)' }),
   detectCodex: async () => (opts.codex === false ? { command: 'codex', found: false, error: 'spawn codex ENOENT' } : { command: 'codex', found: true, version: 'codex-cli 0.1.0' }),
+  probeAgents: async () => [],
 });
 
 describe('engines.node comparison', () => {
@@ -326,8 +335,11 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     await fs.writeFile(config, `name: scoped\ncodex:\n  command: ${JSON.stringify(FAKE_CODEX)}\n  transport: appServer\n  approvals: host\ntasks:\n  - id: review\n    agent: codex\n    prompt: review\n`);
     const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, config, json: true }));
     expect(code).toBe(0);
-    const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
+    const parsed = JSON.parse(stdout) as { checks: DoctorCheck[]; facts: DoctorFacts };
     expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['appServer'] })]);
+    // Both transports were started for real; a green `cao doctor` now means more than "the binary exists".
+    expect(parsed.facts.probes?.map((p) => `${p.mode}:${p.status}`)).toEqual(['codex.transport: exec:ok', 'codex.transport: appServer:ok']);
+    expect(parsed.checks.filter((c) => c.id.startsWith('probe:'))).toHaveLength(2);
   });
 
   it('discovers the default workflow relative to --repository', async () => {
@@ -337,5 +349,67 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
     expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['exec', 'autoReview'] })]);
+  });
+});
+
+/**
+ * The live probes (H4.3). `cao doctor` used to answer "is the binary there", which is not the question a
+ * run fails on; these start each mode a workflow can select and report whether it started.
+ */
+describe('agent probes', () => {
+  const probe = (over: Partial<AgentProbe> = {}): AgentProbe => ({ runner: 'codex', mode: 'codex.transport: exec', status: 'ok', detail: 'started a turn', durationMs: 12, ...over });
+
+  it('gives every probed mode its own actionable line', () => {
+    const checks = evaluate(facts({ probes: [probe(), probe({ mode: 'codex.transport: appServer', status: 'fail', detail: 'initialize failed', hint: 'upgrade the Codex CLI' })] }));
+    expect(check(checks, 'probe:codex:codex.transport: exec')).toMatchObject({ status: 'ok', detail: expect.stringContaining('started a turn') });
+    expect(check(checks, 'probe:codex:codex.transport: appServer')).toMatchObject({ status: 'fail', hint: 'upgrade the Codex CLI' });
+    // A failing probe is a failing check: `cao doctor` must not exit 0 on a transport that cannot start.
+    expect(checks.filter((c) => c.status === 'fail').map((c) => c.id)).toContain('probe:codex:codex.transport: appServer');
+  });
+
+  it('adds nothing when nothing was probed', () => {
+    expect(evaluate(facts()).some((c) => c.id.startsWith('probe:'))).toBe(false);
+  });
+
+  it('probes nothing for a CLI that is not installed, or one that is logged out', async () => {
+    const probes = await probeInstalledAgents([
+      { runner: 'claude', command: 'claude', found: false, error: 'spawn claude ENOENT' },
+      { runner: 'codex', command: 'codex', found: true, authenticated: false },
+    ]);
+    expect(probes).toEqual([]);
+  });
+
+  it('starts a Codex exec turn against the CLI and says so', async () => {
+    const pm = new ProcessManager();
+    const result = await probeCodexExec({ command: FAKE_CODEX, processManager: pm, timeoutMs: 15_000 });
+    expect(result).toMatchObject({ runner: 'codex', mode: 'codex.transport: exec', status: 'ok' });
+    expect(pm.list()).toEqual([]);
+  });
+
+  it('reports a rejected output schema as the failing exec line, with the key behind it', async () => {
+    const result = await probeCodexExec({ command: FAKE_CODEX, processManager: new ProcessManager(), timeoutMs: 15_000, env: { FAKE_CODEX_MODE: 'schema-rejected' } });
+    expect(result).toMatchObject({ status: 'fail', detail: expect.stringContaining('--output-schema') });
+    expect(result.hint).toContain("the completion contract's output schema");
+  });
+
+  it('takes the Codex app-server through initialize and thread/start, then interrupts it', async () => {
+    const pm = new ProcessManager();
+    const result = await probeCodexAppServer({ command: FAKE_CODEX, processManager: pm, timeoutMs: 15_000 });
+    expect(result).toMatchObject({ status: 'ok', detail: expect.stringContaining('thread/start') });
+    expect(pm.list()).toEqual([]);
+  });
+
+  it('starts both Claude prompt modes and leaves no process behind', async () => {
+    const pm = new ProcessManager();
+    for (const mode of ['ask', 'deny'] as const) {
+      const result = await probeClaudePromptMode(mode, { command: FAKE_CLAUDE, processManager: pm, timeoutMs: 15_000 });
+      expect(result, mode).toMatchObject({ runner: 'claude', mode: `claude.permissionPrompts: ${mode}`, status: 'ok' });
+    }
+    expect(pm.list()).toEqual([]);
+  });
+
+  it('reports a CLI that refuses the argv rather than blaming the session', async () => {
+    const result = await probeClaudePromptMode('deny', { command: `${FAKE_CLAUDE} --definitely-not-a-flag`, processManager: new ProcessManager(), timeoutMs: 15_000 });
+    expect(result).toMatchObject({ status: 'fail', detail: expect.stringContaining('--definitely-not-a-flag') });
   });
 });

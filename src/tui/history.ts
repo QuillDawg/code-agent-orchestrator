@@ -20,6 +20,7 @@ export const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
   timeout: 'timed out',
   crash: 'crashed',
   api_error: 'transient API error',
+  config_error: 'configuration error',
   invalid_result: 'invalid result',
   merge_conflict: 'merge conflict',
   cancelled: 'cancelled',

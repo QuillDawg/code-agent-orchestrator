@@ -11,6 +11,8 @@
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
 import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome, RunnerFailure } from '../task-runner.js';
+import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
+import { claudeCapabilityNeeds } from './preflight.js';
 import type { ClaudeOptions, ResolvedTask } from '../../types/workflow.js';
 import type { RunnerUsage, TaskResult } from '../../types/result.js';
 import type { TranscriptEntry, TranscriptEntryInput } from '../../types/transcript.js';
@@ -20,7 +22,8 @@ import { detectClaude, splitCommand } from './detect.js';
 import { parseClaudeEvents, activityFromText, type ClaudeResultEvent } from './event-parser.js';
 import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA_STRING, extractJsonObject, validateTaskResult } from './contract.js';
 import { agentTextEvents } from './completion-text.js';
-import { isTransientApiError } from './transient.js';
+import { claudeConfigRejection, isTransientApiError } from './transient.js';
+import { configErrorOutcome, killedMessage, openToolMessage } from '../outcomes.js';
 import { contextWindowFor, supportsAutoMode, supportsEffort } from './models.js';
 import { encodeUserMessage, encodeControlResponse, encodeErrorResponse, toInteraction, summarizeAnswer, describeDenials, PendingInteractions } from './protocol.js';
 import { ensureDir } from '../../util/fs.js';
@@ -153,6 +156,28 @@ export class ClaudeRunner implements TaskRunner {
     this.bufferLines = opts.bufferLines ?? 500;
   }
 
+  /**
+   * Once per run, before anything is spawned: is the installed CLI new enough, and does it advertise what
+   * these tasks selected. A CLI that is simply absent is left to `run()` (and to `cao run`'s own check), so
+   * that a missing binary keeps reporting itself the way it always has.
+   */
+  async preflight(tasks: ResolvedTask[]): Promise<PreflightProblem[]> {
+    const byCommand = new Map<string, { taskIds: string[]; needs: CapabilityNeed[] }>();
+    for (const task of tasks) {
+      const options = resolveClaudeOptions(this.defaults, task);
+      const entry = byCommand.get(options.command ?? '') ?? { taskIds: [], needs: [] };
+      entry.taskIds.push(task.id);
+      entry.needs.push(...claudeCapabilityNeeds(options));
+      byCommand.set(options.command ?? '', entry);
+    }
+    const problems: PreflightProblem[] = [];
+    for (const [command, entry] of byCommand) {
+      const message = capabilityPreflight('claude', await detectClaude(command || undefined), entry.needs);
+      if (message) problems.push({ taskIds: entry.taskIds, message });
+    }
+    return problems;
+  }
+
   async run(input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
     const options = resolveClaudeOptions(this.defaults, input.task);
     const detection = await detectClaude(options.command);
@@ -194,12 +219,18 @@ export class ClaudeRunner implements TaskRunner {
     // Tool timing: a call is remembered by its tool_use_id until its result arrives, and the gap is added to
     // the attempt's time-in-tools. Parallel calls overlap, so the total can exceed the attempt's wall clock.
     const toolStarts = new Map<string, number>();
-    const startTool = (toolUseId?: string): void => {
-      if (toolUseId) toolStarts.set(toolUseId, Date.now());
+    /** The same calls, by their one-line description: at exit these are the ones nobody ever answered. */
+    const openTools = new Map<string, string>();
+    const startTool = (toolUseId?: string, label?: string): void => {
+      if (!toolUseId) return;
+      toolStarts.set(toolUseId, Date.now());
+      openTools.set(toolUseId, label ?? toolUseId);
     };
     const finishTool = (toolUseId?: string): boolean => {
       const started = toolUseId ? toolStarts.get(toolUseId) : undefined;
-      if (started === undefined || !toolUseId) return false;
+      if (!toolUseId) return false;
+      openTools.delete(toolUseId);
+      if (started === undefined) return false;
       toolStarts.delete(toolUseId);
       usage.toolMs = (usage.toolMs ?? 0) + Math.max(0, Date.now() - started);
       return true;
@@ -271,13 +302,13 @@ export class ClaudeRunner implements TaskRunner {
               break;
             case 'activity':
               hooks.onActivity(ev.line);
-              startTool(ev.toolUseId);
+              startTool(ev.toolUseId, ev.line);
               entry({ kind: 'tool', ts, tool: ev.tool, line: ev.line, filePath: ev.filePath, fileOp: ev.fileOp, toolUseId: ev.toolUseId, parentToolUseId: ev.parentToolUseId });
               if (ev.filePath && ev.fileOp) hooks.onFileChange({ path: ev.filePath, op: ev.fileOp });
               break;
             case 'command':
               hooks.onActivity(`$ ${ev.command.split(/\r?\n/)[0] ?? ev.command}`);
-              startTool(ev.toolUseId);
+              startTool(ev.toolUseId, `$ ${ev.command}`);
               entry({ kind: 'command', ts, command: ev.command, tool: ev.tool, toolUseId: ev.toolUseId, parentToolUseId: ev.parentToolUseId });
               break;
             case 'text':
@@ -407,6 +438,14 @@ export class ClaudeRunner implements TaskRunner {
         }
         if (resultEvent.isError) {
           const detail = resultEvent.resultText ?? resultEvent.subtype ?? 'unknown error';
+          // A schema the API refused is a configuration error however the session reported it: it cannot
+          // succeed on a retry, and the flag it came from is the only actionable thing about it.
+          const rejection = claudeConfigRejection({ exitCode: exit.code, stderr: stderrTail.join('\n'), resultText: detail });
+          if (rejection) {
+            const rejected = configErrorOutcome('Claude Code', rejection, { exitCode: exit.code, signal: exit.signal, usage: finalUsage });
+            finishEntry({ kind: 'error', text: rejected.message });
+            return rejected;
+          }
           const denied = describeDenials(resultEvent.permissionDenials);
           const denials = denied.length ? ` (${denied.length} permission denial(s))` : '';
           // A 5xx/overloaded/network failure ends the print-mode process; the session itself is intact and resumable.
@@ -425,8 +464,16 @@ export class ClaudeRunner implements TaskRunner {
         return { kind: 'error', outcome: 'invalid_result', message, exitCode: exit.code, usage: finalUsage };
       }
 
+      // The CLI never started a session because it could not parse what CAO gave it: a workflow bug, and
+      // one that used to burn every retry the task had.
+      const rejection = claudeConfigRejection({ exitCode: exit.code, stderr: stderrTail.join('\n') });
+      if (rejection) {
+        const rejected = configErrorOutcome('Claude Code', rejection, { exitCode: exit.code, signal: exit.signal, usage: finalUsage });
+        finishEntry({ kind: 'error', text: rejected.message });
+        return rejected;
+      }
       if (exit.code !== 0) {
-        const message = `Claude exited with code ${exit.code ?? 'null'}${exit.signal ? ` (signal ${exit.signal})` : ''}${stderrSummary}`;
+        const message = `${killedMessage('Claude', exit.code, exit.signal)}${stderrSummary}`;
         finishEntry({ kind: 'error', text: message });
         return {
           kind: 'error',
@@ -437,6 +484,13 @@ export class ClaudeRunner implements TaskRunner {
           usage: finalUsage,
           failure: claudeFailure(stderrTail.join('\n'), isTransientApiError(stderrTail.join('\n')), finalUsage.sessionId),
         };
+      }
+      // The process left cleanly while a tool call it had made was still unanswered: the turn was cut
+      // short rather than merely sloppy, and the transcript has to end with the call that was open.
+      if (openTools.size) {
+        const message = openToolMessage('Claude', [...openTools.values()]);
+        finishEntry({ kind: 'error', text: message });
+        return { kind: 'error', outcome: 'crash', message, exitCode: exit.code, signal: exit.signal, usage: finalUsage };
       }
       const message = hadStdout ? 'Claude exited without emitting a result message' : `Claude produced no output${stderrSummary}`;
       finishEntry({ kind: 'error', text: message });

@@ -23,6 +23,10 @@ import { glyph } from '../../util/glyphs.js';
 import { packageInfo } from '../../util/package-info.js';
 import { DEFAULT_WORKFLOW_FILES, findStoreRoot } from '../util.js';
 import type { AgentCapability, AgentRuntimeDetection } from '../../runners/capabilities.js';
+import { ProcessManager } from '../../execution/process-manager.js';
+import { probeClaude } from '../../runners/claude/probe.js';
+import { probeCodex } from '../../runners/codex/probe.js';
+import type { AgentProbe } from '../../runners/probe.js';
 import { detectRunnersForWorkflow, prepareWorkflow, requireValid, type RunnerDetection } from '../app.js';
 import { resolveWorkflowPath } from '../util.js';
 
@@ -42,6 +46,32 @@ export interface DoctorDeps {
   requiredNode: string;
   gitCommand: string;
   cwd: string;
+  /**
+   * Start each mode of each installed agent, briefly, and say whether it started. Injectable because a test
+   * of the *judging* must never spawn an agent CLI, and because a caller may want the cheap checks alone.
+   */
+  probeAgents: (agents: AgentFacts[], environment?: Record<string, string>) => Promise<AgentProbe[]>;
+}
+
+/**
+ * The default: every mode of every agent that is installed and authenticated. An agent that is missing has
+ * already said so on its own line, and one that is logged out would fail every probe for a reason the
+ * operator has been told; probing either would only add noise.
+ */
+export async function probeInstalledAgents(agents: AgentFacts[], environment?: Record<string, string>): Promise<AgentProbe[]> {
+  const processManager = new ProcessManager({});
+  const probes: AgentProbe[] = [];
+  try {
+    for (const agent of agents) {
+      if (!agent.found || agent.authenticated === false) continue;
+      const options = { command: agent.command, processManager, ...(environment ? { env: environment } : {}) };
+      probes.push(...(agent.runner === 'claude' ? await probeClaude(options) : await probeCodex(options)));
+    }
+  } finally {
+    // Belt and braces: every probe kills its own child, and nothing may outlive the command either way.
+    await processManager.shutdown('force').catch(() => undefined);
+  }
+  return probes;
 }
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
@@ -95,6 +125,8 @@ export interface DoctorFacts {
   orphanWorktrees: OrphanWorktreeFacts[];
   orphanBranches: OrphanBranchFacts[];
   exclude: { status: 'ignored' | 'missing' | 'unknown'; via?: 'exclude' | 'gitignore'; reason?: string };
+  /** One entry per agent mode that was started; absent when nothing could be probed. */
+  probes?: AgentProbe[];
 }
 
 /** git learnt `worktree` in 2.5; everything below that can still run workflows in the shared tree. */
@@ -172,7 +204,7 @@ async function readRuns(runsDir: string): Promise<WorkflowRun[]> {
 }
 
 /** Everything `evaluate` judges, read from this machine. */
-export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<DoctorDeps> = {}, scopedAgents?: RunnerDetection[]): Promise<DoctorFacts> {
+export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<DoctorDeps> = {}, scopedAgents?: RunnerDetection[], environment?: Record<string, string>): Promise<DoctorFacts> {
   const deps: DoctorDeps = {
     detectClaude,
     detectCodex,
@@ -181,6 +213,7 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
     requiredNode: packageInfo().node ?? '',
     gitCommand: 'git',
     cwd: process.cwd(),
+    probeAgents: probeInstalledAgents,
     ...overrides,
   };
   const start = path.resolve(opts.repository ?? deps.cwd);
@@ -216,6 +249,14 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
       ...(agent.requiredCapabilities ? { requiredCapabilities: agent.requiredCapabilities } : {}),
     });
   }
+
+  // Each mode a workflow can select, started for real. This is the only check that runs an agent, and it
+  // is the one that catches the failures users actually report: a flag combination the CLI refuses, an
+  // output schema the API refuses, a transport this version does not have.
+  const probes = await deps.probeAgents(facts.agents, environment).catch((err: unknown) => {
+    return [{ runner: 'claude' as const, mode: 'live start', status: 'skip' as const, detail: `not probed: ${(err as Error).message}` }];
+  });
+  if (probes.length) facts.probes = probes;
 
   // Runs: which of them an orchestrator still owns, and which locks are left over from one that is gone.
   const runs = storeRoot ? await readRuns(createRunPaths(storeRoot).runsDir) : [];
@@ -366,6 +407,16 @@ export function evaluate(facts: DoctorFacts): DoctorCheck[] {
     });
   }
 
+  for (const probe of facts.probes ?? []) {
+    checks.push({
+      id: `probe:${probe.runner}:${probe.mode}`,
+      label: `${probe.runner} ${probe.mode.replace(/^\w+\.\w+:\s*/, '')}`,
+      status: probe.status,
+      detail: `${probe.detail}${probe.durationMs !== undefined ? `  (${probe.durationMs}ms)` : ''}`,
+      ...(probe.hint ? { hint: probe.hint } : {}),
+    });
+  }
+
   checks.push(
     facts.storeRoot
       ? {
@@ -469,6 +520,7 @@ export function renderChecks(checks: DoctorCheck[]): string {
 export async function doctorCommand(opts: DoctorOptions, overrides: Partial<DoctorDeps> = {}): Promise<number> {
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
   let scopedAgents: RunnerDetection[] | undefined;
+  let environment: Record<string, string> | undefined;
   let workflowPath = opts.config;
   if (!workflowPath) {
     for (const name of DEFAULT_WORKFLOW_FILES) {
@@ -480,8 +532,9 @@ export async function doctorCommand(opts: DoctorOptions, overrides: Partial<Doct
     const prepared = await prepareWorkflow(await resolveWorkflowPath(workflowPath), { repository: opts.repository });
     requireValid(prepared);
     scopedAgents = await detectRunnersForWorkflow(prepared.workflow, prepared.loaded.environment);
+    environment = prepared.loaded.environment;
   }
-  const facts = await gatherFacts(opts, overrides, scopedAgents);
+  const facts = await gatherFacts(opts, overrides, scopedAgents, environment);
   const checks = evaluate(facts);
   const failed = checks.filter((c) => c.status === 'fail');
   const warned = checks.filter((c) => c.status === 'warn');

@@ -9,7 +9,8 @@ import type { TranscriptEntry } from '../../types/transcript.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../claude/contract.js';
 import { agentTextEvents } from '../claude/completion-text.js';
-import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
+import { codexFailureMetadata, codexProtocolRejection, normalizeCodexFailure } from './failure.js';
+import { configErrorOutcome, killedMessage, openToolMessage, type ConfigRejection } from '../outcomes.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
@@ -120,12 +121,19 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
   const usage: RunnerUsage = { sessionId: input.resumeSessionId, model: input.task.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, numTurns: 0 };
   const pending = new Map<string, AbortController>();
+  /** Commands the turn started and never completed; at exit they are what the worker was still inside. */
+  const openCommands = new Map<string, string>();
   let proc: ManagedProcess;
   let threadId = input.resumeSessionId;
   let turnId: string | undefined;
   let finalText = '';
   let terminal: JsonObject | undefined;
-  let protocolError: string | undefined;
+  /**
+   * A mismatch between what CAO asked for and what the server did with it. Every one of these is a
+   * misconfiguration (or a CLI too old to honour the request), never something a retry can fix, so it is
+   * carried as a rejection with the workflow key behind it rather than as a bare crash message.
+   */
+  let protocolError: ConfigRejection | undefined;
   let blocked: BlockedOnHuman | undefined;
   let killed: string | undefined;
   let nextId = 1;
@@ -221,7 +229,12 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
       if (retryOverloaded(message)) return;
       if (typeof message.id === 'number') inflightRequests.delete(message.id);
       if (message.id === initializeId) {
-        if (message.error) { protocolError = `Codex app-server initialize failed: ${message.error.message ?? JSON.stringify(message.error)}`; void proc.kill('graceful'); return; }
+        if (message.error) {
+          const detail = `initialize failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
+          protocolError = codexProtocolRejection({ message: detail }) ?? { detail };
+          void proc.kill('graceful');
+          return;
+        }
         send({ method: 'initialized' });
         threadRequestId = nextId++;
         const method = input.resumeSessionId ? 'thread/resume' : 'thread/start';
@@ -233,47 +246,52 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         return;
       }
       if (message.id === threadRequestId) {
-        if (message.error) { protocolError = `Codex thread start failed: ${message.error.message ?? JSON.stringify(message.error)}`; void proc.kill('graceful'); return; }
+        if (message.error) {
+          const detail = `${input.resumeSessionId ? 'thread/resume' : 'thread/start'} failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
+          protocolError = codexProtocolRejection({ message: detail, key: 'the codex: block of this task' }) ?? { detail };
+          void proc.kill('graceful');
+          return;
+        }
         const result = message.result ?? {};
         const actualSandbox = String(result.sandbox?.type ?? '').replace(/[A-Z]/g, (letter: string) => `-${letter.toLowerCase()}`);
         const expectedSandbox = resolved.sandbox;
         if (!actualSandbox) {
-          protocolError = 'Codex app-server did not report its resolved sandbox';
+          protocolError = { detail: 'the app-server did not report its resolved sandbox', key: 'codex.sandbox' };
           void proc.kill('graceful');
           return;
         }
         if (actualSandbox !== expectedSandbox) {
-          protocolError = `Codex app-server resolved sandbox "${actualSandbox}", not requested "${expectedSandbox}"`;
+          protocolError = { detail: `the app-server resolved sandbox "${actualSandbox}", not the requested "${expectedSandbox}"`, key: 'codex.sandbox' };
           void proc.kill('graceful');
           return;
         }
         if (!result.approvalPolicy) {
-          protocolError = 'Codex app-server did not report its resolved approval policy';
+          protocolError = { detail: 'the app-server did not report its resolved approval policy', key: 'codex.approvalPolicy' };
           void proc.kill('graceful');
           return;
         }
         if (result.approvalPolicy !== resolved.approvalPolicy) {
-          protocolError = `Codex app-server resolved approval policy "${JSON.stringify(result.approvalPolicy)}", not requested "${resolved.approvalPolicy}"`;
+          protocolError = { detail: `the app-server resolved approval policy ${JSON.stringify(result.approvalPolicy)}, not the requested "${resolved.approvalPolicy}"`, key: 'codex.approvalPolicy' };
           void proc.kill('graceful');
           return;
         }
         if (!result.approvalsReviewer) {
-          protocolError = 'Codex app-server did not report its resolved approval reviewer';
+          protocolError = { detail: 'the app-server did not report its resolved approval reviewer', key: 'codex.approvals' };
           void proc.kill('graceful');
           return;
         }
         if (result.approvalsReviewer !== resolved.reviewer) {
-          protocolError = `Codex app-server resolved approval reviewer "${result.approvalsReviewer}", not requested "${resolved.reviewer}"`;
+          protocolError = { detail: `the app-server resolved approval reviewer "${String(result.approvalsReviewer)}", not the requested "${resolved.reviewer}"`, key: 'codex.approvals' };
           void proc.kill('graceful');
           return;
         }
         if (input.task.model && result.model !== input.task.model) {
-          protocolError = `Codex app-server resolved model "${String(result.model ?? 'unknown')}", not requested "${input.task.model}"`;
+          protocolError = { detail: `the app-server resolved model "${String(result.model ?? 'unknown')}", not the requested "${input.task.model}"`, key: "the task's model" };
           void proc.kill('graceful');
           return;
         }
         if (!Array.isArray(result.instructionSources)) {
-          protocolError = 'Codex app-server did not report its instruction sources';
+          protocolError = { detail: 'the app-server did not report its instruction sources', key: 'codex.configMode' };
           void proc.kill('graceful');
           return;
         }
@@ -295,7 +313,12 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         return;
       }
       if (message.id === turnRequestId) {
-        if (message.error) { protocolError = `Codex turn start failed: ${message.error.message ?? JSON.stringify(message.error)}`; void proc.kill('graceful'); return; }
+        if (message.error) {
+          const detail = `turn/start failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
+          protocolError = codexProtocolRejection({ message: detail }) ?? { detail };
+          void proc.kill('graceful');
+          return;
+        }
         turnId = typeof message.result?.turn?.id === 'string' ? message.result.turn.id : undefined;
         return;
       }
@@ -303,8 +326,15 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
       if (message.method === 'item/started' || message.method === 'item/completed') {
         const item = params.item ?? {};
         if (item.type === 'commandExecution') {
-          if (message.method === 'item/started') { hooks.onActivity(`$ ${String(item.command ?? '').split(/\r?\n/)[0]}`); entry({ kind: 'command', ts: nowIso(), command: String(item.command ?? ''), tool: 'shell' }); }
-          else if (item.aggregatedOutput || item.status === 'failed') entry({ kind: 'tool_result', ts: nowIso(), text: truncate(String(item.aggregatedOutput ?? `exit ${item.exitCode ?? '?'}`), MAX_OUTPUT_CHARS), isError: item.status === 'failed' || Number(item.exitCode ?? 0) > 0 });
+          const commandId = String(item.id ?? item.command ?? 'command');
+          if (message.method === 'item/started') {
+            openCommands.set(commandId, String(item.command ?? ''));
+            hooks.onActivity(`$ ${String(item.command ?? '').split(/\r?\n/)[0]}`);
+            entry({ kind: 'command', ts: nowIso(), command: String(item.command ?? ''), tool: 'shell' });
+          } else {
+            openCommands.delete(commandId);
+            if (item.aggregatedOutput || item.status === 'failed') entry({ kind: 'tool_result', ts: nowIso(), text: truncate(String(item.aggregatedOutput ?? `exit ${item.exitCode ?? '?'}`), MAX_OUTPUT_CHARS), isError: item.status === 'failed' || Number(item.exitCode ?? 0) > 0 });
+          }
         } else if (item.type === 'agentMessage' && message.method === 'item/completed') {
           // The last agent message is still the authoritative result, decided once the turn completes; here a
           // completion object is only classified, so that no surface renders it as something the agent said.
@@ -359,10 +389,14 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   else if (exit.timedOut) {
     const message = `timed out after ${input.timeoutMs}ms`;
     outcome = blocked ? blockedOutcome(`the turn was still running ${message} and the process had to be killed`) : { kind: 'error', outcome: 'timeout', message, exitCode: exit.code, usage };
-  } else if (protocolError) outcome = { kind: 'error', outcome: 'crash', message: protocolError, exitCode: exit.code, usage };
+  } else if (protocolError) outcome = configErrorOutcome('Codex app-server', protocolError, { exitCode: exit.code, signal: exit.signal, usage });
   else if (!terminal) {
-    const message = `Codex app-server exited before turn completion (code ${exit.code ?? 'null'})`;
-    outcome = blocked ? blockedOutcome(message) : { kind: 'error', outcome: 'crash', message, exitCode: exit.code, usage };
+    // The turn never completed. Whether the process was killed from outside or simply went away, the most
+    // useful things the message can carry are the signal and the tool call the worker was still inside.
+    const message = openCommands.size
+      ? openToolMessage('Codex app-server', [...openCommands.values()])
+      : `${killedMessage('Codex app-server', exit.code, exit.signal)} before the turn completed`;
+    outcome = blocked ? blockedOutcome(message) : { kind: 'error', outcome: 'crash', message, exitCode: exit.code, signal: exit.signal, usage };
   } else if (terminal.status === 'failed') {
     const failure = normalizeCodexFailure(terminal.error?.codexErrorInfo, { ...codexFailureMetadata(terminal.error), sessionId: threadId });
     const message = String(terminal.error?.message ?? 'Codex turn failed');

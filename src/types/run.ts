@@ -42,6 +42,8 @@ export type TaskReason =
   | 'invalid_result'
   | 'crash'
   | 'api_error'
+  /** The CLI rejected an argument, a schema or a protocol field CAO sent: a misconfiguration, never retried. */
+  | 'config_error'
   | 'rejected'
   | 'merge_conflict'
   | 'needs_input'
@@ -60,6 +62,11 @@ export type AttemptOutcome =
   | 'crash'
   /** Transient API/network failure (5xx, overloaded, rate limit, connection reset). Retried by resuming the session. */
   | 'api_error'
+  /**
+   * The CLI rejected what CAO sent it — an argument, the output schema, a protocol field. It cannot succeed
+   * on a retry, so it never spends `retry.attempts`; `onFailure` still decides what the run does next.
+   */
+  | 'config_error'
   | 'invalid_result'
   | 'merge_conflict'
   | 'cancelled'

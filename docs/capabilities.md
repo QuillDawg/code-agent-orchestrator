@@ -661,7 +661,9 @@ Run state:  /home/me/projects/api/.orchestrator/runs
 
 ✓ Node.js     v22.11.0 (requires >=22)
 ✓ git         2.47.0, worktrees supported
-✓ claude      2.0.14 (Claude Code)  (claude)
+✓ claude      2.1.267 (Claude Code) [stream-json, structured-output, safe-mode]  (claude)
+✓ claude ask  ask-mode argv accepted; the session started  (612ms)
+✓ claude deny deny-mode argv accepted; the session started  (588ms)
 ! codex       not found  (codex): spawn codex ENOENT
               → install the Codex CLI and check `codex --version`, or point CAO_CODEX_COMMAND at the binary
 ! run locks   1 stale lock(s); the orchestrator that held them is gone
@@ -687,8 +689,27 @@ What it checks, and how it grades what it finds:
 | `worktrees` | — | a worktree of a finished run is still on disk |
 | `branches` | — | an `orchestrator/*` branch has no worktree holding it |
 | `git ignore` | — | `.orchestrator/` is not ignored, so run state shows up in `git status` |
+| `<agent> <mode>` | a mode a workflow can select would not start: the CLI refused the argv, the API refused the output schema, or the transport is not there | — |
 
-Only the first three can stop a run, so only those exit `1`; a warning is something to tidy up, and the exit
+### The modes are started for real
+
+The agent lines above say whether the binary is there and new enough; the lines under them say whether the
+thing a run will actually do works. Each mode a workflow can select is started, briefly, and killed as soon
+as it has answered:
+
+- **Codex `exec`** runs one trivial turn with a minimal OpenAI-strict output schema, in a temporary
+  read-only directory. This is the shortest path through everything that has broken real runs: the flag
+  combination, the schema the API validates, and authentication. It costs one very small model call.
+- **Codex `app-server`** is taken through `initialize` and `thread/start` with the read-only envelope and
+  then interrupted, which proves the transport without spending a turn.
+- **Claude ask-mode and deny-mode** are started with the exact argv a run would send, and stopped the moment
+  the session reports that it has started - before it calls the model, so they cost nothing but a process.
+
+Nothing is written into your repository, nothing survives the command (every probe kills its own child and
+`cao doctor` sweeps the rest), and an agent that is not installed, or not authenticated, is not probed at
+all: it has already said so on its own line.
+
+Only the agent and environment checks can stop a run, so only those exit `1`; a warning is something to tidy up, and the exit
 code stays `0`. A check that cannot be answered here — the run checks outside a repository that has never run
 anything — is printed with a `-` and grades nothing. `--json` carries the same checks plus the raw facts
 behind them (versions, lock files, worktree paths, branch names), which is what a bug report should have

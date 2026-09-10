@@ -4,7 +4,9 @@ import type { RunState, RunSummary, TaskState, WorkflowRun } from '../types/run.
 const RUNNING_EXITS: TaskState[] = ['success', 'failed', 'ready', 'blocked', 'skipped', 'needs_input', 'cancelled', 'pending', 'awaiting_approval'];
 
 const TASK_TRANSITIONS: Record<TaskState, ReadonlySet<TaskState>> = {
-  pending: new Set(['ready', 'skipped', 'blocked', 'cancelled', 'awaiting_approval']),
+  // `failed` is reachable straight from `pending`: the per-run preflight fails a task before it can
+  // ever become ready, and that verdict is as final as any other failure.
+  pending: new Set(['ready', 'skipped', 'blocked', 'cancelled', 'awaiting_approval', 'failed']),
   ready: new Set(['running', 'pending', 'skipped', 'blocked', 'cancelled']),
   running: new Set([...RUNNING_EXITS, 'waiting']),
   // A worker blocked on a human keeps every exit `running` has (its process may still end) and returns to running.

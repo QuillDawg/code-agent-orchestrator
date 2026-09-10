@@ -11,8 +11,11 @@
  * is not OpenAI-strict fails with the `invalid_json_schema` 400, whatever the mode.
  *
  * Behaviour is controlled by env FAKE_CODEX_MODE, or per task by FAKE_CODEX_TASK_MODES='{"a":"hang"}':
- *   success (default) | invalid | api-error | hang | strict-schema | interim
- *   exec only:       exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
+ *   success (default) | invalid | api-error | hang | strict-schema | interim | schema-rejected
+ *   schema-rejected: the API refuses the output schema (exec: an error item and a failed turn;
+ *                    app-server: JSON-RPC -32602 on turn/start), whatever schema was actually sent
+ *   exec only:       open-command (a command is started and the process leaves without completing it) |
+ *                    exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
  *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
  *   app-server only: approval | approval-always | approval-decline | file-approval | question |
  *                    question-multi | question-recovers | unknown-request | failure | interrupted |
@@ -209,7 +212,9 @@ if (line.scope.startsWith('exec')) {
     process.stdin.resume();
   });
   trace({ prompt, resumed });
-  const schemaError = strictSchemaError(schemaPath ? JSON.parse(readFileSync(schemaPath, 'utf8')) : undefined);
+  const schemaError = mode === 'schema-rejected'
+    ? "Invalid schema for response_format 'codex_output_schema': In context=(), 'additionalProperties' is required to be supplied and to be false."
+    : strictSchemaError(schemaPath ? JSON.parse(readFileSync(schemaPath, 'utf8')) : undefined);
   if (schemaError) {
     emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
     emit({ type: 'turn.started' });
@@ -233,6 +238,13 @@ if (line.scope.startsWith('exec')) {
     emit({ type: 'turn.started' });
     emit({ type: 'item.completed', item: { type: 'error', id: 'err-1', message: 'request_user_input is not supported in exec mode for thread `codex-exec-thread-1`' } });
     emit({ type: 'turn.completed', usage: { input_tokens: 4, cached_input_tokens: 0, output_tokens: 1 } });
+    process.exit(0);
+  }
+  if (mode === 'open-command' && !resumed) {
+    // The process leaves cleanly while a command it started is still running: nothing completed it, and
+    // there is no final answer to read. The transcript has to end with that command.
+    emit({ type: 'turn.started' });
+    emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm run build' } });
     process.exit(0);
   }
   if (mode === 'hang') {
@@ -367,7 +379,9 @@ rl.on('line', (raw) => {
       sandbox: { type: sandboxType, writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null,
     } });
   } else if (message.method === 'turn/start') {
-    const schemaError = strictSchemaError(message.params?.outputSchema);
+    const schemaError = mode === 'schema-rejected'
+      ? "Invalid schema for response_format 'codex_output_schema': In context=(), 'additionalProperties' is required to be supplied and to be false."
+      : strictSchemaError(message.params?.outputSchema);
     if (schemaError) {
       emit({ id: message.id, error: { code: -32602, message: schemaError } });
       return;

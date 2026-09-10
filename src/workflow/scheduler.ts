@@ -19,6 +19,7 @@ import { formatDuration } from '../util/duration.js';
 import type { RunStore } from '../persistence/run-store.js';
 import { OLDER_PAGE, readOlderAcrossAttempts, readOlderEntries, readTranscriptFile } from '../persistence/transcript-log.js';
 import type { RunnerRegistry, RunnerOutcome, RunnerHooks } from '../runners/task-runner.js';
+import type { PreflightProblem } from '../runners/preflight.js';
 import type { WorkspaceManager, FinalizeResult } from '../workspace/workspace-manager.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { HookRunner } from '../execution/hooks.js';
@@ -400,6 +401,7 @@ export class WorkflowScheduler {
       }
     }
     await this.applySelection();
+    await this.preflightRunners();
     this.startHeartbeat();
 
     try {
@@ -416,6 +418,47 @@ export class WorkflowScheduler {
       this.stopHeartbeat();
     }
     return this.finalize();
+  }
+
+  /**
+   * Ask every runner this run will use what it can already tell about the installed CLI, once, before the
+   * first worker is spawned (H4.1). A CLI that is too old, or that does not advertise a transport the
+   * workflow selected, used to be discovered per task, mid-run, as a crash — and was then retried. Here it
+   * fails the tasks it affects immediately, as a configuration error, and `onFailure` decides the run.
+   */
+  private async preflightRunners(): Promise<void> {
+    const byAgent = new Map<string, ResolvedTask[]>();
+    for (const id of this.topo) {
+      const task = this.taskDefs.get(id);
+      const state = this.run.tasks[id];
+      if (!task || !state || TERMINAL_TASK_STATES.has(state.state)) continue;
+      byAgent.set(task.agent, [...(byAgent.get(task.agent) ?? []), task]);
+    }
+    for (const [agent, tasks] of byAgent) {
+      if (!this.runners.has(agent)) continue;
+      let problems: PreflightProblem[] = [];
+      try {
+        problems = (await this.runners.get(agent).preflight?.(tasks)) ?? [];
+      } catch (err) {
+        // A preflight that cannot answer must not stop a run that would otherwise work.
+        this.bus.emit({ type: 'workflow.warning', code: 'agent', message: `${agent} preflight could not run: ${(err as Error).message}` });
+        continue;
+      }
+      for (const problem of problems) {
+        const affected = problem.taskIds.length ? problem.taskIds : tasks.map((task) => task.id);
+        this.logger.error(problem.message);
+        for (const id of affected) {
+          const state = this.run.tasks[id];
+          const task = this.taskDefs.get(id);
+          if (!state || !task || TERMINAL_TASK_STATES.has(state.state)) continue;
+          state.endedAt = nowIso();
+          this.setState(state, 'failed', 'config_error', problem.message);
+          this.bus.emit({ type: 'task.failed', taskId: id, attempt: 0, outcome: 'config_error', reason: 'config_error', message: problem.message, final: true });
+          this.applyOnFailure(task);
+        }
+      }
+    }
+    await this.persist();
   }
 
   /** Reuse the prior structured result when a YAML-completed dependency supplies context. */
@@ -1284,6 +1327,8 @@ export class WorkflowScheduler {
         ? 'timeout'
         : outcome === 'invalid_result'
           ? 'invalid_result'
+          : outcome === 'config_error'
+          ? 'config_error'
           : outcome === 'crash'
             ? 'crash'
             : outcome === 'api_error'
@@ -1334,7 +1379,9 @@ export class WorkflowScheduler {
 
     const failedAttempts = budget.counted;
     const retriesLeft = task.retry.attempts - (failedAttempts - 1);
-    if (!mergeFailed && retriesLeft > 0 && attempt.failure?.retryable !== false && !this.stop) {
+    // A configuration rejection cannot succeed on a retry, so it neither takes one nor counts as one:
+    // `budgetedFailures` ignores the outcome and the run stops or continues purely per `onFailure`.
+    if (!mergeFailed && outcome !== 'config_error' && retriesLeft > 0 && attempt.failure?.retryable !== false && !this.stop) {
       const delayMs = task.retry.delayMs;
       state.retryNotBefore = new Date(this.clock.now() + delayMs).toISOString();
       this.setState(state, 'ready', failureReason, message);

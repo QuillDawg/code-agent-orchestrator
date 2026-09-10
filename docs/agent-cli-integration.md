@@ -62,10 +62,13 @@ Partial message streaming (`--include-partial-messages`) is not enabled; tool-us
 | no `structured_output` but a JSON object in `result` text (fenced or trailing) | validated the same way |
 | `is_error: true` with a transient API/network message (`API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, …) | `api_error` → the scheduler waits and resumes the session |
 | `is_error: true` with `permission_denials` (the CLI answered the prompts itself) | `needs_input` naming the denied tools |
+| `is_error: true` with `invalid_json_schema` (the API refused `--json-schema`) | `config_error`, not retried |
 | `is_error: true` otherwise (max turns, budget, auth) | `crash` with Claude's message |
 | exit 0 without a valid result | `invalid_result` → the scheduler first asks the same session for the object (`retry.resultNudges`), then retries |
+| `error: unknown option '--x'` on stderr (commander refused the argv) | `config_error` naming the flag and the workflow key |
 | non-zero exit with a transient network error on stderr | `api_error` |
-| non-zero exit without a result | `crash` with exit code and stderr tail |
+| non-zero exit without a result | `crash` naming the signal when there was one, with exit code and stderr tail |
+| exit 0 with a tool call that was never answered | `crash` naming the open call |
 
 ### Resuming after a transient API error
 
@@ -210,8 +213,10 @@ Use `fullAccess` only in an appropriately isolated environment.
 | task timeout | `timeout` |
 | `final.json` present and schema-valid | result status |
 | `final.json` present but invalid | `invalid_result` |
+| a clap usage block on stderr, or `invalid_json_schema` in the stream | `config_error` naming the flag and the workflow key |
 | non-zero exit with a transient network error on stderr | `api_error` |
-| non-zero exit otherwise | `crash` with exit code and stderr tail |
+| non-zero exit otherwise | `crash` naming the signal when there was one, with exit code and stderr tail |
+| exit 0 with a command the stream never completed | `crash` naming the open command |
 | exit 0 with no schema-valid final response | `invalid_result` |
 | an approval or user-input rejection in the stream, and no schema-valid final response | `needs_input` quoting the rejection |
 
@@ -230,6 +235,55 @@ deliberately left as ordinary errors.
 
 If the worker carries on after the rejection and still produces a schema-valid completion object, that
 object is the result and the rejection is reported as a run warning instead.
+
+---
+
+## One outcome map (both agents)
+
+The same situation means the same thing on both agents. The table below is generated from `OUTCOME_MAP` in
+`src/runners/outcomes.ts` and checked against this file by `test/unit/runner-failure.test.ts`, so the code
+and this page cannot drift apart. The per-agent tables above say how each runner recognises a row; this one
+says what the row means.
+
+| Situation | Outcome | What follows |
+|---|---|---|
+| exit 0, no result | `invalid_result` | the same session is asked for the completion object (`retry.resultNudges`), then the task is retried |
+| result present, fails the contract | `invalid_result` | same as above: nudge, then retry |
+| transient network/API error | `api_error` | backoff, then the session is resumed; free up to `retry.transientAttempts` |
+| argument or schema rejection | `config_error` | the task fails immediately without spending `retry.attempts`; `onFailure` decides the run |
+| process killed externally | `crash` | `retry.attempts` as usual; the signal is recorded on the attempt and named in the message |
+| worker still holding an unanswered tool at exit | `crash` | `retry.attempts` as usual; the transcript ends with the tool call that was never answered |
+| abort from the orchestrator | `cancelled` | the task is cancelled, not retried |
+| task timeout | `timeout` | the process tree is killed, then `retry.attempts` as usual |
+
+### Configuration errors are not retried
+
+`config_error` is the row that changed the most. A CLI that refuses the command line CAO built, an API that
+refuses the output schema, a JSON-RPC `-32602`, or an app-server `initialize`/`thread/start` that does not
+come back with the envelope that was requested: none of them can succeed on a second attempt, and all of
+them used to arrive as `crash` and be retried until `retry.attempts` ran out. They now end the task once,
+with a message that names the offending option and the workflow key it came from
+(`codex.approvals`, `codex.sandbox`, `claude.extraArgs`, ...). `retry.attempts` is untouched, and `onFailure`
+decides whether the run stops exactly as it does for any other failure.
+
+Recognised by:
+
+- **exit 2 with a usage block on stderr** (`error: the argument '--approve-for-me' cannot be used with
+  '--sandbox <SANDBOX_MODE>'`, `error: unknown option '--nope'`) - `src/runners/codex/failure.ts` and
+  `src/runners/claude/transient.ts`;
+- **`invalid_json_schema` / `Invalid schema for response_format`** from the model API, on either agent;
+- **JSON-RPC `-32602`** from the Codex app-server;
+- **an app-server `initialize`/`thread/start` mismatch**: a sandbox, approval policy, approval reviewer,
+  model or instruction-source list that is not the one CAO asked for.
+
+### Preflight: before the first token
+
+Before any worker is spawned, each runner is asked once per run whether the installed CLI can do what the
+workflow selected (`TaskRunner.preflight`). A version below `MINIMUM_AGENT_VERSIONS`, or a capability the
+installed version does not advertise (`exec`, `appServer`, `autoReview`, `isolatedConfig`, `streamJson`,
+`structuredOutput`), fails every task that would have used it at run start - as a `config_error`, naming the
+option, the workflow key that asked for it, the version found and the version needed. A CLI that is missing
+altogether is still reported by `cao run`'s own readiness check before the run is even created.
 
 ---
 
