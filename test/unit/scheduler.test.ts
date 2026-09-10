@@ -5,6 +5,7 @@ import { buildWorkflow, makeRun, MemoryRunStore, MockRunner, MockWorkspace, stat
 import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
+import { pausedNeeds } from '../../src/workflow/run-view.js';
 import type { ResolvedWorkflow } from '../../src/types/workflow.js';
 
 interface Harness {
@@ -285,6 +286,22 @@ tasks:
     const r3 = await rejected.scheduler.execute();
     expect(r3.state).toBe('failed');
     expect(states(rejected.run)).toEqual({ a: 'success', gate: 'failed', b: 'cancelled' });
+  });
+
+  it('names an approval gate in one line, however long its prompt is', async () => {
+    // `cao run`'s paused block, `cao status`, `cao task` and report.md all print this next to the command
+    // that answers it. A gate's prompt is often a paragraph, and six wrapped lines of it push the command
+    // that resolves the gate off the screen.
+    const prompt = ['Ship 2.1 to production?', '', 'The release notes are in docs/, the migration has run on staging,', 'and the on-call rota is covered.'].join(NL);
+    const yaml = `name: t${NL}tasks:${NL}  - id: gate${NL}    type: approval${NL}    prompt: |${NL}${prompt.split(NL).map((l) => `      ${l}`).join(NL)}${NL}`;
+    const h = harness(await wf(yaml));
+    await h.scheduler.execute();
+    expect(states(h.run)).toEqual({ gate: 'awaiting_approval' });
+
+    const needs = pausedNeeds(h.run);
+    expect(needs).toEqual([
+      { taskId: 'gate', kind: 'approval', question: 'Ship 2.1 to production?', command: `cao resume ${h.run.runId} --approve gate   (or --reject gate)` },
+    ]);
   });
 
   it('pauses on needs_input', async () => {

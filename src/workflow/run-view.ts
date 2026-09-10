@@ -59,6 +59,11 @@ export async function findCapturedDiff(
   return null;
 }
 
+/** The first line with anything on it: a gate's prompt is often a paragraph, and this is one line of it. */
+function firstLine(text: string): string {
+  return text.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? '';
+}
+
 /**
  * The first of `parts` with readable content, with the instruction the orchestrator appends for the worker
  * taken back off: these strings are on their way to an operator, and "finish with status needs_input if you
@@ -111,7 +116,9 @@ export function pausedNeeds(run: WorkflowRun): PausedNeed[] {
     const st = run.tasks[task.id];
     if (!st) continue;
     if (st.state === 'awaiting_approval') {
-      needs.push({ taskId: task.id, kind: 'approval', question: task.prompt, command: `cao resume ${run.runId} --approve ${task.id}   (or --reject ${task.id})` });
+      // The gate's first line, not the whole prompt: this is a one-line "what is wanted" next to the
+      // command that answers it, and an approval prompt is often a paragraph. `cao task <id>` has the rest.
+      needs.push({ taskId: task.id, kind: 'approval', question: firstLine(task.prompt), command: `cao resume ${run.runId} --approve ${task.id}   (or --reject ${task.id})` });
     } else if (st.state === 'needs_input') {
       needs.push({ taskId: task.id, kind: 'input', question: taskQuestion(st), command: `cao resume ${run.runId} --task ${task.id} --input "<your answer>"` });
     }
