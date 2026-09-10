@@ -118,6 +118,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `crash`.
 - A Codex `appServer` task configured with `codex.approvals: host` and run without a dashboard now pauses
   with `needs_input` explaining the two ways to fix it, instead of failing the task as an invalid result.
+- The note a `cao resume` prints for a task it left holding its question now also names the way out for an
+  operator who cannot answer it: `cao resume <run> --task <id>` without `--input` runs that task again from
+  the top. Documented in configuration.md.
 - The `codex exec` "no human can be reached" notice is written to a task's first attempt log only, not to
   every attempt's, so `cao logs <task>` for a retried task no longer opens with the same paragraph three
   times. The run-log warning was already once per task.

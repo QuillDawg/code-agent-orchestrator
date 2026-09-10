@@ -493,6 +493,9 @@ describe('cao resume --input as a command (H3.5)', () => {
     const answered = await captureCli(() => resumeCommand(undefined, { repository: repo, tui: false, claudeCommand: FAKE_CLAUDE, task: ['a'], input: 'Use Postgres' }));
     // Restarting "b" unanswered would spend a whole attempt arriving back at the same question.
     expect(answered.stdout).toContain(`"b" still needs input: cao resume ${run.runId} --task b --input "<your answer>"`);
+    // An operator who cannot answer the question at all is told the other way out, rather than being left
+    // with a run that will not move: naming the task without an answer runs it again from the top.
+    expect(answered.stdout).toContain('or --task b on its own to run it again from the top');
     const after = await new FileRunStore(repo).loadRun(run.runId);
     expect(after.tasks['a']!.state).toBe('success');
     expect(after.tasks['b']!.state).toBe('needs_input');

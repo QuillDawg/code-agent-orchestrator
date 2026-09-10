@@ -141,8 +141,9 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
           rerun.push(st.id);
         } else {
           // Left holding its question. Restarting it unanswered would spend a whole attempt to arrive back
-          // at the same question, so the run stays paused on it and says how to answer it.
-          notes.push(`"${st.id}" still needs input: cao resume ${run.runId} --task ${st.id} --input "<your answer>"`);
+          // at the same question, so the run stays paused on it and says how to answer it - and how to run
+          // it again anyway, for an operator holding a question they cannot answer.
+          notes.push(`"${st.id}" still needs input: cao resume ${run.runId} --task ${st.id} --input "<your answer>" (or --task ${st.id} on its own to run it again from the top)`);
         }
         break;
       default:

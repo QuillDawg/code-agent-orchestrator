@@ -349,7 +349,7 @@ When nobody answers in time, or no dashboard is attached, the prompt is denied w
 
 Codex `appServer` routes stable command and file-change approvals, and (with `experimentalUserInput: true`) questions, through the same flow. Codex `exec` cannot be asked anything at all: see [`codex`](#codex-workflow-template-or-task-level) above.
 
-**Answering afterwards.** `cao resume <run> --task <id> --input "<text>"` gives a paused task its answer. When the attempt that asked left a resumable session behind, that session is continued with the answer as its next message rather than the task being run again from the top; otherwise the fresh attempt's prompt carries the question next to the answer. `--input` answers one task at a time, and a task that is not in `needs_input` is a usage error naming the state it is actually in — the other paused tasks keep their questions until you answer them too.
+**Answering afterwards.** `cao resume <run> --task <id> --input "<text>"` gives a paused task its answer. When the attempt that asked left a resumable session behind, that session is continued with the answer as its next message rather than the task being run again from the top; otherwise the fresh attempt's prompt carries the question next to the answer. `--input` answers one task at a time, and a task that is not in `needs_input` is a usage error naming the state it is actually in — the other paused tasks keep their questions until you answer them too. A plain `cao resume <run>` leaves them paused rather than spending an attempt to arrive back at the same question; if you cannot answer one at all, `cao resume <run> --task <id>` without `--input` runs that task again from the top.
 
 ## `hooks`
 
