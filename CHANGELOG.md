@@ -18,6 +18,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   providers and transports that workflow needs.
 - Mixed-provider examples cover both Claude implementation with Codex review and Codex implementation with
   Claude review.
+- `npm run test:agents` checks the arguments CAO emits against the installed agent CLIs. For a matrix of
+  workflow options it builds the real argv and asserts every flag against `codex --help`, `codex exec
+  --help`, `codex exec resume --help`, `codex app-server --help` and `claude --help`, including whether the
+  flag belongs before or after the subcommand. It skips with a stated reason when a CLI is missing or below
+  the supported minimum, so `npm test` stays offline and unchanged.
 - Small documentation smoke tests make it easy to verify Codex alone, Claude alone, and a Codex-to-Claude
   review handoff with cost-appropriate models.
 
@@ -30,6 +35,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- A Codex attempt that continues an earlier thread now opens its log with `resumed session <id>`, as a
+  Claude attempt already did, so `cao logs` and `cao peek` no longer show a retried or nudged attempt as if
+  it were a fresh session.
 - Codex tasks no longer fail at turn start with `invalid_json_schema`. Both Codex transports now use the
   closed, fully required schema that strict structured output expects, while preserving free-form result
   data through a JSON-encoded runner boundary.

@@ -29,13 +29,22 @@ npm run dev -- run examples/sequential-issues.yaml --dry-run
 
 Nothing in this repository ever calls a real model. `test/fixtures/fake-claude.mjs` speaks Claude's
 `stream-json` protocol; `test/fixtures/fake-codex.mjs` speaks both Codex exec JSONL and app-server JSON-RPC.
-The tests drive these stand-ins. You can use the Claude fixture for a whole workflow too:
+The tests drive these stand-ins. You can use either fixture for a whole workflow too:
 
 ```bash
 CAO_CLAUDE_COMMAND="node test/fixtures/fake-claude.mjs" npm run dev -- run examples/sequential-issues.yaml
 ```
 
-On PowerShell: `$env:CAO_CLAUDE_COMMAND = "node test/fixtures/fake-claude.mjs"`.
+On PowerShell: `$env:CAO_CLAUDE_COMMAND = "node test/fixtures/fake-claude.mjs"`. `CAO_CODEX_COMMAND` does
+the same for `node test/fixtures/fake-codex.mjs`.
+
+**The fakes are a contract, not a mirror.** Both validate their own command line the way the real binary
+does and exit non-zero with the vendor's wording when CAO sends something invalid - an unknown flag, a
+global flag written after `codex exec`, `--approve-for-me` next to `--sandbox`, an output schema that is not
+OpenAI-strict. Each fake keeps one table of the flags it accepts (`FLAGS`, near the top of the file), so
+teaching it a new flag is one edit. If a test starts failing because a fake got stricter, the runner is what
+needs fixing: a permissive fake agrees with every bug CAO has, which is how two Codex flag bugs reached
+users past a green suite.
 
 That runs a whole workflow — worktrees, merges, diff capture, the dashboard, the run report — for free. It is
 the fastest way to see a change working end to end, and the right way to reproduce a bug report.
@@ -55,14 +64,32 @@ listed in the header comment of the file and cover the cases that are otherwise 
 cwd and prompt of every invocation, which is how the isolation and context-passing tests assert what each
 worker actually received.
 
+`FAKE_CODEX_MODE` (or `FAKE_CODEX_TASK_MODES='{"task-id":"hang"}'`) does the same for the Codex fixture, and
+`FAKE_CODEX_TRACE=<file>` records the argv, the prompt and which command line was used (`exec`,
+`exec resume`, `app-server`):
+
+| Mode | What it exercises |
+|---|---|
+| `success` (default), `invalid`, `api-error`, `hang` | the exec and app-server outcome paths; `invalid` and `api-error` recover when the session is resumed, so a run exercises nudge-then-success and transient-then-resume |
+| `approval`, `file-approval`, `question` | app-server command, file-change and `requestUserInput` requests |
+| `failure`, `interrupted`, `mcp-failure`, `overload-once` | typed turn failures, an interrupted turn, a required MCP server that will not start, a `-32001` overload on `thread/start` |
+| `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope CAO did not ask for |
+
 ## Tests
 
 ```bash
-npm test                       # everything
+npm test                       # everything, offline
 npm test -- test/unit          # one directory
 npm test -- report             # one file, by substring
 npm run test:watch
+npm run test:agents            # the checks that need the real CLIs on PATH
 ```
+
+`npm run test:agents` is the check to run before touching a runner. It builds the argv for a matrix of
+workflow options through the production argument builders and asserts that every flag CAO can emit is one
+the installed binary advertises, on the right side of the subcommand, with a value the help text allows. It
+lives outside `npm test` (`vitest.agents.config.ts`) so the default suite stays offline, and it skips - with
+the reason printed - when `codex` or `claude` is missing or below `MINIMUM_AGENT_VERSIONS`.
 
 The layout:
 
@@ -71,9 +98,11 @@ The layout:
   dashboard and review views (Ink, via `ink-testing-library`), the report, the diff renderer, `cao doctor`,
   the CLI's argument and reference handling, packaging.
 - **`test/integration/`** — the parts that need the filesystem and a real `git`: `e2e.test.ts` drives the
-  actual CLI through a whole run, `worktree.test.ts` and `git.test.ts` cover isolation, merge-back and diff
-  capture, `run-store.test.ts` covers persistence and resume, `interactive.test.ts` the permission protocol,
-  `process-manager.test.ts` spawning and tree-kill.
+  actual CLI through a whole run, `codex-e2e.test.ts` does the same for both Codex transports,
+  `worktree.test.ts` and `git.test.ts` cover isolation, merge-back and diff capture, `run-store.test.ts`
+  covers persistence and resume, `interactive.test.ts` the permission protocol, `process-manager.test.ts`
+  spawning and tree-kill. `agent-surface.test.ts` is the exception: it needs the real CLIs and runs under
+  `npm run test:agents`, not `npm test`.
 - **`test/helpers/index.ts`** — temporary repositories, workflow builders and the assertions shared by both.
 - **`test/fixtures/`** — the fake Claude/Codex agents and the expected report document.
 
@@ -91,6 +120,7 @@ the ASCII-fallback tests override it themselves.
 npm run typecheck
 npm run lint        # eslint 10 flat config, type-aware, over src and test
 npm test
+npm run test:agents # if you touched a runner, its arguments or its detection
 ```
 
 CI runs exactly these plus `npm run build`, on Node 22 and 24, on Linux and Windows. Windows is not optional:

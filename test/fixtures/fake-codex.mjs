@@ -1,25 +1,167 @@
 #!/usr/bin/env node
+/**
+ * Fake Codex CLI for tests. Speaks `codex exec --json` JSONL and the `codex app-server` JSON-RPC dialect.
+ *
+ * It is deliberately as strict as the real binary about its own command line: FLAGS below is the single
+ * list of flags it accepts (mirroring `codex --help`, `codex exec --help`, `codex exec resume --help` and
+ * `codex app-server --help` of codex-cli 0.154.0), and anything else exits 2 with clap's wording. Adding a
+ * flag to the fake is one edit, in FLAGS.
+ *
+ * Every `exec` and `turn/start` call also validates its output schema the way the API does: a schema that
+ * is not OpenAI-strict fails with the `invalid_json_schema` 400, whatever the mode.
+ *
+ * Behaviour is controlled by env FAKE_CODEX_MODE, or per task by FAKE_CODEX_TASK_MODES='{"a":"hang"}':
+ *   success (default) | invalid | api-error | hang | strict-schema
+ *   app-server only: approval | file-approval | question | failure | interrupted | mcp-failure |
+ *                    malformed | overload-once | wrong-model | missing-policy
+ * `invalid`, `api-error` and `failure` recover when the session is resumed, so a run can exercise
+ * nudge-then-success and transient-error-then-resume.
+ * FAKE_CODEX_AUTH=0 makes `login status` fail. FAKE_CODEX_TRACE=<file> appends one JSON line per
+ * invocation (task, attempt, cwd, argv, prompt) so tests can assert what CAO actually launched.
+ */
 import readline from 'node:readline';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const args = process.argv.slice(2);
 const print = (text) => process.stdout.write(`${text}\n`);
-if (args.includes('--version')) { print('codex-cli 0.153.0'); process.exit(0); }
+const emit = (value) => print(JSON.stringify(value));
+
+// ---------------------------------------------------------------------------
+// The command line the real binary accepts. `1` marks a flag that takes a value.
+// ---------------------------------------------------------------------------
+const ROOT_ONLY = { '--remote': 1, '--remote-auth-token-env': 1, '-a': 1, '--ask-for-approval': 1, '--search': 0, '--no-alt-screen': 0 };
+const SHARED = {
+  '-c': 1, '--config': 1, '--enable': 1, '--disable': 1, '--strict-config': 0, '-i': 1, '--image': 1,
+  '-m': 1, '--model': 1, '--oss': 0, '--local-provider': 1, '-h': 0, '--help': 0, '-V': 0, '--version': 0,
+};
+const SESSION = {
+  '-p': 1, '--profile': 1, '-s': 1, '--sandbox': 1, '--approve-for-me': 0,
+  '--dangerously-bypass-approvals-and-sandbox': 0, '--dangerously-bypass-hook-trust': 0,
+  '-C': 1, '--cd': 1, '--worktree': 0, '--add-dir': 1,
+};
+const EXEC_ONLY = {
+  '--thread-source': 1, '--skip-git-repo-check': 0, '--ephemeral': 0, '--ignore-user-config': 0,
+  '--ignore-rules': 0, '--output-schema': 1, '--color': 1, '--json': 0, '-o': 1, '--output-last-message': 1,
+};
+
+/** Every command line this fake understands, with its flags, its subcommands and its usage banner. */
+const FLAGS = {
+  '': {
+    flags: { ...SHARED, ...SESSION, ...ROOT_ONLY },
+    subcommands: ['exec', 'app-server', 'login', 'logout', 'review', 'doctor', 'resume', 'fork', 'help'],
+    usage: ['Usage: codex [OPTIONS] [PROMPT]', '       codex [OPTIONS] <COMMAND> [ARGS]'],
+  },
+  exec: {
+    flags: { ...SHARED, ...SESSION, ...EXEC_ONLY },
+    subcommands: ['resume', 'fork', 'review', 'help'],
+    usage: ['Usage: codex exec [OPTIONS] [PROMPT]', '       codex exec [OPTIONS] <COMMAND> [ARGS]'],
+  },
+  // `exec resume` re-declares only the flags it can still honour: no sandbox, profile, add-dir or cd.
+  'exec resume': {
+    flags: {
+      ...SHARED, ...EXEC_ONLY, '--last': 0, '--all': 0, '--worktree': 0,
+      '--dangerously-bypass-approvals-and-sandbox': 0, '--dangerously-bypass-hook-trust': 0,
+    },
+    subcommands: [],
+    usage: ['Usage: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]'],
+  },
+  'app-server': {
+    flags: {
+      '-c': 1, '--config': 1, '--enable': 1, '--disable': 1, '--code-mode-host': 1, '--strict-config': 0,
+      '--listen': 1, '--stdio': 0, '--analytics-default-enabled': 0, '--ws-auth': 1, '--ws-token-file': 1,
+      '--ws-token-sha256': 1, '--ws-shared-secret-file': 1, '--ws-issuer': 1, '--ws-audience': 1,
+      '--ws-max-clock-skew-seconds': 1, '-h': 0, '--help': 0,
+    },
+    subcommands: ['daemon', 'proxy', 'generate-ts', 'generate-json-schema', 'help'],
+    usage: ['Usage: codex app-server [OPTIONS] [COMMAND]'],
+  },
+};
+
+/** Exit the way clap does: the error, an optional tip, the usage banner of the scope that rejected it. */
+function fail(message, scope, tipFor) {
+  const tip = tipFor ? `\n  tip: to pass '${tipFor}' as a value, use '-- ${tipFor}'\n` : '';
+  const usage = FLAGS[scope] ? `\n${FLAGS[scope].usage.join('\n')}\n` : '';
+  process.stderr.write(`error: ${message}\n${tip}${usage}\nFor more information, try '--help'.\n`);
+  process.exit(2);
+}
+
+/**
+ * Walk the command line the way clap does: a flag is looked up in the scope it appears in, so a global
+ * flag written after `exec` is as unknown as one CAO invented.
+ */
+function parseCommandLine(argv) {
+  let scope = '';
+  let positionals = 0;
+  const seen = [];
+  for (let index = 0; index < argv.length; index++) {
+    const token = argv[index];
+    if (token === '--') break;
+    if (token.startsWith('-') && token !== '-') {
+      const equals = token.indexOf('=');
+      const name = equals >= 0 ? token.slice(0, equals) : token;
+      const table = FLAGS[scope].flags;
+      if (!(name in table)) fail(`unexpected argument '${name}' found`, scope, name);
+      seen.push({ name, value: equals >= 0 ? token.slice(equals + 1) : argv[index + 1] });
+      if (table[name] === 1 && equals < 0) {
+        if (index + 1 >= argv.length) fail(`a value is required for '${name} <VALUE>' but none was supplied`, scope);
+        index++;
+      }
+      continue;
+    }
+    if (!positionals && FLAGS[scope].subcommands.includes(token)) {
+      const nested = scope ? `${scope} ${token}` : token;
+      if (!FLAGS[nested]) fail(`the subcommand '${token}' is not modelled by the fake Codex CLI`, scope);
+      scope = nested;
+      continue;
+    }
+    positionals++;
+  }
+  const has = (...names) => seen.some((flag) => names.includes(flag.name));
+  const valueOf = (...names) => seen.find((flag) => names.includes(flag.name))?.value;
+  // Mutually exclusive in the real CLI: the automatic-review preset owns the sandbox.
+  if (has('--approve-for-me') && has('--sandbox', '-s')) {
+    fail("the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'", scope);
+  }
+  // `--ask-for-approval` is interactive-only; an `exec` line never accepts it, in either position.
+  if (scope.startsWith('exec') && has('--ask-for-approval', '-a')) {
+    fail("the argument '--ask-for-approval <APPROVAL_POLICY>' cannot be used with 'exec'", scope);
+  }
+  return { scope, has, valueOf };
+}
+
+// --version, --help and `login status` answer before argv validation, exactly as the real binary does.
+if (args.includes('--version') || args.includes('-V')) { print('codex-cli 0.154.0'); process.exit(0); }
 if (args[0] === 'login' && args[1] === 'status') {
   if (process.env.FAKE_CODEX_AUTH === '0') { print('Not logged in'); process.exit(1); }
   print('Logged in'); process.exit(0);
 }
-if (args.includes('--help')) {
-  if (args[0] === 'exec') print('Usage: codex exec --json --output-schema --ignore-user-config --ignore-rules');
-  else if (args[0] === 'app-server') print('Usage: codex app-server --stdio');
-  else print('Usage: codex --approve-for-me');
+if (args.includes('--help') || args.includes('-h')) {
+  const scope = args[0] === 'exec' && args[1] === 'resume' ? 'exec resume' : args[0] === 'exec' ? 'exec' : args[0] === 'app-server' ? 'app-server' : '';
+  const entry = FLAGS[scope];
+  print(entry.usage.join('\n'));
+  if (entry.subcommands.length) print(`\nCommands:\n${entry.subcommands.map((name) => `  ${name}`).join('\n')}`);
+  print(`\nOptions:\n${Object.entries(entry.flags).map(([flag, arity]) => `  ${flag}${arity ? ' <VALUE>' : ''}`).join('\n')}`);
   process.exit(0);
 }
-const mode = process.env.FAKE_CODEX_MODE ?? 'success';
-const emit = (value) => print(JSON.stringify(value));
+
+const line = parseCommandLine(args);
+const taskId = process.env.CAO_TASK_ID ?? 'unknown';
+const attempt = Number(process.env.CAO_ATTEMPT ?? 1);
+const taskModes = JSON.parse(process.env.FAKE_CODEX_TASK_MODES ?? '{}');
+const mode = taskModes[taskId] ?? process.env.FAKE_CODEX_MODE ?? 'success';
+
+const trace = (extra) => {
+  if (!process.env.FAKE_CODEX_TRACE) return;
+  mkdirSync(path.dirname(process.env.FAKE_CODEX_TRACE), { recursive: true });
+  appendFileSync(process.env.FAKE_CODEX_TRACE, `${JSON.stringify({ taskId, attempt, cwd: process.cwd(), pid: process.pid, scope: line.scope, args, ...extra })}\n`);
+};
+
 const result = { status: 'success', summary: 'fake app-server completed', filesChanged: [], commits: [], decisions: [], warnings: [], followUp: [] };
 const strictResult = { ...result, error: null, data: JSON.stringify({ risk: 'low', nested: { count: 2 } }) };
 
+/** The `invalid_json_schema` 400 the API returns for a schema that is not OpenAI-strict. */
 function strictSchemaError(schema, context = '()') {
   if (!schema || typeof schema !== 'object') return null;
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
@@ -47,43 +189,81 @@ function strictSchemaError(schema, context = '()') {
   return null;
 }
 
-if (args.includes('exec')) {
-  const outputFlag = args.indexOf('--output-last-message');
-  const schemaFlag = args.indexOf('--output-schema');
-  let exitCode = 0;
-  await new Promise((resolve) => {
+if (line.scope.startsWith('exec')) {
+  const resumed = line.scope === 'exec resume';
+  const outputPath = line.valueOf('--output-last-message', '-o');
+  const schemaPath = line.valueOf('--output-schema');
+  const prompt = await new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => (data += chunk));
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', () => resolve(data));
     process.stdin.resume();
-    process.stdin.on('end', () => {
-      const schema = schemaFlag >= 0 && args[schemaFlag + 1] ? JSON.parse(readFileSync(args[schemaFlag + 1], 'utf8')) : undefined;
-      const schemaError = mode === 'strict-schema' ? strictSchemaError(schema) : null;
-      if (schemaError) {
-        exitCode = 1;
-        emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
-        emit({ type: 'turn.started' });
-        emit({ type: 'error', message: schemaError });
-        emit({ type: 'turn.failed', error: { message: schemaError } });
-        resolve();
-        return;
-      }
-      const execResult = { ...(mode === 'strict-schema' ? strictResult : result), summary: 'fake exec completed' };
-      if (outputFlag >= 0 && args[outputFlag + 1]) writeFileSync(args[outputFlag + 1], mode === 'invalid' ? '{"status":"success"}' : JSON.stringify(execResult), 'utf8');
-      emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
-      emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test' } });
-      emit({ type: 'item.completed', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test', status: 'completed', exit_code: 0, aggregated_output: 'ok' } });
-      emit({ type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: JSON.stringify(execResult) } });
-      emit({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5 } });
-      resolve();
-    });
   });
-  process.exit(exitCode);
+  trace({ prompt, resumed });
+  const schemaError = strictSchemaError(schemaPath ? JSON.parse(readFileSync(schemaPath, 'utf8')) : undefined);
+  if (schemaError) {
+    emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
+    emit({ type: 'turn.started' });
+    emit({ type: 'error', message: schemaError });
+    emit({ type: 'turn.failed', error: { message: schemaError } });
+    process.exit(1);
+  }
+  emit({ type: 'thread.started', thread_id: 'codex-exec-thread-1' });
+  if (mode === 'hang') {
+    setInterval(() => {}, 1000); // An unresolved promise alone would let node exit.
+    await new Promise(() => {});
+  }
+  if (mode === 'api-error' && !resumed) {
+    emit({ type: 'turn.started' });
+    process.stderr.write('stream error: fetch failed (ECONNRESET); retrying in 1s\n');
+    process.stderr.write('stream error: exceeded retry limit\n');
+    process.exit(1);
+  }
+  const execResult = { ...(mode === 'strict-schema' ? strictResult : result), summary: resumed ? `fake exec resumed ${taskId}` : 'fake exec completed' };
+  // No `status` at all: prose that reads like a result but does not satisfy the completion contract.
+  const text = mode === 'invalid' && !resumed ? '{"note":"I finished the work"}' : JSON.stringify(execResult);
+  if (outputPath) writeFileSync(outputPath, text, 'utf8');
+  emit({ type: 'item.started', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test' } });
+  emit({ type: 'item.completed', item: { type: 'command_execution', id: 'cmd-1', command: 'npm test', status: 'completed', exit_code: 0, aggregated_output: 'ok' } });
+  emit({ type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text } });
+  emit({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5 } });
+  process.exit(0);
 }
-if (!args.includes('app-server')) process.exit(2);
+if (line.scope !== 'app-server') fail('a subcommand is required but none was supplied', line.scope);
+
+trace({ transport: 'appServer' });
+
+/**
+ * The real app-server persists a thread's resolved settings and reports them again on `thread/resume`,
+ * which sends nothing but the id. The fake keeps them next to its trace file (or in the temp directory)
+ * so a resumed turn answers with the envelope the thread was started with, not with defaults.
+ */
+const stateDir = process.env.FAKE_CODEX_TRACE ? path.dirname(process.env.FAKE_CODEX_TRACE) : os.tmpdir();
+const stateFile = (id) => path.join(stateDir, `fake-codex-thread-${String(id).replace(/[^A-Za-z0-9_.-]/g, '_')}.json`);
+const rememberThread = (id, settings) => {
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(stateFile(id), JSON.stringify(settings), 'utf8');
+  } catch {
+    /* the fallback below is good enough */
+  }
+};
+const recallThread = (id) => {
+  try {
+    return existsSync(stateFile(id)) ? JSON.parse(readFileSync(stateFile(id), 'utf8')) : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 let threadId = 'codex-thread-1';
 let overloaded = false;
+let isResume = false;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on('line', (line) => {
-  const message = JSON.parse(line);
+rl.on('line', (raw) => {
+  const message = JSON.parse(raw);
   if (message.method === 'initialize') {
     emit({ id: message.id, result: { userAgent: 'fake-codex' } });
   } else if (message.method === 'thread/start' || message.method === 'thread/resume') {
@@ -92,14 +272,24 @@ rl.on('line', (line) => {
       emit({ id: message.id, error: { code: -32001, message: 'server overloaded' } });
       return;
     }
+    isResume = message.method === 'thread/resume';
     threadId = message.params?.threadId ?? threadId;
+    const stored = isResume ? recallThread(threadId) : undefined;
+    const settings = {
+      model: message.params?.model ?? stored?.model ?? 'fake-codex',
+      approvalPolicy: message.params?.approvalPolicy ?? stored?.approvalPolicy ?? 'on-request',
+      approvalsReviewer: message.params?.approvalsReviewer ?? stored?.approvalsReviewer ?? 'user',
+      sandbox: message.params?.sandbox ?? stored?.sandbox ?? 'workspace-write',
+    };
+    if (!isResume) rememberThread(threadId, settings);
+    const sandboxType = settings.sandbox.replace(/-([a-z])/g, (_all, letter) => letter.toUpperCase());
     emit({ id: message.id, result: {
-      thread: { id: threadId }, model: mode === 'wrong-model' ? 'other-model' : message.params?.model ?? 'fake-codex', modelProvider: 'openai', cwd: message.params?.cwd ?? process.cwd(),
-      instructionSources: [], approvalPolicy: mode === 'missing-policy' ? null : message.params?.approvalPolicy ?? 'on-request', approvalsReviewer: message.params?.approvalsReviewer ?? 'user',
-      sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null,
+      thread: { id: threadId }, model: mode === 'wrong-model' ? 'other-model' : settings.model, modelProvider: 'openai', cwd: message.params?.cwd ?? process.cwd(),
+      instructionSources: [], approvalPolicy: mode === 'missing-policy' ? null : settings.approvalPolicy, approvalsReviewer: settings.approvalsReviewer,
+      sandbox: { type: sandboxType, writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null,
     } });
   } else if (message.method === 'turn/start') {
-    const schemaError = mode === 'strict-schema' ? strictSchemaError(message.params?.outputSchema) : null;
+    const schemaError = strictSchemaError(message.params?.outputSchema);
     if (schemaError) {
       emit({ id: message.id, error: { code: -32602, message: schemaError } });
       return;
@@ -111,7 +301,7 @@ rl.on('line', (line) => {
       emit({ id: 98, method: 'item/fileChange/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'file-1', reason: 'update fixture', grantRoot: process.cwd() } });
     } else if (mode === 'question') {
       emit({ id: 100, method: 'item/tool/requestUserInput', params: { threadId, turnId: 'turn-1', itemId: 'q-1', isBlocking: true, autoResolutionMs: null, questions: [{ id: 'choice', header: 'Choice', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'first' }] }] } });
-    } else if (mode === 'failure') {
+    } else if (mode === 'failure' && !isResume) {
       emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'failed', items: [], itemsView: 'full', error: { message: 'overloaded', codexErrorInfo: 'serverOverloaded', additionalDetails: null } } } });
     } else if (mode === 'interrupted') {
       emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'interrupted', items: [], itemsView: 'full', error: null } } });
@@ -122,11 +312,11 @@ rl.on('line', (line) => {
       print('not-json');
       emit({ method: 'future/additiveNotification', params: { value: 1 } });
       finish();
-    } else if (mode === 'invalid') {
+    } else if (mode === 'invalid' && !isResume) {
       finish({ unrelated: true });
     } else if (mode === 'hang') {
       // Wait for the orchestrator to interrupt and terminate this process.
-    } else finish(mode === 'strict-schema' ? strictResult : result);
+    } else finish(mode === 'strict-schema' ? strictResult : { ...result, summary: isResume ? `fake app-server resumed ${taskId}` : result.summary });
   } else if (message.id === 98 || message.id === 99 || message.id === 100) {
     if (process.env.FAKE_CODEX_TRACE) process.stderr.write(`response:${JSON.stringify(message)}\n`);
     finish();

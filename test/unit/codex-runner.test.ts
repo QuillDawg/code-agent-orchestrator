@@ -35,6 +35,46 @@ describe('Codex runner arguments', () => {
     const args = buildCodexArgs({ permissionMode: 'readOnly' }, 'schema.json', 'final.json', 'thread-1');
     expect(args).toEqual(expect.arrayContaining(['--sandbox', 'read-only', 'exec', 'resume', 'thread-1']));
   });
+
+  /**
+   * The invariants the CLI enforces at runtime and no help text can express. `npm run test:agents` checks
+   * that every flag exists and sits on the right side of the subcommand; this checks, offline and over the
+   * whole option matrix, the two combinations the real binary refuses outright.
+   */
+  it('never emits a combination the real CLI refuses, for any option combination', () => {
+    const problems: string[] = [];
+    let built = 0;
+    for (const permissionMode of [undefined, 'auto', 'readOnly', 'fullAccess'] as const) {
+      for (const approvals of [undefined, 'auto', 'host', 'autoReview', 'deny'] as const) {
+        for (const sandbox of [undefined, 'read-only', 'workspace-write', 'danger-full-access'] as const) {
+          for (const approvalPolicy of [undefined, 'on-request', 'never'] as const) {
+            for (const configMode of [undefined, 'inherit', 'isolated'] as const) {
+              for (const resume of [undefined, 'thread-1']) {
+                let args: string[];
+                try {
+                  args = buildCodexArgs({ permissionMode, approvals, sandbox, approvalPolicy, configMode, profile: 'ci', addDirs: ['../shared'] }, 's.json', 'f.json', resume, 'gpt-5-codex', 'high');
+                } catch {
+                  continue; // A combination CAO refuses to build cannot reach the CLI.
+                }
+                built++;
+                const label = `${permissionMode}/${approvals}/${sandbox}/${approvalPolicy}/${configMode}/${resume ?? 'fresh'}`;
+                if (args.includes('--approve-for-me') && (args.includes('--sandbox') || args.includes('-s'))) problems.push(`${label}: --approve-for-me with --sandbox`);
+                if (args.includes('--ask-for-approval') || args.includes('-a')) problems.push(`${label}: --ask-for-approval on an exec line`);
+                const boundary = args.indexOf('exec');
+                if (boundary < 0) problems.push(`${label}: no exec subcommand`);
+                for (const flag of ['--sandbox', '--approve-for-me', '--profile', '--add-dir']) {
+                  const at = args.indexOf(flag);
+                  if (at >= 0 && at > boundary) problems.push(`${label}: ${flag} after exec`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(built).toBeGreaterThan(200);
+    expect(problems).toEqual([]);
+  });
 });
 
 describe('Codex exec transport', () => {

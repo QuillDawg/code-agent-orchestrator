@@ -61,6 +61,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:agents": "vitest run --config vitest.agents.config.ts",
     "lint": "eslint src test",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },

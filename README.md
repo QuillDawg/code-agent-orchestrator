@@ -851,13 +851,14 @@ npm link            # provides `cao` and `code-agent-orchestrator` from your che
 npm run typecheck
 npm run lint        # eslint (flat config, type-aware) over src and test
 npm test            # unit + integration; runs against a fake agent, no API calls
+npm run test:agents # checks the argv CAO emits against the installed CLIs' --help; skips if they are absent
 npm run build
 npm run dev -- run examples/sequential-issues.yaml --dry-run
 ```
 
 Node 22 is pinned in `.nvmrc`, and `.editorconfig` carries the whitespace conventions. CI runs typecheck,
 lint, test and build on Node 22 and 24, on Linux and Windows. It needs a real `git` but never an agent CLI,
-because the suites drive the fake Claude in `test/fixtures/`.
+because the suites drive the fake agents in `test/fixtures/`.
 
 ## Contributing
 

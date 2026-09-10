@@ -23,6 +23,26 @@ import readline from 'node:readline';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
+
+/**
+ * The single list of flags this fake accepts, mirroring `claude --help`. `0` means the flag takes no
+ * value; a string is the value placeholder shown in `--help` (the runner's capability probe reads it, so
+ * `stream-json` has to appear there literally). Extending the fake is one edit, here.
+ */
+const FLAGS = {
+  '-p': 0, '--print': 0, '--verbose': 0, '--output-format': 'stream-json', '--input-format': 'stream-json',
+  '--json-schema': '<schema>', '--safe-mode': 0, '--permission-mode': '<mode>', '--permission-prompt-tool': '<tool>',
+  '--permission-prompts': '<target>', '--session-id': '<uuid>', '--resume': '<uuid>', '--fork-session': 0,
+  '--append-system-prompt': '<prompt>', '--system-prompt': '<prompt>', '--model': '<model>', '--effort': '<level>',
+  '--max-budget-usd': '<amount>', '--allowedTools': '<tools...>', '--allowed-tools': '<tools...>',
+  '--disallowedTools': '<tools...>', '--disallowed-tools': '<tools...>', '--add-dir': '<directories...>',
+  '--no-session-persistence': 0, '--fallback-model': '<model>', '--settings': '<file-or-json>',
+  '--mcp-config': '<configs...>', '--strict-mcp-config': 0, '--setting-sources': '<sources>',
+  '--include-partial-messages': 0, '--bare': 0, '--forward-subagent-text': 0, '--help': 0, '--version': 0,
+};
+// The flag is new: a CLI that does not advertise it does not accept it either.
+if (process.env.FAKE_CLAUDE_NO_SUBAGENT_TEXT === '1') delete FLAGS['--forward-subagent-text'];
+
 if (args.includes('--version')) {
   process.stdout.write('9.9.9 (Fake Claude)\n');
   process.exit(0);
@@ -34,13 +54,33 @@ if (args[0] === 'auth' && args[1] === 'status') {
 
 // The capability probe: the runner only passes flags this help text advertises.
 if (args.includes('--help')) {
-  const flags = ['--output-format stream-json', '--json-schema <schema>', '--safe-mode', '--input-format <fmt>', '--permission-prompt-tool <tool>', '--session-id <uuid>', '--resume <uuid>'];
-  if (process.env.FAKE_CLAUDE_NO_SUBAGENT_TEXT !== '1') flags.push('--forward-subagent-text');
+  const flags = Object.entries(FLAGS).map(([flag, value]) => `${flag}${value ? ` ${value}` : ''}`);
   process.stdout.write(`Usage: claude [options]\n\nOptions:\n${flags.map((f) => `  ${f}\n`).join('')}`);
   process.exit(0);
 }
 
+// Commander rejects anything it was not given a definition for; so does the real CLI.
+for (let i = 0; i < args.length; i++) {
+  const token = args[i];
+  if (!token.startsWith('-') || token === '-' || token === '--') continue;
+  const name = token.includes('=') ? token.slice(0, token.indexOf('=')) : token;
+  if (!(name in FLAGS)) {
+    process.stderr.write(`error: unknown option '${name}'\n`);
+    process.exit(2);
+  }
+  if (FLAGS[name] && !token.includes('=')) {
+    if (i + 1 >= args.length) {
+      process.stderr.write(`error: option '${name} ${FLAGS[name]}' argument missing\n`);
+      process.exit(2);
+    }
+    i++;
+  }
+}
+
 const streamInput = args.includes('--input-format') && args[args.indexOf('--input-format') + 1] === 'stream-json';
+// Control requests are only routed to stdin when the session was started with a stdio permission tool;
+// without it the CLI answers them itself (it denies), and the host never sees them.
+const canAskHost = streamInput && args.includes('--permission-prompt-tool') && args[args.indexOf('--permission-prompt-tool') + 1] === 'stdio';
 const controlWaiters = new Map();
 const controlResponses = new Map();
 
@@ -167,6 +207,11 @@ let requestSeq = 0;
 /** Ask the host for permission (or an answer) and wait for its control_response. */
 const askHost = (toolName, input, extra = {}) => {
   const requestId = `req-${process.pid}-${++requestSeq}`;
+  // No stdio permission tool: the CLI answers for the host, and the host is never asked.
+  if (!canAskHost) {
+    process.stderr.write(`Permission request for ${toolName} denied: no permission prompt tool is configured for this session\n`);
+    return Promise.resolve({ subtype: 'success', response: { behavior: 'deny', message: 'no permission prompt tool is configured for this session' } });
+  }
   emit({ type: 'control_request', request_id: requestId, request: { subtype: 'can_use_tool', tool_name: toolName, display_name: toolName, input, tool_use_id: `tu-${requestSeq}`, ...extra } });
   const known = controlResponses.get(requestId);
   if (known) return Promise.resolve(known);

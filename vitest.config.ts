@@ -3,7 +3,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
-    exclude: ['node_modules', 'dist', '.orchestrator'],
+    // The real-CLI surface check needs `codex` and `claude` on PATH; it lives in `npm run test:agents`
+    // (vitest.agents.config.ts) so that `npm test` stays offline and identical on every machine.
+    exclude: ['node_modules', 'dist', '.orchestrator', 'test/integration/agent-surface.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     pool: 'forks',

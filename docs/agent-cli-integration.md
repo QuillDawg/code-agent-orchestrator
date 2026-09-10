@@ -193,7 +193,19 @@ so stored results and downstream context retain the object shape above.
 
 ## Verifying a real session
 
-The automated suite uses `test/fixtures/fake-claude.mjs` and never calls an API. To smoke-test a real CLI cheaply:
+The automated suite uses `test/fixtures/fake-claude.mjs` and `test/fixtures/fake-codex.mjs` and never calls
+an API. Both fakes validate their own command line the way the real binary does, so an argument this page
+describes wrongly fails `npm test` rather than a user's run.
+
+The flags themselves are checked against the installed CLIs by `npm run test:agents`
+(`test/integration/agent-surface.test.ts`): for a matrix of workflow options it builds the argv through
+`buildCodexArgs`, `buildCodexAppServerArgs` and `buildClaudeArgs` and asserts every emitted flag against
+`codex --help`, `codex exec --help`, `codex exec resume --help`, `codex app-server --help` and
+`claude --help`, including whether the flag belongs before or after the subcommand. It skips, with the
+reason, when a binary is missing or below the supported minimum. Run it after changing anything on this
+page.
+
+To smoke-test a real CLI cheaply:
 
 ```yaml
 name: hello
