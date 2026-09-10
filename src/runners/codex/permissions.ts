@@ -25,6 +25,11 @@ export function resolveCodexPermissions(options: CodexOptions, canInteract: bool
   };
 }
 
+/** The Codex automatic-review CLI preset owns its sandbox selection. */
+export function codexAutomaticReviewSandboxConflict(permissions: ResolvedCodexPermissions): boolean {
+  return permissions.autoReview && permissions.sandbox !== 'workspace-write';
+}
+
 const SECURITY_FLAGS = new Set([
   '--sandbox', '-s', '--ask-for-approval', '-a', '--approve-for-me', '--full-auto', '--yolo',
   '--dangerously-bypass-approvals-and-sandbox', '--add-dir',

@@ -19,7 +19,7 @@ import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { runCodexAppServer } from './app-server.js';
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
-import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
+import { codexAutomaticReviewSandboxConflict, codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
 
 export interface CodexRunnerOptions {
   processManager: ProcessManager;
@@ -39,7 +39,7 @@ export function buildCodexArgs(options: CodexOptions, schemaPath: string, output
   const conflict = codexExtraArgsSecurityConflict(options.extraArgs);
   if (conflict) throw new Error(`Codex extraArgs cannot override security option "${conflict}"; use the validated codex permission fields`);
   const permissions = resolveCodexPermissions(options, false);
-  if (permissions.autoReview && permissions.sandbox !== 'workspace-write') {
+  if (codexAutomaticReviewSandboxConflict(permissions)) {
     throw new Error('Codex automatic review requires the workspace-write sandbox');
   }
   const args = ['-c', `approval_policy="${permissions.approvalPolicy}"`];

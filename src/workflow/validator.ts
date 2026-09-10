@@ -6,7 +6,7 @@ import { compileWhen } from '../conditions/evaluator.js';
 import { ConfigError } from '../util/errors.js';
 import { errorLine, warnLine } from '../util/marks.js';
 import { supportsAutoMode, supportsEffort } from '../runners/claude/models.js';
-import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from '../runners/codex/permissions.js';
+import { codexAutomaticReviewSandboxConflict, codexExtraArgsSecurityConflict, resolveCodexPermissions } from '../runners/codex/permissions.js';
 
 export interface ValidationOptions {
   knownRunners?: string[];
@@ -84,7 +84,7 @@ export function validateWorkflow(
       if (t.codex.permissionMode === 'fullAccess' && t.codex.sandbox && t.codex.sandbox !== 'danger-full-access') {
         error(`Task "${t.id}": Codex permissionMode "fullAccess" cannot be combined with sandbox "${t.codex.sandbox}"`, t.id);
       }
-      if (transport === 'exec' && permissions.autoReview && permissions.sandbox !== 'workspace-write') {
+      if (transport === 'exec' && codexAutomaticReviewSandboxConflict(permissions)) {
         error(`Task "${t.id}": Codex automatic review requires the workspace-write sandbox on transport "exec"`, t.id);
       }
       const unsafeExtraArg = codexExtraArgsSecurityConflict(t.codex.extraArgs);

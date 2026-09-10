@@ -30,6 +30,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- Codex `exec` workflows using automatic review no longer pass mutually exclusive approval and sandbox
+  flags that made the Codex CLI exit before starting the task.
 - A task id longer than the task column pushed every column after it out of line on the dashboard and the
   usage screen. The id is now cut to the column with an ellipsis, so the state, cost and activity columns
   stay aligned however long a task is named.

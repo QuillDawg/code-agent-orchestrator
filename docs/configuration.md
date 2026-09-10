@@ -150,7 +150,7 @@ codex:
   profile: team-default
 ```
 
-`exec` is the stable, unattended transport. `auto` maps to the workspace-write sandbox and Codex automatic approval review, so a model-requested approval cannot leave CI waiting on a terminal that does not exist. `readOnly` denies approvals and `fullAccess` uses danger-full-access with approvals disabled; use the latter only in an externally isolated environment.
+`exec` is the stable, unattended transport. `auto` maps to the workspace-write sandbox and Codex automatic approval review, so a model-requested approval cannot leave CI waiting on a terminal that does not exist. On this transport automatic review is a combined Codex preset and requires `sandbox: workspace-write`; validation rejects a different raw sandbox instead of silently overriding it. `readOnly` denies approvals and `fullAccess` uses danger-full-access with approvals disabled; use the latter only in an externally isolated environment.
 
 `appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. Free-form Codex questions remain disabled unless `experimentalUserInput: true`; when disabled, a question ends the task as `needs_input` instead of hanging.
 
