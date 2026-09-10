@@ -8,7 +8,8 @@ import { logSource, jsonEntryLines } from '../../src/cli/commands/logs.js';
 import { mark } from '../../src/util/marks.js';
 import { glyph, useUnicode } from '../../src/util/glyphs.js';
 import { stateGlyph } from '../../src/workflow/states.js';
-import { formatAgents } from '../../src/cli/render/plain.js';
+import { attachPlainRenderer, formatAgents } from '../../src/cli/render/plain.js';
+import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { renderExecutionPlan } from '../../src/workflow/plan.js';
 import type { TaskState } from '../../src/types/run.js';
 import { buildWorkflow, makeRun, tmpDir } from '../helpers/index.js';
@@ -117,6 +118,27 @@ describe('questionLines', () => {
     expect(questionLines(`Run ${CR}rm -rf /${ESC}[2K${ESC}[G now?`)).toEqual(['| Run rm -rf / now?']);
     // A single unbroken token has no word boundary to break on, so it is cut at the width.
     expect(questionLines('x'.repeat(25), 4, 10)).toEqual([`| ${'x'.repeat(10)}`, `| ${'x'.repeat(10)}`, `| ${'x'.repeat(5)}`]);
+  });
+});
+
+describe('the plain renderer', () => {
+  const ESC = String.fromCharCode(27);
+  const CR = String.fromCharCode(13);
+
+  it('lets a warning write no more of the terminal than any other agent text', async () => {
+    const written: string[] = [];
+    const r = await run(['a']);
+    const bus = new WorkflowEventBus(r.runId);
+    attachPlainRenderer(bus, r, { write: (line) => written.push(line), color: false });
+    // A warning carries agent-controlled text - a stream error, a rejection the CLI worded - and this
+    // renderer writes straight to a terminal.
+    bus.emit({ type: 'workflow.warning', code: 'agent', taskId: 'a', message: `Codex rejected it: ${CR}${ESC}[2K${ESC}[Gall clear${NL}second line` });
+
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain('a: Codex rejected it: all clear');
+    expect(written[0]).not.toContain(ESC);
+    expect(written[0]).not.toContain(CR);
+    expect(written[0]).not.toContain('second line');
   });
 });
 

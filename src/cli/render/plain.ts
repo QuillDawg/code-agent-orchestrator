@@ -103,7 +103,9 @@ export function attachPlainRenderer(bus: EventBus, run: WorkflowRun, opts: Plain
         write(`${stamp()} ${glyph('merge')} ${ev.taskId}  merged ${ev.branch} into ${ev.into} (${ev.sha.slice(0, 10)})`);
         break;
       case 'workflow.warning':
-        write(`${stamp()} ${paint('!', 'yellow', color)} ${ev.taskId ? `${ev.taskId}: ` : ''}${ev.message}`);
+        // A warning can carry text an agent wrote (a stream error, a rejection message), and this renderer
+        // writes straight to a terminal, so it is cleaned like every other agent-controlled line here.
+        write(`${stamp()} ${paint('!', 'yellow', color)} ${ev.taskId ? `${ev.taskId}: ` : ''}${firstLine(ev.message)}`);
         break;
       case 'workflow.paused':
         write(`${stamp()} ${paint(`${glyph('pause')} workflow paused (${ev.reason}): ${ev.taskIds.join(', ')}`, 'yellow', color)}`);
