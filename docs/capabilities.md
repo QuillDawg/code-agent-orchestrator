@@ -724,6 +724,10 @@ Nothing is written into your repository, nothing survives the command (every pro
 `cao doctor` sweeps the rest), and an agent that is not installed, or not authenticated, is not probed at
 all: it has already said so on its own line.
 
+`cao doctor --no-probe` runs the cheap checks alone - no agent is started, nothing is spent, and no probe
+waits up to a minute - which is what a scripted or offline check wants. The probe rows are still printed,
+as `- <agent> live start  not probed (--no-probe)`, so a report never looks like the probes passed.
+
 Only the agent and environment checks can stop a run, so only those exit `1`; a warning is something to tidy up, and the exit
 code stays `0`. A check that cannot be answered here — the run checks outside a repository that has never run
 anything — is printed with a `-` and grades nothing. `--json` carries the same checks plus the raw facts

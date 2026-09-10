@@ -231,6 +231,31 @@ describe.skipIf(!HAS_GIT)('gathering the facts', () => {
     expect(missing.gitRoot).toBe(repo);
   });
 
+  /**
+   * The live probes start each agent mode for real, which costs a small model call and up to a minute per
+   * mode. A scripted `cao doctor` that used to be free has to be able to ask for the cheap checks alone -
+   * and the report has to say that it did, rather than quietly leaving the probe rows out.
+   */
+  it('--no-probe starts no agent, and says so instead of dropping the probe rows', async () => {
+    const repo = await tmpGitRepo('cao-doctor-noprobe-');
+    let started = 0;
+    const deps = { ...stubDetect(), probeAgents: async () => { started++; return []; } };
+
+    const probed = await gatherFacts({ repository: repo }, deps);
+    expect(started).toBe(1);
+    expect(probed.probes).toBeUndefined(); // the stub found nothing to report
+
+    const skipped = await gatherFacts({ repository: repo, probe: false }, deps);
+    expect(started).toBe(1);
+    expect(skipped.probes).toEqual([
+      { runner: 'claude', mode: 'live start', status: 'skip', detail: 'not probed (--no-probe)' },
+      { runner: 'codex', mode: 'live start', status: 'skip', detail: 'not probed (--no-probe)' },
+    ]);
+    const checks = evaluate(skipped);
+    expect(check(checks, 'probe:claude:live start').status).toBe('skip');
+    expect(checks.filter((c) => c.status === 'fail')).toEqual([]);
+  });
+
   it('finds a lock whose orchestrator process is gone, and leaves a live one alone', async () => {
     const repo = await tmpGitRepo('cao-doctor-');
     const paths = createRunPaths(repo);

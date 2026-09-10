@@ -215,6 +215,7 @@ export function buildProgram(): Command {
     .description('Check this machine: Node, git, the agent CLIs, and what past runs left behind')
     .option('--repository <dir>', 'repository to check (default: launch directory / git root)')
     .option('--json', 'machine-readable output')
+    .option('--no-probe', 'skip the live agent probes (they start each agent mode and spend a small model call)')
     .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
 
   // A short description says what a command is for; these say what to type, for the arguments that are not
@@ -232,7 +233,7 @@ export function buildProgram(): Command {
     diff: ['cao diff                                # every task, in execution order', 'cao diff review --stat', 'cao diff review --file src/app.ts'],
     report: ['cao report', 'cao report 002 --out report.md'],
     clean: ['cao clean                               # worktrees of the latest run', 'cao clean 002 --all                     # worktrees and branches'],
-    doctor: ['cao doctor', 'cao doctor --json                       # paste this into a bug report'],
+    doctor: ['cao doctor', 'cao doctor --json                       # paste this into a bug report', 'cao doctor --no-probe                   # no agent is started, nothing is spent'],
   };
   for (const command of program.commands) {
     const lines = EXAMPLES[command.name()];

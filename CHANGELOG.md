@@ -118,6 +118,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `crash`.
 - A Codex `appServer` task configured with `codex.approvals: host` and run without a dashboard now pauses
   with `needs_input` explaining the two ways to fix it, instead of failing the task as an invalid result.
+- `cao doctor --no-probe` skips the live agent probes, for a scripted or offline check that must not start
+  an agent or spend a model call. The probe rows are still printed, as skipped.
 - The note a `cao resume` prints for a task it left holding its question now also names the way out for an
   operator who cannot answer it: `cao resume <run> --task <id>` without `--input` runs that task again from
   the top. Documented in configuration.md.
