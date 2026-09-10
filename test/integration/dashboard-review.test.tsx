@@ -16,7 +16,7 @@ import { silentLogger } from '../../src/logging/logger.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
 import { stripAnsi } from '../../src/cli/color.js';
-import { tmpGitRepo, gitOut, FAKE_CLAUDE } from '../helpers/index.js';
+import { tmpGitRepo, gitOut, waitFor, FAKE_CLAUDE } from '../helpers/index.js';
 
 const ENTER = String.fromCharCode(13);
 const ESCAPE = String.fromCharCode(27);
@@ -62,8 +62,12 @@ describe('the review view over a real run', () => {
     try {
       await wait();
       stdin.write('c');
+      // The view reads the captured diffs from the store before it can draw a row, so it is waited for
+      // rather than slept at: a fixed pause is a race whenever the machine is busy.
+      const frameNow = (): string => stripAnsi(lastFrame() ?? '');
+      await waitFor(() => hasRow(frameNow(), 'edge-task', 'attempt 1', '4 files changed'), 10_000);
       await wait();
-      let frame = stripAnsi(lastFrame() ?? '');
+      let frame = frameNow();
 
       // Every shape the capture has to survive, read back through the store: a rename into a directory whose
       // name has a space, a binary file, a delete-and-recreate, and a new file with CRLF endings.
@@ -77,14 +81,14 @@ describe('the review view over a real run', () => {
       // The hunks of the first file, straight from the captured patch; the CRLF is not drawn as a control code.
       stdin.write(ENTER);
       await wait();
-      frame = stripAnsi(lastFrame() ?? '');
+      frame = frameNow();
       expect(frame).toContain('blob.bin');
       expect(frame).toContain('binary contents omitted');
 
       // → walks to the next file without leaving the pane; crlf.txt is next in path order.
       stdin.write(`${ESCAPE}[C`);
       await wait();
-      frame = stripAnsi(lastFrame() ?? '');
+      frame = frameNow();
       expect(frame).toContain('crlf.txt');
       expect(frame).toContain('hunk 1/1');
       expect(frame).toContain('+one');
