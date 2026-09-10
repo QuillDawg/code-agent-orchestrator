@@ -553,11 +553,12 @@ describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
     const runEvents = (await fs.readFile(store.paths.eventsFile(run.runId), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; taskId?: string; message?: string });
     const notices = runEvents.filter((e) => e.type === 'workflow.warning' && e.message?.includes('cannot reach a human'));
     expect(notices.map((n) => n.taskId).sort()).toEqual(['chatty', 'quiet']);
-    // Both attempts still open their own log with it, so `cao logs` on either says so.
-    for (const attempt of [1, 2]) {
-      const events = await attemptEvents(store, run.runId, 'chatty', attempt);
-      expect(events.some((e) => e.kind === 'system' && e.text.includes('cannot reach a human'))).toBe(true);
-    }
+    // The task's own log says it once too: `cao logs <task>` reads a task's attempts end to end, so the
+    // first attempt opens with it and a retry does not repeat it.
+    const said = async (attempt: number): Promise<boolean> =>
+      (await attemptEvents(store, run.runId, 'chatty', attempt)).some((e) => e.kind === 'system' && e.text.includes('cannot reach a human'));
+    expect(await said(1)).toBe(true);
+    expect(await said(2)).toBe(false);
   }, 60_000);
 
   it('row 10: codex exec turns a rejected question into needs_input naming the option that enables one', async () => {

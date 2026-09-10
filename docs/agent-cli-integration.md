@@ -130,7 +130,7 @@ codex <--approve-for-me | --sandbox <read-only|workspace-write|danger-full-acces
   flag; `codex exec resume` accepts a strictly smaller set than `codex exec` (no `--sandbox`, `--profile`,
   `--add-dir`, `--cd`), which is why those travel as global flags before `exec` rather than after `resume`.
 - `extraArgs` comes last so it can override the model and effort, as on Claude.
-- **No human can be reached during a `codex exec` task.** The CLI answers approval and user-input requests itself, with a rejection, so nothing ever reaches the dashboard. `cao validate` names the tasks that run on this transport, every `exec` attempt opens its log with the same statement, and the run log records it once per task.
+- **No human can be reached during a `codex exec` task.** The CLI answers approval and user-input requests itself, with a rejection, so nothing ever reaches the dashboard. `cao validate` names the tasks that run on this transport, and the run log and the task's first attempt log record it once per task.
 - The prompt—completion contract, optional addendum, then the task prompt—is written to stdin.
 - The default `exec` transport writes its schema-validated final answer to `final.json`; JSONL activity arrives on stdout.
 - `--model` and `-c model_reasoning_effort` come from the resolved task `model`/`effort`.
@@ -345,8 +345,8 @@ stored `TaskResult` and the attempt's `events.jsonl`. They are named `row <n>` i
 `codex exec` has **no channel for a human at all**. The CLI answers approval and `request_user_input`
 requests itself, with a rejection, so nothing an `exec` worker asks can reach a dashboard however a run is
 started. That is a property of the transport, not of the run: `cao validate` states it once per workflow
-naming every `exec` task, the run log records it once per such task, and every `exec` attempt's log opens
-with it.
+naming every `exec` task, and the run log and the task's first attempt log say it once per task - once,
+not once per attempt, so a retried task's `cao logs` does not open with the same paragraph three times.
 
 Rows 6-9 exist only on the other transport. To give a Codex task the ability to ask at all:
 

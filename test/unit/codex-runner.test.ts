@@ -122,6 +122,35 @@ describe('Codex exec transport', () => {
     expect(usage.at(-1)).toMatchObject({ sessionId: 'codex-exec-thread-1', numTurns: 1 });
   });
 
+  /**
+   * H3.4 asks for the limit to be stated once per task. Said once per *attempt* it is said again by every
+   * retry, and `cao logs <task>` - which reads the attempts end to end - opens with the same paragraph
+   * three times, on top of the once-per-workflow `cao validate` warning.
+   */
+  it('states the transport limit once per task, not once per attempt', async () => {
+    const root = await tmpDir('cao-codex-notice-');
+    const warnings: string[] = [];
+    const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
+    const task = { id: 'a', model: 'fake-codex', codex: { transport: 'exec' }, claude: {} } as ResolvedTask;
+    const hooks = {
+      onActivity: () => {}, onOutput: () => {}, onProcess: () => {}, onTranscript: () => {}, onFileChange: () => {}, onUsage: () => {},
+      onWarning: (value: string) => warnings.push(value),
+      onInteraction: async () => ({ kind: 'deny', message: 'headless test' } as const),
+    };
+    const attempts = [path.join(root, 'attempt-1'), path.join(root, 'attempt-2')];
+    for (const [i, attemptDir] of attempts.entries()) {
+      await runner.run({
+        runId: 'r1', attempt: i + 1, prompt: 'do it', cwd: root, attemptDir, env: {}, timeoutMs: 5000,
+        signal: new AbortController().signal, canInteract: false, task,
+      }, hooks);
+    }
+
+    const notices = async (dir: string): Promise<TranscriptEntry[]> => (await readEntries(dir)).filter((e) => e.kind === 'system' && e.text.includes('cannot reach a human'));
+    expect(await notices(attempts[0]!)).toHaveLength(1);
+    expect(await notices(attempts[1]!)).toHaveLength(0);
+    expect(warnings.filter((w) => w.includes('cannot reach a human'))).toHaveLength(1);
+  });
+
   it('sends a strict output schema and decodes free-form result data', async () => {
     const root = await tmpDir('cao-codex-schema-');
     const runner = new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });

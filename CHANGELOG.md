@@ -118,6 +118,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `crash`.
 - A Codex `appServer` task configured with `codex.approvals: host` and run without a dashboard now pauses
   with `needs_input` explaining the two ways to fix it, instead of failing the task as an invalid result.
+- The `codex exec` "no human can be reached" notice is written to a task's first attempt log only, not to
+  every attempt's, so `cao logs <task>` for a retried task no longer opens with the same paragraph three
+  times. The run-log warning was already once per task.
 - `report.md` no longer reads the orchestrator's instruction to the worker back at the operator: a paused
   task's **Error** block, and the per-attempt error notes, quote the question with `finish with status
   needs_input if you cannot continue` taken off, as `cao run`, `cao status` and `cao task` already did.

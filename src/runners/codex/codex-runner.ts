@@ -126,11 +126,13 @@ export class CodexRunner implements TaskRunner {
     const entry = transcript.entry;
     // A resumed attempt continues an earlier thread; without this its log reads like a fresh session.
     if (input.resumeSessionId) entry({ kind: 'system', ts: nowIso(), text: `resumed session ${input.resumeSessionId}` });
-    // Say up front, in the attempt's own log and once per task in the run log, that nobody can be asked
-    // anything during this transport: an operator should not have to learn it from a failure.
-    entry({ kind: 'system', ts: nowIso(), text: CODEX_EXEC_NO_HUMAN });
+    // Say up front, once per task, that nobody can be asked anything during this transport: an operator
+    // should not have to learn it from a failure. Once per task rather than once per attempt, and in the
+    // first attempt's log rather than every one, because `cao logs <task>` reads them end to end and a
+    // retried task would otherwise open with the same paragraph three times.
     if (!this.noticed.has(input.task.id)) {
       this.noticed.add(input.task.id);
+      entry({ kind: 'system', ts: nowIso(), text: CODEX_EXEC_NO_HUMAN });
       hooks.onWarning?.(CODEX_EXEC_NO_HUMAN);
     }
     let sessionId = input.resumeSessionId;
