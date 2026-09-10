@@ -18,6 +18,7 @@ import { formatCost, formatTokens } from '../tui/format.js';
 import { attemptReason, attemptElapsedMs, interactionRows, taskElapsed, totalWaitedMs, OUTCOME_LABEL, TRIGGER_LABEL } from '../tui/history.js';
 import { formatDuration } from '../util/duration.js';
 import { sanitizeText } from '../util/text.js';
+import { withoutWorkerInstructions } from '../types/interaction.js';
 import { STATE_LABEL, summarize } from './states.js';
 import { executionOrder, findCapturedDiff, pausedNeeds, type CapturedAttemptDiff, type PausedNeed } from './run-view.js';
 
@@ -178,7 +179,9 @@ export async function buildReport(store: Pick<RunStore, 'readDiff'>, run: Workfl
       decisions: result?.decisions ?? [],
       warnings: result?.warnings ?? [],
       followUp: result?.followUp ?? [],
-      error: result?.error,
+      // The report is read by an operator, not by the worker: "finish with status needs_input if you
+      // cannot continue" is an instruction to the agent, and it buries the question it was appended to.
+      error: result?.error ? withoutWorkerInstructions(result.error) : undefined,
       commits: result?.commits ?? [],
       changes: taskChanges(captured, result),
       branch: last?.workspace?.branch ?? result?.git?.branch,
@@ -197,7 +200,7 @@ export async function buildReport(store: Pick<RunStore, 'readDiff'>, run: Workfl
         signal: a.signal,
         costUsd: a.usage?.costUsd,
         reason: attemptReason(state.attempts, i),
-        error: a.error ? sanitizeText(a.error).trim() : undefined,
+        error: a.error ? withoutWorkerInstructions(sanitizeText(a.error)).trim() : undefined,
       })),
       interactions: { count: interactions.length, waitedMs: totalWaitedMs(interactions) },
     });

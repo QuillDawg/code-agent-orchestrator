@@ -342,6 +342,10 @@ describe('buildReport', () => {
     expect(md).toContain('2/5 tasks succeeded, 1 skipped, 1 waiting for you, 1 never started');
     expect(md).not.toContain('still running');
     expect(md).toContain('**Answer required:** `implement` — `cao resume 2026-09-04-001 --task implement --input "<your answer>"`');
+    // The per-task Error block quotes the question, not the instruction the orchestrator appended for the
+    // worker: an operator reading "finish with status needs_input" back learns nothing from it.
+    expect(md).toContain('> Which database should I use for the new service?');
+    expect(md).not.toContain('finish with status needs_input if you cannot continue');
   });
 });
 
