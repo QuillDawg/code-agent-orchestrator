@@ -7,27 +7,28 @@ export type CodexDetection = AgentRuntimeDetection;
 const cache = new Map<string, CodexDetection>();
 
 /** Resolve the Codex CLI once per configured command. */
-export async function detectCodex(command?: string): Promise<CodexDetection> {
+export async function detectCodex(command?: string, environment?: Record<string, string>): Promise<CodexDetection> {
   const cmd = command ?? process.env.CAO_CODEX_COMMAND ?? 'codex';
-  const cached = cache.get(cmd);
+  const cacheable = !environment || Object.keys(environment).length === 0;
+  const cached = cacheable ? cache.get(cmd) : undefined;
   if (cached) return cached;
   try {
     const { file, args } = splitCommand(cmd);
-    const res = await execa(file, [...args, '--version'], { windowsHide: true, timeout: 15_000, reject: false });
+    const res = await execa(file, [...args, '--version'], { env: environment, windowsHide: true, timeout: 15_000, reject: false });
     const detection: CodexDetection = res.exitCode === 0
-      ? await inspectCodex(file, args, cmd, String(res.stdout ?? '').trim().split(/\r?\n/)[0] ?? '')
+      ? await inspectCodex(file, args, cmd, String(res.stdout ?? '').trim().split(/\r?\n/)[0] ?? '', environment)
       : { command: cmd, found: false, error: String(res.stderr || res.stdout || `exit ${res.exitCode}`) };
-    cache.set(cmd, detection);
+    if (cacheable) cache.set(cmd, detection);
     return detection;
   } catch (err) {
     const detection: CodexDetection = { command: cmd, found: false, error: (err as Error).message };
-    cache.set(cmd, detection);
+    if (cacheable) cache.set(cmd, detection);
     return detection;
   }
 }
 
-async function inspectCodex(file: string, prefix: string[], command: string, version: string): Promise<CodexDetection> {
-  const run = (args: string[]) => execa(file, [...prefix, ...args], { windowsHide: true, timeout: 15_000, reject: false }).catch(() => null);
+async function inspectCodex(file: string, prefix: string[], command: string, version: string, environment?: Record<string, string>): Promise<CodexDetection> {
+  const run = (args: string[]) => execa(file, [...prefix, ...args], { env: environment, windowsHide: true, timeout: 15_000, reject: false }).catch(() => null);
   const [rootHelp, execHelp, appHelp, auth] = await Promise.all([run(['--help']), run(['exec', '--help']), run(['app-server', '--help']), run(['login', 'status'])]);
   const root = `${rootHelp?.stdout ?? ''}\n${rootHelp?.stderr ?? ''}`;
   const exec = `${execHelp?.stdout ?? ''}\n${execHelp?.stderr ?? ''}`;
@@ -40,7 +41,7 @@ async function inspectCodex(file: string, prefix: string[], command: string, ver
     command,
     version,
     found: true,
-    authenticated: auth?.exitCode === 0 || Boolean(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY),
+    authenticated: auth?.exitCode === 0 || Boolean(environment?.OPENAI_API_KEY || environment?.CODEX_API_KEY || process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY),
     supportedVersion: versionAtLeast(version, MINIMUM_AGENT_VERSIONS.codex),
     minimumVersion: MINIMUM_AGENT_VERSIONS.codex,
     capabilities,

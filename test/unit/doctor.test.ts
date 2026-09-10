@@ -327,6 +327,6 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, config, json: true }));
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout) as { facts: DoctorFacts };
-    expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: expect.arrayContaining(['exec', 'appServer']) })]);
+    expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['appServer'] })]);
   });
 });

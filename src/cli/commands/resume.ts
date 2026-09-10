@@ -37,9 +37,20 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   if (run.state === 'cancelled') throw new OrchestratorError(`Run ${runId} was cancelled and cannot be resumed`);
   if (!(await pathExists(run.repositoryRoot))) throw new OrchestratorError(`Repository for run ${runId} no longer exists: ${run.repositoryRoot}`);
 
+  // Environment values are never persisted: reload them before auth/capability probes and execution.
+  let environment: Record<string, string> = {};
+  let secrets: string[] = [];
+  try {
+    const loaded = await loadWorkflow(run.configPath, { launchDirectory: run.launchDirectory, repository: run.repositoryRoot });
+    environment = loaded.environment;
+    secrets = loaded.secrets;
+  } catch (err) {
+    out(warnLine(`Could not reload environment from ${run.configPath}: ${(err as Error).message}`));
+  }
+
   // Probe workers before acquiring the run lock or killing/reclassifying orphaned attempts. A bad CLI
   // should leave the persisted run and any recoverable worker exactly as they were.
-  const runners = await detectRunnersForWorkflow(run.workflow);
+  const runners = await detectRunnersForWorkflow(run.workflow, environment);
   const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
   if (unavailable) throw new OrchestratorError(unavailable);
 
@@ -59,17 +70,6 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
 
   const reconciliation = await reconcileForResume(run, { retryFailed: opts.retryFailed, approve: parseList(opts.approve), reject: parseList(opts.reject), input, selection });
   for (const n of reconciliation.notes) out(warnLine(n));
-
-  // Environment values are never persisted: reload them from the workflow file when it still exists.
-  let environment: Record<string, string> = {};
-  let secrets: string[] = [];
-  try {
-    const loaded = await loadWorkflow(run.configPath, { launchDirectory: run.launchDirectory, repository: run.repositoryRoot });
-    environment = loaded.environment;
-    secrets = loaded.secrets;
-  } catch (err) {
-    out(warnLine(`Could not reload environment from ${run.configPath}: ${(err as Error).message}`));
-  }
 
   const layers = buildGraph(run.workflow).layers();
   out(renderHeader({ workflow: run.workflow, runId, runners, layers, resumed: true, verbose: opts.verbose }));

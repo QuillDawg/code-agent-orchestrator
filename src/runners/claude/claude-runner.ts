@@ -106,6 +106,14 @@ function claudeFailure(message: string, retryable: boolean, sessionId: string | 
   return { retryable, sessionId, ...(status ? { httpStatus: Number(status) } : {}), ...(requestId ? { requestId } : {}), ...extras };
 }
 
+function claudeProviderCode(retry: { httpStatus?: number; message?: string } | undefined, subtype?: string): string | undefined {
+  if (retry?.httpStatus === 429) return 'rateLimitExceeded';
+  if (retry?.httpStatus === 529 || /overload/i.test(retry?.message ?? '')) return 'serverOverloaded';
+  if (retry?.httpStatus !== undefined && retry.httpStatus >= 500) return 'internalServerError';
+  if (/connect|stream|socket|network/i.test(retry?.message ?? '')) return 'connectionFailed';
+  return subtype;
+}
+
 export class ClaudeRunner implements TaskRunner {
   readonly name = 'claude';
   private readonly pm: ProcessManager;
@@ -371,7 +379,7 @@ export class ClaudeRunner implements TaskRunner {
           // A 5xx/overloaded/network failure ends the print-mode process; the session itself is intact and resumable.
           const outcome = isTransientApiError(detail) || isTransientApiError(stderrTail.join('\n')) ? 'api_error' : 'crash';
           finishEntry({ kind: 'result', status: resultEvent.subtype ?? 'error', costUsd: finalUsage.costUsd, isError: true, error: `${detail}${denials}` });
-          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, { providerCode: lastApiRetry?.message ?? resultEvent.subtype, ...(lastApiRetry?.httpStatus !== undefined ? { httpStatus: lastApiRetry.httpStatus } : {}), ...(lastApiRetry ? { retryAfterMs: lastApiRetry.retryDelayMs } : {}) }) };
+          return { kind: 'error', outcome, message: `Claude reported an error${denials}: ${detail}${stderrSummary}`, exitCode: exit.code, usage: finalUsage, failure: claudeFailure(detail, outcome === 'api_error', finalUsage.sessionId, { ...(claudeProviderCode(lastApiRetry, resultEvent.subtype) ? { providerCode: claudeProviderCode(lastApiRetry, resultEvent.subtype) } : {}), ...(lastApiRetry?.httpStatus !== undefined ? { httpStatus: lastApiRetry.httpStatus } : {}), ...(lastApiRetry ? { retryAfterMs: lastApiRetry.retryDelayMs } : {}) }) };
         }
         const message = `Claude finished without a machine-readable result (subtype: ${resultEvent.subtype ?? 'n/a'}, stop: ${resultEvent.stopReason ?? 'n/a'})`;
         finishEntry({ kind: 'error', text: message });

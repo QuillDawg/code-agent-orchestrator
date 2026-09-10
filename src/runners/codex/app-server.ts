@@ -20,7 +20,32 @@ export interface CodexAppServerOptions {
   bufferLines: number;
 }
 
-type JsonObject = Record<string, any>;
+interface JsonObject extends Record<string, unknown> {
+  id?: string | number;
+  method?: string;
+  params?: JsonObject;
+  result?: JsonObject;
+  error?: JsonObject;
+  data?: JsonObject;
+  code?: number;
+  message?: string;
+  sandbox?: JsonObject;
+  type?: string;
+  status?: string;
+  name?: string;
+  model?: string | null;
+  approvalPolicy?: string;
+  approvalsReviewer?: string;
+  instructionSources?: unknown[];
+  thread?: JsonObject;
+  turn?: JsonObject;
+  item?: JsonObject;
+  tokenUsage?: JsonObject;
+  total?: JsonObject;
+  last?: JsonObject;
+  exitCode?: number;
+  codexErrorInfo?: unknown;
+}
 const MAX_OUTPUT_CHARS = 2000;
 
 function sandboxPolicy(mode: NonNullable<CodexOptions['sandbox']>, cwd: string, addDirs: string[]): JsonObject {
@@ -161,10 +186,10 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         send({ method: 'initialized' });
         threadRequestId = nextId++;
         const method = input.resumeSessionId ? 'thread/resume' : 'thread/start';
-        const params = input.resumeSessionId ? { threadId: input.resumeSessionId } : {
+        const params = (input.resumeSessionId ? { threadId: input.resumeSessionId } : {
           cwd: input.cwd, model: input.task.model ?? null, approvalPolicy: resolved.approvalPolicy, approvalsReviewer: resolved.reviewer, sandbox: resolved.sandbox,
           developerInstructions: [CONTRACT_SYSTEM_PROMPT, input.systemPromptAddendum].filter(Boolean).join('\n\n'), ephemeral: false,
-        };
+        }) as JsonObject;
         request(threadRequestId, method, params);
         return;
       }
@@ -216,7 +241,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         if (result.instructionSources.length) {
           entry({ kind: 'system', ts: nowIso(), text: `Codex loaded instructions from ${result.instructionSources.join(', ')}` });
         }
-        threadId = result.thread?.id ?? input.resumeSessionId;
+        threadId = typeof result.thread?.id === 'string' ? result.thread.id : input.resumeSessionId;
         usage.sessionId = threadId;
         usage.model = result.model ?? usage.model;
         hooks.onProcess({ pid: proc.pid, sessionId: threadId });
@@ -232,7 +257,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
       }
       if (message.id === turnRequestId) {
         if (message.error) { protocolError = `Codex turn start failed: ${message.error.message ?? JSON.stringify(message.error)}`; void proc.kill('graceful'); return; }
-        turnId = message.result?.turn?.id;
+        turnId = typeof message.result?.turn?.id === 'string' ? message.result.turn.id : undefined;
         return;
       }
       const params = message.params ?? {};
@@ -240,7 +265,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         const item = params.item ?? {};
         if (item.type === 'commandExecution') {
           if (message.method === 'item/started') { hooks.onActivity(`$ ${String(item.command ?? '').split(/\r?\n/)[0]}`); entry({ kind: 'command', ts: nowIso(), command: String(item.command ?? ''), tool: 'shell' }); }
-          else if (item.aggregatedOutput || item.status === 'failed') entry({ kind: 'tool_result', ts: nowIso(), text: truncate(String(item.aggregatedOutput ?? `exit ${item.exitCode ?? '?'}`), MAX_OUTPUT_CHARS), isError: item.status === 'failed' || item.exitCode > 0 });
+          else if (item.aggregatedOutput || item.status === 'failed') entry({ kind: 'tool_result', ts: nowIso(), text: truncate(String(item.aggregatedOutput ?? `exit ${item.exitCode ?? '?'}`), MAX_OUTPUT_CHARS), isError: item.status === 'failed' || Number(item.exitCode ?? 0) > 0 });
         } else if (item.type === 'agentMessage' && message.method === 'item/completed') {
           finalText = String(item.text ?? ''); hooks.onActivity(finalText.split(/\r?\n/)[0] ?? ''); entry({ kind: 'text', ts: nowIso(), text: finalText });
         } else if (item.type === 'fileChange' && message.method === 'item/completed') {

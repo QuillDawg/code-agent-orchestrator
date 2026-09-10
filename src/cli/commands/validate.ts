@@ -15,7 +15,7 @@ export async function validateCommand(configPath: string | undefined, opts: Vali
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
   const prepared = await prepareWorkflow(await resolveWorkflowPath(configPath), { repository: opts.repository });
   const { workflow, diagnostics, validation, layers } = prepared;
-  const runners = await detectRunnersForWorkflow(workflow);
+  const runners = await detectRunnersForWorkflow(workflow, prepared.loaded.environment);
   if (opts.json) {
     out(
       JSON.stringify(

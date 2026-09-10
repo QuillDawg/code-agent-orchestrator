@@ -13,12 +13,12 @@ const cache = new Map<string, ClaudeDetection>();
 const FORWARD_SUBAGENT_TEXT = '--forward-subagent-text';
 
 /** One `--help` probe per command: the flag is new, and passing it to a CLI that does not know it fails the run. */
-async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: AgentCapability[] }> {
+async function probeRuntime(cmd: string, environment?: Record<string, string>): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: AgentCapability[] }> {
   try {
     const { file, args } = splitCommand(cmd);
     const [help, auth] = await Promise.all([
-      execa(file, [...args, '--help'], { windowsHide: true, timeout: 15_000, reject: false }),
-      execa(file, [...args, 'auth', 'status', '--json'], { windowsHide: true, timeout: 15_000, reject: false }),
+      execa(file, [...args, '--help'], { env: environment, windowsHide: true, timeout: 15_000, reject: false }),
+      execa(file, [...args, 'auth', 'status', '--json'], { env: environment, windowsHide: true, timeout: 15_000, reject: false }),
     ]);
     const text = `${help.stdout ?? ''}${help.stderr ?? ''}`;
     let authenticated = auth.exitCode === 0;
@@ -27,7 +27,7 @@ async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean
     } catch {
       authenticated = false;
     }
-    authenticated ||= Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+    authenticated ||= Boolean(environment?.ANTHROPIC_API_KEY || environment?.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
     const capabilities: AgentCapability[] = [];
     if (text.includes('stream-json')) capabilities.push('streamJson');
     if (text.includes('--json-schema')) capabilities.push('structuredOutput');
@@ -39,17 +39,18 @@ async function probeRuntime(cmd: string): Promise<{ forwardSubagentText: boolean
 }
 
 /** Resolve the Claude Code binary and its version. Honours CAO_CLAUDE_COMMAND for tests/overrides. */
-export async function detectClaude(command?: string): Promise<ClaudeDetection> {
+export async function detectClaude(command?: string, environment?: Record<string, string>): Promise<ClaudeDetection> {
   const cmd = command ?? process.env.CAO_CLAUDE_COMMAND ?? 'claude';
-  const cached = cache.get(cmd);
+  const cacheable = !environment || Object.keys(environment).length === 0;
+  const cached = cacheable ? cache.get(cmd) : undefined;
   if (cached) return cached;
   let detection: ClaudeDetection;
   try {
     const { file, args } = splitCommand(cmd);
-    const res = await execa(file, [...args, '--version'], { windowsHide: true, timeout: 15_000, reject: false });
+    const res = await execa(file, [...args, '--version'], { env: environment, windowsHide: true, timeout: 15_000, reject: false });
     if (res.exitCode === 0) {
       const version = String(res.stdout ?? '').trim().split(/\r?\n/)[0] ?? '';
-      const runtime = await probeRuntime(cmd);
+      const runtime = await probeRuntime(cmd, environment);
       detection = {
         command: cmd,
         version,
@@ -64,7 +65,7 @@ export async function detectClaude(command?: string): Promise<ClaudeDetection> {
   } catch (err) {
     detection = { command: cmd, found: false, error: (err as Error).message };
   }
-  cache.set(cmd, detection);
+  if (cacheable) cache.set(cmd, detection);
   return detection;
 }
 

@@ -148,7 +148,7 @@ export function runnerReadinessError(runner: RunnerDetection): string | undefine
 }
 
 /** Detect only runners that can be launched by this workflow. */
-export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow): Promise<RunnerDetection[]> {
+export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow, environment?: Record<string, string>): Promise<RunnerDetection[]> {
   const active = workflow.tasks.filter((task) => !task.completed);
   const claudeCommands = new Map<string | undefined, Set<AgentCapability>>();
   const codexCommands = new Map<string | undefined, Set<AgentCapability>>();
@@ -158,21 +158,24 @@ export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow): Prom
       if (task.claude.configMode === 'isolated') required.add('isolatedConfig');
       claudeCommands.set(task.claude.command, required);
     } else if (task.agent === 'codex') {
-      const required = codexCommands.get(task.codex.command) ?? new Set(['exec']);
-      if ((task.codex.transport ?? 'exec') === 'appServer') required.add('appServer');
+      const transport = task.codex.transport ?? 'exec';
+      const required = codexCommands.get(task.codex.command) ?? new Set<AgentCapability>();
+      required.add(transport === 'appServer' ? 'appServer' : 'exec');
       if (task.codex.configMode === 'isolated') required.add('isolatedConfig');
       const approvals = task.codex.approvals ?? 'auto';
-      if (approvals !== 'deny' && approvals !== 'host' && (task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
+      if ((transport === 'exec' && approvals !== 'deny') || (transport === 'appServer' && approvals === 'autoReview')) {
+        if ((task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
+      }
       codexCommands.set(task.codex.command, required);
     }
   }
   const detected: RunnerDetection[] = [];
   for (const [command, required] of claudeCommands) {
-    const value = await detectClaude(command ?? workflow.claude.command);
+    const value = await detectClaude(command ?? workflow.claude.command, environment);
     detected.push({ runner: 'claude', ...value, requiredCapabilities: [...required] });
   }
   for (const [command, required] of codexCommands) {
-    const value = await detectCodex(command ?? workflow.codex.command);
+    const value = await detectCodex(command ?? workflow.codex.command, environment);
     detected.push({ runner: 'codex', ...value, requiredCapabilities: [...required] });
   }
   return detected;

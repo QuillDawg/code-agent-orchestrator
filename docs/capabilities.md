@@ -670,8 +670,9 @@ behind them (versions, lock files, worktree paths, branch names), which is what 
 attached to it.
 
 Pass a workflow path (`cao doctor workflow.yaml --json`) to probe only its referenced providers and required
-transports/configuration. Without one, doctor checks both installed CLIs. It never changes anything: it will
-tell you to run `cao clean` but never runs it for you.
+transports/configuration. Doctor also uses `workflow.yaml`, `workflow.yml`, or `cao.yaml` automatically when
+one exists in the launch directory; with no workflow, it checks both installed CLIs. It never changes
+anything: it will tell you to run `cao clean` but never runs it for you.
 
 ---
 

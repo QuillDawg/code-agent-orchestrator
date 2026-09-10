@@ -40,5 +40,6 @@ describe('agent runtime readiness', () => {
     delete process.env.CODEX_API_KEY;
     process.env.FAKE_CODEX_AUTH = '0';
     expect(await detectCodex(FAKE_CODEX)).toMatchObject({ found: true, authenticated: false, supportedVersion: true });
+    expect(await detectCodex(FAKE_CODEX, { OPENAI_API_KEY: 'workflow-secret', FAKE_CODEX_AUTH: '0' })).toMatchObject({ found: true, authenticated: true });
   });
 });

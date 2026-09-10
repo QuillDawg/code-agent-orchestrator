@@ -21,8 +21,8 @@ import { isProcessAlive } from '../../util/misc.js';
 import { mark } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
 import { packageInfo } from '../../util/package-info.js';
-import { findStoreRoot } from '../util.js';
-import type { AgentCapability } from '../../runners/capabilities.js';
+import { DEFAULT_WORKFLOW_FILES, findStoreRoot } from '../util.js';
+import type { AgentCapability, AgentRuntimeDetection } from '../../runners/capabilities.js';
 import { detectRunnersForWorkflow, prepareWorkflow, requireValid, type RunnerDetection } from '../app.js';
 import { resolveWorkflowPath } from '../util.js';
 
@@ -57,16 +57,8 @@ export interface DoctorCheck {
   items?: string[];
 }
 
-export interface AgentFacts {
+export interface AgentFacts extends AgentRuntimeDetection {
   runner: 'claude' | 'codex';
-  command: string;
-  found: boolean;
-  version?: string;
-  error?: string;
-  authenticated?: boolean;
-  supportedVersion?: boolean;
-  minimumVersion?: string;
-  capabilities?: AgentCapability[];
   requiredCapabilities?: AgentCapability[];
 }
 
@@ -477,10 +469,17 @@ export function renderChecks(checks: DoctorCheck[]): string {
 export async function doctorCommand(opts: DoctorOptions, overrides: Partial<DoctorDeps> = {}): Promise<number> {
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
   let scopedAgents: RunnerDetection[] | undefined;
-  if (opts.config) {
-    const prepared = await prepareWorkflow(await resolveWorkflowPath(opts.config), { repository: opts.repository });
+  let workflowPath = opts.config;
+  if (!workflowPath) {
+    for (const name of DEFAULT_WORKFLOW_FILES) {
+      const candidate = path.join(process.cwd(), name);
+      if (await pathExists(candidate)) { workflowPath = candidate; break; }
+    }
+  }
+  if (workflowPath) {
+    const prepared = await prepareWorkflow(await resolveWorkflowPath(workflowPath), { repository: opts.repository });
     requireValid(prepared);
-    scopedAgents = await detectRunnersForWorkflow(prepared.workflow);
+    scopedAgents = await detectRunnersForWorkflow(prepared.workflow, prepared.loaded.environment);
   }
   const facts = await gatherFacts(opts, overrides, scopedAgents);
   const checks = evaluate(facts);

@@ -46,7 +46,7 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
   requireValid(prepared);
   const { workflow, layers, loaded } = prepared;
 
-  const runners = await detectRunnersForWorkflow(workflow);
+  const runners = await detectRunnersForWorkflow(workflow, loaded.environment);
   const only = parseList(opts.task);
   const from = parseList(opts.from);
   for (const id of [...only, ...from]) {
