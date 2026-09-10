@@ -100,6 +100,13 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
   `effort` per workflow, per template or per task. See the
   [Claude-to-Codex](examples/mixed-agents.yaml) and
   [Codex-to-Claude](examples/codex-implementation-claude-review.yaml) review loops.
+  Codex support, stated plainly: `codex.transport: exec` is the **stable** default and the unattended
+  production path; `codex.transport: appServer` is **experimental** and opt-in per task, and it is what adds
+  dashboard-mediated command and file-change approvals; `codex.experimentalUserInput` is experimental,
+  app-server only and off by default. **A `codex exec` task cannot be asked anything** — the Codex CLI
+  answers approvals and questions itself, with a rejection — and `codex.configMode: isolated` is rejected on
+  `appServer` rather than pretended. The full table is in
+  [docs/capabilities.md](docs/capabilities.md#choosing-the-agent).
 - **Templates, variables and `foreach`.** Reuse a task shape, fan out over a list of issues, interpolate
   `{{variables.*}}` into prompts.
 - **Conditions and gates.** `when:` expressions skip tasks; `type: approval` pauses for a human decision.

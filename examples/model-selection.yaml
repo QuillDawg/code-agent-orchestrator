@@ -52,6 +52,9 @@ tasks:
   - id: cross-review
     type: review
     agent: codex              # requires the Codex CLI installed and authenticated
+    # Codex runs on transport "exec" here (the default), where no human can be reached: the CLI
+    # answers approvals and questions itself. `cao validate` warns about it and the task ends as
+    # needs_input if it does need a decision. A review task never should.
     model: gpt-5.6-terra      # no codex.model key exists - this top-level key is the only way
     parallelGroup: reviews
     context:

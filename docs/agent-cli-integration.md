@@ -2,7 +2,7 @@
 
 How `cao` actually invokes each agent, and how it decides whether a task succeeded.
 
-Verified against Claude Code **2.1.259** (`claude --help`). Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
+Verified against Claude Code **2.1.267** and codex-cli **0.154.0** — the invocation lines below are the argv `buildClaudeArgs`, `buildCodexArgs` and `buildCodexAppServerArgs` actually build, and `npm run test:agents` checks every flag in them against the installed CLIs' help. Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
 
 Both runners share one rule: **a process exit code is never a result.** Success requires a schema-valid JSON object from the worker.
 
@@ -18,6 +18,7 @@ One process per attempt — a fresh session, or the previous attempt's session w
 claude -p \
   --output-format stream-json --verbose \
   --json-schema '<TaskResult JSON schema>' \
+  [--safe-mode]                                                # claude.configMode: isolated
   --permission-mode <auto|acceptEdits|dontAsk|bypassPermissions|plan|manual> \
   --input-format stream-json --permission-prompt-tool stdio   # "ask" mode (a dashboard is attached)
   --permission-prompts none                                    # "deny" mode (headless, or claude.permissionPrompts: deny)
@@ -51,24 +52,13 @@ claude -p \
 
 Partial message streaming (`--include-partial-messages`) is not enabled; tool-use granularity is sufficient for the dashboard.
 
-### Outcome mapping
+### What counts as the result
 
-| Observation | Outcome |
-|---|---|
-| abort signal from the orchestrator | `cancelled` |
-| task timeout | `timeout` (process tree killed) |
-| spawn failure / binary missing | `crash` |
-| `structured_output` valid | result status (`success`, `failed`, …) |
-| no `structured_output` but a JSON object in `result` text (fenced or trailing) | validated the same way |
-| `is_error: true` with a transient API/network message (`API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, …) | `api_error` → the scheduler waits and resumes the session |
-| `is_error: true` with `permission_denials` (the CLI answered the prompts itself) | `needs_input` naming the denied tools |
-| `is_error: true` with `invalid_json_schema` (the API refused `--json-schema`) | `config_error`, not retried |
-| `is_error: true` otherwise (max turns, budget, auth) | `crash` with Claude's message |
-| exit 0 without a valid result | `invalid_result` → the scheduler first asks the same session for the object (`retry.resultNudges`), then retries |
-| `error: unknown option '--x'` on stderr (commander refused the argv) | `config_error` naming the flag and the workflow key |
-| non-zero exit with a transient network error on stderr | `api_error` |
-| non-zero exit without a result | `crash` naming the signal when there was one, with exit code and stderr tail |
-| exit 0 with a tool call that was never answered | `crash` naming the open call |
+`structured_output` on the `result` event is the attempt's result. When it is absent, the JSON object in the
+`result` text — fenced or trailing — is validated the same way. Anything else is one of the situations in
+[the one outcome map](#one-outcome-map-both-agents), which is where every failure this runner can report is
+written down, together with what Codex does in the same situation. A worker that was blocked on a human is
+covered by [waiting for a human](#waiting-for-a-human) instead: it never reaches the failure map.
 
 ### Resuming after a transient API error
 
@@ -123,20 +113,44 @@ For fully unattended runs in an isolated environment use `bypassPermissions`; fo
 ### Exec invocation
 
 ```
-codex [--approve-for-me] --sandbox <read-only|workspace-write|danger-full-access> \
+codex <--approve-for-me | --sandbox <read-only|workspace-write|danger-full-access>> \
       -c approval_policy="<on-request|never>" \
       [--profile P] [--add-dir D]... \
-      exec [resume <session id>] \
+      exec \
+      [--ignore-user-config --ignore-rules]        # codex.configMode: isolated
+      [resume <session id>] \
       --json --output-schema <attemptDir>/result.schema.json \
       --output-last-message <attemptDir>/final.json \
-      [extraArgs...] [--model X] [-c model_reasoning_effort="<effort>"]
+      [--model X] [-c model_reasoning_effort="<effort>"] [extraArgs...]
 ```
 
+- `--approve-for-me` and `--sandbox` are **mutually exclusive**: the CLI exits 2 if both are given, so an
+  automatic-review task sends only `--approve-for-me` (which implies workspace-write) and every other task
+  sends only `--sandbox`. Everything before `exec` is a global flag and everything after it is an `exec`
+  flag; `codex exec resume` accepts a strictly smaller set than `codex exec` (no `--sandbox`, `--profile`,
+  `--add-dir`, `--cd`), which is why those travel as global flags before `exec` rather than after `resume`.
+- `extraArgs` comes last so it can override the model and effort, as on Claude.
 - **No human can be reached during a `codex exec` task.** The CLI answers approval and user-input requests itself, with a rejection, so nothing ever reaches the dashboard. `cao validate` names the tasks that run on this transport, every `exec` attempt opens its log with the same statement, and the run log records it once per task.
 - The prompt—completion contract, optional addendum, then the task prompt—is written to stdin.
 - The default `exec` transport writes its schema-validated final answer to `final.json`; JSONL activity arrives on stdout.
 - `--model` and `-c model_reasoning_effort` come from the resolved task `model`/`effort`.
 - The binary is resolved from `codex.command`, `CAO_CODEX_COMMAND`, or `codex` on PATH.
+
+### App-server invocation
+
+```
+codex [--profile P] app-server --stdio [extraArgs...]
+```
+
+That is the whole command line: the app-server takes no sandbox, approval or model flags. Everything the
+`exec` line puts on the command line — the sandbox policy, the approval policy, the approvals reviewer, the
+model, the effort, the working directory, the extra writable roots and the output schema — is sent instead
+in the `thread/start` (or `thread/resume`) and `turn/start` params, and CAO checks that the envelope the
+server reports back is the one it asked for (a mismatch is a `config_error`, not a retry). `initialize`
+carries only the client info and whether `codex.experimentalUserInput` was asked for; `codex.addDirs`
+becomes the turn's `sandboxPolicy.writableRoots` next to the task's working directory.
+`codex.configMode: isolated` is rejected on this transport rather than silently dropped:
+the protocol has no isolation switch that preserves saved authentication.
 
 ### Permissions and app-server
 
@@ -154,7 +168,7 @@ CAO answers exactly three server requests — `item/commandExecution/requestAppr
 permission-affecting request is never decided on the operator's behalf, with or without a dashboard.
 
 The wire shapes are those of the protocol bundle codex-cli ships
-(`codex app-server generate-json-schema --experimental`), and `src/runners/codex/app-server-protocol.ts`
+(`codex app-server generate-json-schema --experimental --out <dir>`), and `src/runners/codex/app-server-protocol.ts`
 is the only place that knows them:
 
 | Answer | Command approval | File-change approval |
@@ -205,20 +219,13 @@ Use `fullAccess` only in an appropriately isolated environment.
 | `turn.completed` | usage: input / cached / output tokens, turn count, context size |
 | `error` / `turn.failed` / `item.type: error` | transcript `error` entry; a rejected approval or question is recognised here (below) |
 
-### Outcome mapping
+### What counts as the result
 
-| Observation | Outcome |
-|---|---|
-| abort signal | `cancelled` |
-| task timeout | `timeout` |
-| `final.json` present and schema-valid | result status |
-| `final.json` present but invalid | `invalid_result` |
-| a clap usage block on stderr, or `invalid_json_schema` in the stream | `config_error` naming the flag and the workflow key |
-| non-zero exit with a transient network error on stderr | `api_error` |
-| non-zero exit otherwise | `crash` naming the signal when there was one, with exit code and stderr tail |
-| exit 0 with a command the stream never completed | `crash` naming the open command |
-| exit 0 with no schema-valid final response | `invalid_result` |
-| an approval or user-input rejection in the stream, and no schema-valid final response | `needs_input` quoting the rejection |
+On `exec` it is `final.json`, the file `--output-last-message` names; on `appServer` it is the completion
+object in the turn's last agent message. Anything else is one of the situations in
+[the one outcome map](#one-outcome-map-both-agents), which is where every failure this runner can report is
+written down, together with what Claude Code does in the same situation. A worker that was blocked on a
+human is covered by [waiting for a human](#waiting-for-a-human) instead: it never reaches the failure map.
 
 #### Requests `codex exec` rejects for us
 
@@ -240,21 +247,28 @@ object is the result and the rejection is reported as a run warning instead.
 
 ## One outcome map (both agents)
 
-The same situation means the same thing on both agents. The table below is generated from `OUTCOME_MAP` in
-`src/runners/outcomes.ts` and checked against this file by `test/unit/runner-failure.test.ts`, so the code
-and this page cannot drift apart. The per-agent tables above say how each runner recognises a row; this one
-says what the row means.
+This is the **only** outcome table on this page. There used to be one per agent, which is how the two
+runners came to answer the same question differently; the two agent columns below are what each runner
+watches for, so a row cannot exist on one agent and quietly not on the other. It is generated from
+`OUTCOME_MAP` in `src/runners/outcomes.ts` and compared against this file by
+`test/unit/runner-failure.test.ts`, so the code and this page cannot drift apart either.
 
-| Situation | Outcome | What follows |
-|---|---|---|
-| exit 0, no result | `invalid_result` | the same session is asked for the completion object (`retry.resultNudges`), then the task is retried |
-| result present, fails the contract | `invalid_result` | same as above: nudge, then retry |
-| transient network/API error | `api_error` | backoff, then the session is resumed; free up to `retry.transientAttempts` |
-| argument or schema rejection | `config_error` | the task fails immediately without spending `retry.attempts`; `onFailure` decides the run |
-| process killed externally | `crash` | `retry.attempts` as usual; the signal is recorded on the attempt and named in the message |
-| worker still holding an unanswered tool at exit | `crash` | `retry.attempts` as usual; the transcript ends with the tool call that was never answered |
-| abort from the orchestrator | `cancelled` | the task is cancelled, not retried |
-| task timeout | `timeout` | the process tree is killed, then `retry.attempts` as usual |
+Every row is an attempt that produced no `TaskResult`. An attempt that produced one — including a worker
+that ended `needs_input` because it was blocked on a human — is not a failure and is not in this table; see
+[waiting for a human](#waiting-for-a-human).
+
+| Situation | Outcome | How Claude Code shows it | How Codex shows it | What follows |
+|---|---|---|---|---|
+| exit 0, no result | `invalid_result` | a `result` event with no `structured_output` and no JSON object in its text | no `final.json` (`exec`), or a turn that completed without a completion object (`appServer`) | the same session is asked for the completion object (`retry.resultNudges`), then the task is retried |
+| result present, fails the contract | `invalid_result` | `structured_output`, or the object lifted out of the result text, fails the contract validator | `final.json` parses but fails the contract validator | same as above: nudge, then retry |
+| transient network/API error | `api_error` | `is_error: true`, or a non-zero exit, carrying `API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, … | a retryable typed `codexErrorInfo`, or the same transient wording on stderr | backoff, then the session is resumed; free up to `retry.transientAttempts` |
+| argument or schema rejection | `config_error` | commander's `error: unknown option '--x'` on stderr, or `invalid_json_schema` from the API | a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one CAO asked for | the task fails immediately without spending `retry.attempts`; `onFailure` decides the run |
+| the agent ended the session with an error of its own (max turns, budget, auth, failed start-up) | `crash` | `is_error: true` that is neither transient nor a rejected schema, or an initialization failure reported in the `init` event | a `turn.failed` whose typed failure is not retryable | `retry.attempts` as usual; the message is the agent’s own |
+| process killed externally | `crash` | a non-zero exit or a signal, with no `result` event | a non-zero exit or a signal, with no schema-valid final response | `retry.attempts` as usual; the signal is recorded on the attempt and named in the message |
+| worker still holding an unanswered tool at exit | `crash` | exit 0 with a `tool_use` whose `tool_result` never arrived | exit 0 with a `command_execution` the stream never completed | `retry.attempts` as usual; the transcript ends with the tool call that was never answered |
+| the CLI could not be started at all | `crash` | a spawn error for `claude.command` / `CAO_CLAUDE_COMMAND` / `claude` on PATH | a spawn error for `codex.command` / `CAO_CODEX_COMMAND` / `codex` on PATH | `retry.attempts` as usual; `cao run` and `cao doctor` report a missing binary before a run is created |
+| abort from the orchestrator | `cancelled` | the attempt’s abort signal fired; pending prompts are settled and the process tree stopped | the same, with `turn/interrupt` sent first on `appServer` | the task is cancelled, not retried |
+| task timeout | `timeout` | the process manager hit the task’s `timeout` | the process manager hit the task’s `timeout` | the process tree is killed, then `retry.attempts` as usual |
 
 ### Configuration errors are not retried
 
@@ -284,6 +298,66 @@ installed version does not advertise (`exec`, `appServer`, `autoReview`, `isolat
 `structuredOutput`), fails every task that would have used it at run start - as a `config_error`, naming the
 option, the workflow key that asked for it, the version found and the version needed. A CLI that is missing
 altogether is still reported by `cao run`'s own readiness check before the run is even created.
+
+---
+
+## Waiting for a human
+
+A worker blocked on a human ends in exactly one of two states, on either agent, attended or headless:
+
+- **`waiting`** — the process is alive and someone can still answer it. The dashboard shows the prompt, the
+  task reads **Needs you**, and the worker continues the moment it is answered. `execution.interactionTimeout`
+  (default 30m, `never` to disable) bounds the wait, itself bounded by the task's own `timeout`.
+- **`needs_input`** — the attempt is over and the run is paused holding the question. The result's `summary`
+  and `error` quote what was asked, `cao status` / `cao task` / `report.md` print it with the exact
+  `cao resume <run> --task <id> --input "..."` that answers it, and answering continues the session that
+  asked rather than restarting the task.
+
+It is never a silent hang, and never `failed`/`crash` because nobody was there. How each transport gets a
+request to the dashboard is above: [Claude](#permissions-and-live-prompts),
+[Codex app-server](#permissions-and-app-server).
+
+### The acceptance matrix
+
+Every row has a test that drives it through the scheduler against the fakes — attended (an interaction
+handler is registered) and headless (none is) wherever both apply — asserting the task-state timeline, the
+stored `TaskResult` and the attempt's `events.jsonl`. They are named `row <n>` in
+`test/integration/interactive.test.ts` (rows 1-5, 11, 12) and `test/integration/codex-e2e.test.ts`
+(rows 6-11); `test/unit/resume.test.ts` covers the row 11 mechanics on their own.
+
+| # | Agent / transport | Situation | Attended (dashboard) | Headless |
+|---|---|---|---|---|
+| 1 | claude ask | permission prompt | `waiting` → answered → continues | denied → `needs_input` with the question |
+| 2 | claude ask | `AskUserQuestion` | `waiting` → answer → continues | denied → `needs_input` with the question |
+| 3 | claude ask | prompt withdrawn by the worker | modal closes, task returns to `running` | n/a |
+| 4 | claude ask | nobody answers | timeout → denied → `needs_input` | same |
+| 5 | claude deny | any prompt | denied by the CLI → `needs_input` | same |
+| 6 | codex appServer | command approval | `waiting` → allow/decline honoured | auto-review, or `needs_input` under `codex.approvals: host` |
+| 7 | codex appServer | file-change approval | `waiting` → allow/decline honoured | auto-review, or `needs_input` under `codex.approvals: host` |
+| 8 | codex appServer | `requestUserInput`, enabled | `waiting` → answers delivered by question id → continues | declined through the protocol; `needs_input` with the question if the worker cannot finish |
+| 9 | codex appServer | `requestUserInput`, disabled | declined with `-32601`; `needs_input` quoting the question if the worker cannot finish | same |
+| 10 | codex exec | approval or question rejected by the CLI | `needs_input` quoting the request and naming how to enable answers | same |
+| 11 | either | answered later with `cao resume --input` | the session that asked is resumed with the answer | same |
+| 12 | either | two prompts open at once | both answerable, in either order; the task leaves `waiting` on the last one | both denied |
+
+### What `codex exec` cannot do, and what changes it
+
+`codex exec` has **no channel for a human at all**. The CLI answers approval and `request_user_input`
+requests itself, with a rejection, so nothing an `exec` worker asks can reach a dashboard however a run is
+started. That is a property of the transport, not of the run: `cao validate` states it once per workflow
+naming every `exec` task, the run log records it once per such task, and every `exec` attempt's log opens
+with it.
+
+Rows 6-9 exist only on the other transport. To give a Codex task the ability to ask at all:
+
+| To make this answerable | Set |
+|---|---|
+| a command or file-change approval | `codex.transport: appServer` with `codex.approvals: host`, and a dashboard attached |
+| a free-form question (`requestUserInput`) | the above plus `codex.experimentalUserInput: true` |
+
+Row 10 is what happens when neither is set: the rejection is recognised in the JSONL stream, the attempt
+ends as `needs_input` quoting what Codex wanted, and the message names the option above rather than leaving
+an operator to guess. Nothing falls back automatically — `exec` stays `exec`.
 
 ---
 

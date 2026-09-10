@@ -93,8 +93,16 @@ describe('Codex typed failures', () => {
 describe('the outcome map', () => {
   it('covers every situation the two runners have to agree about', () => {
     expect(OUTCOME_MAP.map((rule) => rule.id)).toEqual([
-      'no_result', 'invalid_result', 'api_error', 'config_error', 'killed', 'open_tool', 'cancelled', 'timeout',
+      'no_result', 'invalid_result', 'api_error', 'config_error', 'agent_error', 'killed', 'open_tool', 'spawn_failure', 'cancelled', 'timeout',
     ]);
+  });
+
+  /** The map replaced a table per agent, so every row has to say how each runner recognises it. */
+  it('says how both runners recognise every row', () => {
+    for (const rule of OUTCOME_MAP) {
+      expect(rule.claude.length, rule.id).toBeGreaterThan(0);
+      expect(rule.codex.length, rule.id).toBeGreaterThan(0);
+    }
   });
 
   /** The documentation is generated from the map; if they part company, the map is the one that is right. */

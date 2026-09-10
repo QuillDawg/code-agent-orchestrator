@@ -9,6 +9,11 @@ effort: low
 execution:
   maxConcurrency: 1
 
+# Note: on transport "exec" no human can be reached during the task - the Codex CLI answers approval
+# and question requests itself, with a rejection. `cao validate` now warns about that, and a task that
+# does need a decision ends as needs_input quoting what Codex asked instead of failing after its
+# retries. Nothing here has to change; use transport "appServer" with approvals: host if a Codex task
+# of your own must be able to ask.
 codex:
   transport: exec
   approvals: auto

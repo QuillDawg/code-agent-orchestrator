@@ -381,12 +381,26 @@ codex:
   configMode: isolated       # exec only: --ignore-user-config --ignore-rules
 ```
 
-Codex `exec` is the unattended production path. It never waits on a terminal: read-only denies approvals,
-while the default workspace-write mode uses Codex automatic review. `appServer` creates a private JSONL
-process for one attempt and can send command/file approvals to the same dashboard used by Claude. Free-form
-questions require `experimentalUserInput: true`. CAO never falls back between transports, and rejects
-`appServer` plus isolated configuration because that Codex protocol has no supported isolation switch that
-preserves saved authentication. See [configuration.md](configuration.md#codex-workflow-template-or-task-level).
+**The Codex support level, plainly.**
+
+| | Status |
+|---|---|
+| `transport: exec` (the default) | **Stable.** The unattended production path: one `codex exec` process per attempt, a schema-validated `final.json`, JSONL activity in the transcript, retries, resume and diff capture exactly as for Claude. It never waits on a terminal — read-only denies approvals, the default workspace-write mode uses Codex automatic review. |
+| `transport: appServer` | **Experimental**, and Codex labels the protocol that way too. Opt in per task. It adds typed turn failures, token usage, interruption, and command/file-change approvals routed to the same dashboard Claude uses. |
+| `experimentalUserInput: true` | **Experimental**, `appServer` only, off by default. Without it a free-form Codex question is declined through the protocol instead of being asked. |
+
+Not supported, deliberately:
+
+- **A human during a `codex exec` task.** The Codex CLI answers approvals and questions itself, with a
+  rejection; no configuration changes that. Use `appServer` for a task that must be able to ask.
+- **`configMode: isolated` on `appServer`.** That protocol has no isolation switch which preserves saved
+  authentication, so the combination is a validation error rather than isolation CAO cannot provide.
+- **`codex.model`.** For `agent: codex` the top-level or task-level `model:` is the only way to set a model.
+- **Falling back between transports.** `exec` never becomes `appServer` under load or on error, or the
+  reverse: whichever you asked for is what runs.
+
+See [configuration.md](configuration.md#codex-workflow-template-or-task-level) for the keys and
+[agent-cli-integration.md](agent-cli-integration.md#codex) for the command lines.
 
 ---
 

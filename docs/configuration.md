@@ -132,6 +132,8 @@ Effort values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Cl
 
 `cao validate --json` prints the resolved `agent`, `model` and `effort` for every task, and `cao task <run> <task>` shows them for a task that already ran.
 
+## `codex` (workflow, template or task level)
+
 ```yaml
 agent: codex
 model: gpt-5.6-terra
@@ -393,7 +395,7 @@ enough (`MINIMUM_AGENT_VERSIONS`) and advertises what the workflow selected (`co
 `codex.approvals`, `codex.configMode`, `claude.configMode`). A task that cannot run fails at run start,
 naming the option, the workflow key, the version found and the version needed - not halfway through, once
 per task. `cao doctor` reports the same thing, and additionally starts each mode for real; see
-[capabilities.md](capabilities.md#cao-doctor).
+[capabilities.md](capabilities.md#checking-the-installation).
 
 ### Transient API errors
 

@@ -18,6 +18,7 @@
  *   permission-give-up (asks, is refused, and ends with an error result carrying permission_denials)
  *     (interactive modes; all but permission-give-up need --input-format stream-json)
  *   prose-no-json (ends with prose that reads like a result and no JSON at all; a --resume of the session answers with the object)
+ *   question-resumable (asks one question, then completes when the session is resumed with the answer)
  * FAKE_CLAUDE_NO_SUBAGENT_TEXT=1 drops --forward-subagent-text from the --help text.
  * FAKE_CLAUDE_DELAY_MS delays between events. FAKE_CLAUDE_TRACE=<file> appends one line per invocation
  * with cwd + prompt so tests can assert isolation and context passing; control responses received on stdin

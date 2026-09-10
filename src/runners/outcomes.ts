@@ -24,6 +24,10 @@ export interface OutcomeRule {
   /** What happened, in the words the documentation uses. */
   situation: string;
   outcome: ErrorOutcome;
+  /** How the Claude runner recognises this row. */
+  claude: string;
+  /** How the Codex runner recognises it, on either transport. */
+  codex: string;
   /** What the scheduler does next, and anything the attempt must record. */
   follows: string;
 }
@@ -31,22 +35,98 @@ export interface OutcomeRule {
 /**
  * Every situation in which an attempt ends without a result, and the outcome both runners must report for
  * it. Order is the documented order.
+ *
+ * The `claude`/`codex` columns are what each runner watches for. They live here rather than in a table per
+ * agent because two tables of the same eight situations are two tables that drift: a row added on one agent
+ * and forgotten on the other is exactly how the runners came to disagree in the first place.
  */
 export const OUTCOME_MAP: readonly OutcomeRule[] = [
-  { id: 'no_result', situation: 'exit 0, no result', outcome: 'invalid_result', follows: 'the same session is asked for the completion object (`retry.resultNudges`), then the task is retried' },
-  { id: 'invalid_result', situation: 'result present, fails the contract', outcome: 'invalid_result', follows: 'same as above: nudge, then retry' },
-  { id: 'api_error', situation: 'transient network/API error', outcome: 'api_error', follows: 'backoff, then the session is resumed; free up to `retry.transientAttempts`' },
-  { id: 'config_error', situation: 'argument or schema rejection', outcome: 'config_error', follows: 'the task fails immediately without spending `retry.attempts`; `onFailure` decides the run' },
-  { id: 'killed', situation: 'process killed externally', outcome: 'crash', follows: '`retry.attempts` as usual; the signal is recorded on the attempt and named in the message' },
-  { id: 'open_tool', situation: 'worker still holding an unanswered tool at exit', outcome: 'crash', follows: '`retry.attempts` as usual; the transcript ends with the tool call that was never answered' },
-  { id: 'cancelled', situation: 'abort from the orchestrator', outcome: 'cancelled', follows: 'the task is cancelled, not retried' },
-  { id: 'timeout', situation: 'task timeout', outcome: 'timeout', follows: 'the process tree is killed, then `retry.attempts` as usual' },
+  {
+    id: 'no_result',
+    situation: 'exit 0, no result',
+    outcome: 'invalid_result',
+    claude: 'a `result` event with no `structured_output` and no JSON object in its text',
+    codex: 'no `final.json` (`exec`), or a turn that completed without a completion object (`appServer`)',
+    follows: 'the same session is asked for the completion object (`retry.resultNudges`), then the task is retried',
+  },
+  {
+    id: 'invalid_result',
+    situation: 'result present, fails the contract',
+    outcome: 'invalid_result',
+    claude: '`structured_output`, or the object lifted out of the result text, fails the contract validator',
+    codex: '`final.json` parses but fails the contract validator',
+    follows: 'same as above: nudge, then retry',
+  },
+  {
+    id: 'api_error',
+    situation: 'transient network/API error',
+    outcome: 'api_error',
+    claude: '`is_error: true`, or a non-zero exit, carrying `API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, …',
+    codex: 'a retryable typed `codexErrorInfo`, or the same transient wording on stderr',
+    follows: 'backoff, then the session is resumed; free up to `retry.transientAttempts`',
+  },
+  {
+    id: 'config_error',
+    situation: 'argument or schema rejection',
+    outcome: 'config_error',
+    claude: "commander's `error: unknown option '--x'` on stderr, or `invalid_json_schema` from the API",
+    codex: 'a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one CAO asked for',
+    follows: 'the task fails immediately without spending `retry.attempts`; `onFailure` decides the run',
+  },
+  {
+    id: 'agent_error',
+    situation: 'the agent ended the session with an error of its own (max turns, budget, auth, failed start-up)',
+    outcome: 'crash',
+    claude: '`is_error: true` that is neither transient nor a rejected schema, or an initialization failure reported in the `init` event',
+    codex: 'a `turn.failed` whose typed failure is not retryable',
+    follows: '`retry.attempts` as usual; the message is the agent’s own',
+  },
+  {
+    id: 'killed',
+    situation: 'process killed externally',
+    outcome: 'crash',
+    claude: 'a non-zero exit or a signal, with no `result` event',
+    codex: 'a non-zero exit or a signal, with no schema-valid final response',
+    follows: '`retry.attempts` as usual; the signal is recorded on the attempt and named in the message',
+  },
+  {
+    id: 'open_tool',
+    situation: 'worker still holding an unanswered tool at exit',
+    outcome: 'crash',
+    claude: 'exit 0 with a `tool_use` whose `tool_result` never arrived',
+    codex: 'exit 0 with a `command_execution` the stream never completed',
+    follows: '`retry.attempts` as usual; the transcript ends with the tool call that was never answered',
+  },
+  {
+    id: 'spawn_failure',
+    situation: 'the CLI could not be started at all',
+    outcome: 'crash',
+    claude: 'a spawn error for `claude.command` / `CAO_CLAUDE_COMMAND` / `claude` on PATH',
+    codex: 'a spawn error for `codex.command` / `CAO_CODEX_COMMAND` / `codex` on PATH',
+    follows: '`retry.attempts` as usual; `cao run` and `cao doctor` report a missing binary before a run is created',
+  },
+  {
+    id: 'cancelled',
+    situation: 'abort from the orchestrator',
+    outcome: 'cancelled',
+    claude: 'the attempt’s abort signal fired; pending prompts are settled and the process tree stopped',
+    codex: 'the same, with `turn/interrupt` sent first on `appServer`',
+    follows: 'the task is cancelled, not retried',
+  },
+  {
+    id: 'timeout',
+    situation: 'task timeout',
+    outcome: 'timeout',
+    claude: 'the process manager hit the task’s `timeout`',
+    codex: 'the process manager hit the task’s `timeout`',
+    follows: 'the process tree is killed, then `retry.attempts` as usual',
+  },
 ];
 
 /** The map as the markdown table `docs/agent-cli-integration.md` carries; the doc test compares against it. */
 export function outcomeMapTable(): string {
-  const rows = OUTCOME_MAP.map((rule) => `| ${rule.situation} | \`${rule.outcome}\` | ${rule.follows} |`);
-  return ['| Situation | Outcome | What follows |', '|---|---|---|', ...rows].join('\n');
+  const rows = OUTCOME_MAP.map((rule) => `| ${rule.situation} | \`${rule.outcome}\` | ${rule.claude} | ${rule.codex} | ${rule.follows} |`);
+  return ['| Situation | Outcome | How Claude Code shows it | How Codex shows it | What follows |', '|---|---|---|---|---|', ...rows].join('\n');
 }
 
 /** A CLI refusing what CAO sent it: the flag, schema or protocol field, and the YAML key behind it. */

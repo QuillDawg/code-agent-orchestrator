@@ -18,7 +18,8 @@
  *                    exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
  *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
  *   app-server only: approval | approval-always | approval-decline | file-approval | question |
- *                    question-multi | question-recovers | unknown-request | failure | interrupted |
+ *                    question-multi | question-recovers | question-then-resume | unknown-request |
+ *                    failure | interrupted |
  *                    mcp-failure | malformed | overload-once | wrong-model | missing-policy
  * Responses to the server's own requests are validated against the app-server protocol schemas of
  * codex-cli 0.154.0 the way the real server would: a decision or an answer map of the wrong shape fails

@@ -142,6 +142,25 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   usage screen. The id is now cut to the column with an ellipsis, so the state, cost and activity columns
   stay aligned however long a task is named.
 
+### Documentation
+
+- [docs/agent-cli-integration.md](docs/agent-cli-integration.md) now has **one** outcome table instead of one
+  per agent. It is generated from `src/runners/outcomes.ts`, carries a column for how each runner recognises
+  every row, and is compared against the page by a test - two tables of the same situations were how the two
+  runners came to disagree in the first place.
+- The same page gained a "waiting for a human" section carrying the acceptance matrix every blocked-on-a-human
+  case is tested against, including what `codex exec` cannot do and which options change it, and its
+  invocation lines were re-checked against the argv the runners build: `--approve-for-me` and `--sandbox` are
+  now shown as the mutually exclusive alternatives they are, `codex.configMode: isolated` and Claude's
+  `--safe-mode` appear, and the app-server command line is documented for the first time.
+- [README.md](README.md) and [docs/capabilities.md](docs/capabilities.md) state the Codex support level
+  plainly: `exec` stable, `appServer` and `experimentalUserInput` experimental and opt-in, and the four things
+  that are deliberately not supported.
+- [CONTRIBUTING.md](CONTRIBUTING.md) documents `npm run test:agents` and the rule that a runner change without
+  a matching fake change is incomplete; the fake-agent mode tables are complete again.
+- Every `examples/` workflow that runs Codex on `exec` now says in a comment that no human can be reached
+  during such a task. No example changed what it does.
+
 ### Security
 
 - Development toolchain updated to close the open Dependabot alerts: vitest 2 to 5 (with Vite 8), and

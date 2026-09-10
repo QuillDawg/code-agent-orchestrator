@@ -46,6 +46,18 @@ teaching it a new flag is one edit. If a test starts failing because a fake got 
 needs fixing: a permissive fake agrees with every bug CAO has, which is how two Codex flag bugs reached
 users past a green suite.
 
+**A runner change without a matching fake change is incomplete.** A new flag, a new event, a new request or
+response shape, a new failure the runner classifies — the fake has to be able to produce it, and to reject
+the wrong version of it, before the change is done. Two rules follow from that:
+
+- Make the fake **stricter**, never more permissive. If a new flag would make an existing fake exit 2,
+  that is the fake telling you the flag is wrong, or that its `FLAGS` table is out of date — decide which,
+  and say so in the commit body. Loosening a check to make a test pass removes the only thing standing
+  between a shipped argv bug and a user.
+- Add the **mode** that produces the situation rather than mocking the runner. Every mode in the tables
+  below exists because some behaviour had no other way to be produced on demand; a mode is also how the
+  next person reproduces the bug by hand with `CAO_CODEX_COMMAND` / `CAO_CLAUDE_COMMAND`.
+
 That runs a whole workflow — worktrees, merges, diff capture, the dashboard, the run report — for free. It is
 the fastest way to see a change working end to end, and the right way to reproduce a bug report.
 
@@ -55,9 +67,12 @@ listed in the header comment of the file and cover the cases that are otherwise 
 | Mode | What it exercises |
 |---|---|
 | `success` (default), `failed`, `blocked`, `needs_input`, `skipped` | each completion status |
-| `invalid`, `no-result`, `crash`, `hang` | the failure paths that are not a clean status |
+| `invalid`, `no-result`, `crash`, `hang`, `error-result`, `api-error`, `api-error-stderr` | the failure paths that are not a clean status, including a transient error the resumed session recovers from |
+| `bad-schema`, `open-tool-exit` | the rows of the outcome map with no other producer: the API refusing `--json-schema` (a `config_error`), and a clean exit with a tool call still open (a `crash` naming it) |
 | `commit`, `shell`, `edge`, `noop` | git capture: a real commit, changes made outside the tool stream, renames into paths with spaces and binary files, a task that changes nothing |
-| `permission`, `permission-always`, `question`, `permission-cancel`, `permission-hang` | the interactive stdio control protocol (needs `--input-format stream-json`) |
+| `permission`, `permission-always`, `question`, `question-multi`, `permission-cancel`, `permission-hang` | the interactive stdio control protocol (needs `--input-format stream-json`) |
+| `permission-two`, `permission-cancel-late`, `permission-give-up` | two prompts open at once answered in either order, a withdrawal of an already-answered request, and a session that is refused everything and gives up carrying `permission_denials` |
+| `question-resumable`, `prose-no-json` | what `cao resume --task X --input "…"` and the result nudge do to a session: both ask once and finish when the session is resumed |
 | `subagent`, `subagents`, `orphan-tool`, `thinking` | transcript shapes: nested subagent entries, a call whose result never arrives, thinking blocks |
 
 `FAKE_CLAUDE_DELAY_MS` slows it down so you can watch the dashboard; `FAKE_CLAUDE_TRACE=<file>` appends the
@@ -71,7 +86,11 @@ worker actually received.
 | Mode | What it exercises |
 |---|---|
 | `success` (default), `invalid`, `api-error`, `hang` | the exec and app-server outcome paths; `invalid` and `api-error` recover when the session is resumed, so a run exercises nudge-then-success and transient-then-resume |
-| `approval`, `file-approval`, `question` | app-server command, file-change and `requestUserInput` requests |
+| `interim` | a completion object mid-turn, more work, then a different one: the object is protocol, not prose, and only the last one is the outcome |
+| `schema-rejected`, `open-command` | the API refusing the output schema (a `config_error` on both transports), and a command the stream never completes (a `crash` naming it) |
+| `exec-approval`, `exec-user-input` | **exec only**: the CLI rejecting a command approval and a `request_user_input` the way the real binary does, which is H3.7 row 10. Both are skipped on `exec resume`, modelling an answer that resolved the request |
+| `approval`, `approval-always`, `approval-decline`, `file-approval`, `question`, `question-multi` | **app-server only**: command, file-change and `requestUserInput` requests, and each decision the protocol allows. Responses are validated against codex-cli's own response schemas, so an answer of the wrong shape fails the turn |
+| `question-recovers`, `question-then-resume`, `unknown-request` | a worker that finishes without its answer, one that finishes when the session is resumed with it, and a request CAO must refuse with `-32601` |
 | `failure`, `interrupted`, `mcp-failure`, `overload-once` | typed turn failures, an interrupted turn, a required MCP server that will not start, a `-32001` overload on `thread/start` |
 | `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope CAO did not ask for |
 
