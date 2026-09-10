@@ -217,7 +217,7 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
       process.stdout.write(`  ${need.kind === 'approval' ? 'Approval' : 'Input'} required for "${need.taskId}":\n`);
       // The question itself, indented under the task: an operator who has to answer it should not have to
       // run another command to find out what was asked.
-      for (const line of questionLines(need.question, 3)) process.stdout.write(`    ${line}\n`);
+      for (const line of questionLines(need.question, 6)) process.stdout.write(`    ${line}\n`);
       process.stdout.write(`    ${need.command}\n`);
     }
     // One answer per invocation, so a run paused on several questions needs one resume each.

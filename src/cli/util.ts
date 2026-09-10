@@ -272,16 +272,29 @@ export function isInteractive(): boolean {
 }
 
 /**
- * A question a worker asked, ready to print under the task that asked it: agent-written text, so control
- * characters and escapes are stripped, blank lines dropped, and the whole thing clipped to `maxLines` so a
- * worker cannot push the command that answers it off the screen. Each line is prefixed so a multi-line
- * question reads as a quotation rather than as more of the orchestrator talking.
+ * A question a worker asked, ready to print under the task that asked it. Agent-written text, so escapes
+ * and control characters are stripped and blank lines dropped; then it is wrapped to `width` and capped at
+ * `maxLines`, because the command that answers it is printed underneath and must stay on the screen. Each
+ * line is prefixed so a multi-line question reads as a quotation rather than as more of the orchestrator
+ * talking.
  */
-export function questionLines(question: string | undefined, maxLines = 4, width = 160): string[] {
+export function questionLines(question: string | undefined, maxLines = 4, width = Math.max(40, terminalWidth(100) - 8)): string[] {
   const text = sanitizeText(question ?? '').trim();
   if (!text) return [];
-  const all = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const shown = all.slice(0, maxLines).map((l) => `| ${truncateVisible(l, width)}`);
-  if (all.length > maxLines) shown.push(`| ... ${all.length - maxLines} more line(s); see cao task <id>`);
+  const wrapped: string[] = [];
+  for (const line of text.split(/\n+/)) {
+    let rest = line.trim();
+    if (!rest) continue;
+    while (rest.length > width) {
+      // Break on the last space that fits, so a wrapped sentence still reads as words.
+      const space = rest.lastIndexOf(' ', width);
+      const cut = space > width / 2 ? space : width;
+      wrapped.push(rest.slice(0, cut).trimEnd());
+      rest = rest.slice(cut).trimStart();
+    }
+    wrapped.push(rest);
+  }
+  const shown = wrapped.slice(0, maxLines).map((l) => `| ${l}`);
+  if (wrapped.length > maxLines) shown.push(`| ... clipped; the whole question is in cao task <id>`);
   return shown;
 }

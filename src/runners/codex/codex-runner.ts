@@ -123,8 +123,10 @@ export class CodexRunner implements TaskRunner {
     /** `codex exec` answers approvals and questions itself, with a rejection: recognise it, do not just log it. */
     const noteHumanRequest = (message: string): void => {
       const kind = codexExecHumanRequest(message);
-      if (!kind) return;
-      blocked ??= { kind, message, wanted: kind === 'command' ? pendingCommand : undefined };
+      // Codex reports the same rejection twice - once as the error item, once on the failed turn - so the
+      // first one is kept and reported and the echo is dropped, rather than telling the operator twice.
+      if (!kind || blocked) return;
+      blocked = { kind, message, wanted: kind === 'command' ? pendingCommand : undefined };
       hooks.onWarning?.(`Codex needed a human decision that \`codex exec\` rejected: ${message}`);
     };
 

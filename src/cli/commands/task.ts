@@ -69,7 +69,7 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
   if (need) {
     out('');
     out(need.kind === 'approval' ? 'Needs your approval:' : 'Needs your answer:');
-    for (const line of questionLines(need.question, 12)) out(`  ${line}`);
+    for (const line of questionLines(need.question, 20)) out(`  ${line}`);
     out(`  ${need.command}`);
   }
   if (st.lastActivity) {

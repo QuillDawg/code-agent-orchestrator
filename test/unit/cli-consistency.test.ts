@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { DEFAULT_WORKFLOW_FILES, matchTask, requireTask, resolveWorkflowPath, table, terminalWidth, truncateVisible } from '../../src/cli/util.js';
+import { DEFAULT_WORKFLOW_FILES, matchTask, questionLines, requireTask, resolveWorkflowPath, table, terminalWidth, truncateVisible } from '../../src/cli/util.js';
 import { formatAge, formatClock, formatLocal, formatWhen } from '../../src/util/duration.js';
 import { formatDiagnostics } from '../../src/workflow/validator.js';
 import { logSource, jsonEntryLines } from '../../src/cli/commands/logs.js';
@@ -95,6 +95,28 @@ describe('truncateVisible', () => {
     expect(truncateVisible('abcdef', 4)).toBe('abc…');
     expect(truncateVisible('abc', 4)).toBe('abc');
     expect(truncateVisible(paint('abcdef', 'red', true), 4)).toBe('abc…');
+  });
+});
+
+describe('questionLines', () => {
+  const ESC = String.fromCharCode(27);
+  const CR = String.fromCharCode(13);
+
+  it('quotes a question an operator has to read, and lets an agent write none of the terminal', () => {
+    expect(questionLines('Which database?')).toEqual(['| Which database?']);
+    expect(questionLines(undefined)).toEqual([]);
+    expect(questionLines('   ')).toEqual([]);
+    // Blank lines dropped, so a question padded with them does not push the resume command off the screen.
+    expect(questionLines('one\n\n\ntwo')).toEqual(['| one', '| two']);
+    // Clipped at maxLines, and the reader is told where the rest is.
+    expect(questionLines('a\nb\nc\nd\ne', 2)).toEqual(['| a', '| b', '| ... clipped; the whole question is in cao task <id>']);
+    // Wrapped on word boundaries rather than cut: the end of a long question is the actionable part.
+    expect(questionLines('one two three four five', 4, 10)).toEqual(['| one two', '| three four', '| five']);
+    // The question is agent-written and lands next to the command an operator is about to run: an escape
+    // sequence or a carriage return in it must not reach the terminal.
+    expect(questionLines(`Run ${CR}rm -rf /${ESC}[2K${ESC}[G now?`)).toEqual(['| Run rm -rf / now?']);
+    // A single unbroken token has no word boundary to break on, so it is cut at the width.
+    expect(questionLines('x'.repeat(25), 4, 10)).toEqual([`| ${'x'.repeat(10)}`, `| ${'x'.repeat(10)}`, `| ${'x'.repeat(5)}`]);
   });
 });
 

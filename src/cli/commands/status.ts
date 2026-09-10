@@ -79,7 +79,7 @@ export async function statusCommand(runRef: string | undefined, opts: StatusOpti
     out(needs.length === 1 ? 'This run is waiting for you:' : `This run is waiting for you (${needs.length} tasks):`);
     for (const need of needs) {
       out(`  ${need.kind === 'approval' ? 'Approval' : 'Answer'} required for "${need.taskId}":`);
-      for (const line of questionLines(need.question, 6)) out(`    ${line}`);
+      for (const line of questionLines(need.question, 8)) out(`    ${line}`);
       out(`    ${need.command}`);
     }
   }

@@ -536,6 +536,10 @@ describe.skipIf(!HAS_GIT)('blocked on a human: Codex (H3.7 rows 6-10)', () => {
       const runEvents = (await fs.readFile(store.paths.eventsFile(run.runId), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; code?: string; taskId?: string; message?: string });
       const notices = runEvents.filter((e) => e.type === 'workflow.warning' && e.taskId === 'blocked' && e.message?.includes('cannot reach a human'));
       expect(notices).toHaveLength(1);
+      // Codex reports the rejection twice - as the error item and again on the failed turn - and the
+      // operator should hear about it once.
+      const rejections = runEvents.filter((e) => e.type === 'workflow.warning' && e.message?.includes('needed a human decision'));
+      expect(rejections).toHaveLength(1);
     }, 60_000);
   }
 

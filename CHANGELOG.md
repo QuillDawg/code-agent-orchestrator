@@ -79,6 +79,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `execution.interactionTimeout` expires.
 - The interaction modal clamps agent-written question text and windows a long option list, so a worker
   cannot push the answer keys off the bottom of the terminal.
+- A question printed under a paused task now wraps on word boundaries to the terminal width instead of being
+  cut at one line: for a Codex `exec` rejection the actionable half was exactly the half being cut off.
+- A `codex exec` rejection of an approval or a question is reported once. Codex sends it twice - as the
+  error item and again on the failed turn - and both reached the run log.
 - `cao resume` now validates its arguments before taking the run lock, so a mistyped `--task` cannot leave
   the run owned by a process that then exits.
 - `codex exec` rejects approvals and questions itself, and the rejection used to fall through to
