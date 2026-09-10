@@ -7,4 +7,3 @@ CAO runs agent tasks defined in a workflow file.
 ```bash
 cao run workflow.yaml
 ```
-
