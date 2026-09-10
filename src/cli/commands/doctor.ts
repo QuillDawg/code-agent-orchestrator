@@ -472,7 +472,7 @@ export async function doctorCommand(opts: DoctorOptions, overrides: Partial<Doct
   let workflowPath = opts.config;
   if (!workflowPath) {
     for (const name of DEFAULT_WORKFLOW_FILES) {
-      const candidate = path.join(process.cwd(), name);
+      const candidate = path.join(path.resolve(opts.repository ?? process.cwd()), name);
       if (await pathExists(candidate)) { workflowPath = candidate; break; }
     }
   }

@@ -163,7 +163,7 @@ export async function detectRunnersForWorkflow(workflow: ResolvedWorkflow, envir
       required.add(transport === 'appServer' ? 'appServer' : 'exec');
       if (task.codex.configMode === 'isolated') required.add('isolatedConfig');
       const approvals = task.codex.approvals ?? 'auto';
-      if ((transport === 'exec' && approvals !== 'deny') || (transport === 'appServer' && approvals === 'autoReview')) {
+      if ((transport === 'exec' && approvals !== 'deny') || (transport === 'appServer' && approvals !== 'deny' && approvals !== 'host')) {
         if ((task.codex.approvalPolicy ?? 'on-request') === 'on-request') required.add('autoReview');
       }
       codexCommands.set(task.codex.command, required);

@@ -155,6 +155,8 @@ codex:
 `appServer` starts Codex's experimental stdio app-server for the task. It supports typed failures, token usage, interruption, and dashboard-mediated command/file approvals. `approvals: auto` uses the dashboard when attached and automatic review headlessly; `host` requires app-server plus a dashboard; `autoReview` always uses Codex's reviewer; `deny` never approves. Free-form Codex questions remain disabled unless `experimentalUserInput: true`; when disabled, a question ends the task as `needs_input` instead of hanging.
 
 `configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors. The `readOnly` and `fullAccess` presets are security envelopes: raw sandbox/policy values cannot widen or contradict them.
+Security-affecting flags (`--sandbox`, approval/bypass flags, `--add-dir`, and equivalent `-c` overrides) are
+rejected in `extraArgs`; use the validated first-class fields so preflight and runtime enforce the same policy.
 
 ## `claude` (workflow, template or task level)
 

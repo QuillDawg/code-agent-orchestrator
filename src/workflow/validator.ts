@@ -6,6 +6,7 @@ import { compileWhen } from '../conditions/evaluator.js';
 import { ConfigError } from '../util/errors.js';
 import { errorLine, warnLine } from '../util/marks.js';
 import { supportsAutoMode, supportsEffort } from '../runners/claude/models.js';
+import { codexExtraArgsSecurityConflict } from '../runners/codex/permissions.js';
 
 export interface ValidationOptions {
   knownRunners?: string[];
@@ -82,6 +83,8 @@ export function validateWorkflow(
       if (t.codex.permissionMode === 'fullAccess' && t.codex.sandbox && t.codex.sandbox !== 'danger-full-access') {
         error(`Task "${t.id}": Codex permissionMode "fullAccess" cannot be combined with sandbox "${t.codex.sandbox}"`, t.id);
       }
+      const unsafeExtraArg = codexExtraArgsSecurityConflict(t.codex.extraArgs);
+      if (unsafeExtraArg) error(`Task "${t.id}": Codex extraArgs cannot override security option "${unsafeExtraArg}"; use the codex permission fields`, t.id);
     }
     if (t.agent === 'claude' && (t.effort === 'none' || t.effort === 'minimal')) {
       warn(`Task "${t.id}": effort "${t.effort}" is Codex-only; Claude accepts low, medium, high, xhigh or max, so it will be ignored`, t.id);

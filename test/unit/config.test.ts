@@ -82,6 +82,13 @@ tasks: [{ id: a, agent: codex, prompt: p }]
     expect(errors(widenedReadOnly.validation.diagnostics)).toEqual(expect.arrayContaining([
       expect.stringMatching(/readOnly.*sandbox/i), expect.stringMatching(/readOnly.*approvalPolicy/i),
     ]));
+
+    const rawOverride = await buildWorkflow(`
+name: invalid-raw-security
+codex: { extraArgs: [--sandbox, danger-full-access] }
+tasks: [{ id: a, agent: codex, prompt: p }]
+`);
+    expect(errors(rawOverride.validation.diagnostics)).toEqual(expect.arrayContaining([expect.stringMatching(/extraArgs.*security/i)]));
   });
 
   it('resolves generic agent, model, effort and Codex permissions per task', async () => {

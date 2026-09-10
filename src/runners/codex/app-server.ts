@@ -11,7 +11,7 @@ import { CONTRACT_SYSTEM_PROMPT, TASK_RESULT_JSON_SCHEMA, validateTaskResult } f
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
-import { resolveCodexPermissions } from './permissions.js';
+import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
 
 export interface CodexAppServerOptions {
   processManager: ProcessManager;
@@ -90,6 +90,8 @@ function emptyNeedsInput(message: string): TaskResult {
 export async function runCodexAppServer(config: CodexAppServerOptions, input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
   await ensureDir(input.attemptDir);
   const options = config.options;
+  const unsafeExtraArg = codexExtraArgsSecurityConflict(options.extraArgs);
+  if (unsafeExtraArg) return { kind: 'error', outcome: 'invalid_result', message: `Codex extraArgs cannot override security option "${unsafeExtraArg}"; use the validated codex permission fields` };
   const resolved = resolveCodexPermissions(options, Boolean(input.canInteract));
   if (resolved.host && !input.canInteract) return { kind: 'error', outcome: 'invalid_result', message: 'Codex host approvals require an interactive handler' };
   if (options.configMode === 'isolated') {

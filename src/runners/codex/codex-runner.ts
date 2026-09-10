@@ -19,7 +19,7 @@ import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { runCodexAppServer } from './app-server.js';
 import { codexFailureMetadata, normalizeCodexFailure } from './failure.js';
-import { resolveCodexPermissions } from './permissions.js';
+import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
 
 export interface CodexRunnerOptions {
   processManager: ProcessManager;
@@ -36,6 +36,8 @@ const MAX_OUTPUT_CHARS = 2000;
  * extraArgs can override them, like the Claude runner.
  */
 export function buildCodexArgs(options: CodexOptions, schemaPath: string, outputPath: string, resumeSessionId?: string, model?: string, effort?: string): string[] {
+  const conflict = codexExtraArgsSecurityConflict(options.extraArgs);
+  if (conflict) throw new Error(`Codex extraArgs cannot override security option "${conflict}"; use the validated codex permission fields`);
   const permissions = resolveCodexPermissions(options, false);
   const args = ['--sandbox', permissions.sandbox, '-c', `approval_policy="${permissions.approvalPolicy}"`];
   if (permissions.autoReview) args.unshift('--approve-for-me');
@@ -67,6 +69,8 @@ export class CodexRunner implements TaskRunner {
 
   async run(input: RunnerInput, hooks: RunnerHooks): Promise<RunnerOutcome> {
     const options: CodexOptions = { ...this.defaults, ...input.task.codex };
+    const unsafeExtraArg = codexExtraArgsSecurityConflict(options.extraArgs);
+    if (unsafeExtraArg) return { kind: 'error', outcome: 'invalid_result', message: `Codex extraArgs cannot override security option "${unsafeExtraArg}"; use the validated codex permission fields` };
     const detection = await detectCodex(options.command);
     if (!detection.found) return { kind: 'error', outcome: 'crash', message: `Codex CLI not found (${detection.command}): ${detection.error ?? 'unknown error'}` };
     if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled before start' };

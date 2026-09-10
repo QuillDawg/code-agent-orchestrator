@@ -52,6 +52,11 @@ describe('Codex exec transport', () => {
     expect(activities).toContain('$ npm test');
     expect(usage.at(-1)).toMatchObject({ sessionId: 'codex-exec-thread-1', numTurns: 1 });
   });
+
+  it('rejects raw arguments that could override the security envelope', () => {
+    expect(() => buildCodexArgs({ permissionMode: 'readOnly', extraArgs: ['--sandbox', 'danger-full-access'] }, 'schema.json', 'final.json')).toThrow(/cannot override security/i);
+    expect(() => buildCodexArgs({ extraArgs: ['-c', 'approval_policy="never"'] }, 'schema.json', 'final.json')).toThrow(/approval_policy/i);
+  });
 });
 
 describe('Codex app-server transport', () => {

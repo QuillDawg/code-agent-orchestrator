@@ -24,3 +24,21 @@ export function resolveCodexPermissions(options: CodexOptions, canInteract: bool
     autoReview: selected === 'autoReview' && approvalPolicy === 'on-request',
   };
 }
+
+const SECURITY_FLAGS = new Set([
+  '--sandbox', '-s', '--ask-for-approval', '-a', '--approve-for-me', '--full-auto', '--yolo',
+  '--dangerously-bypass-approvals-and-sandbox', '--add-dir',
+]);
+
+/** Raw passthrough must not be able to override CAO's validated sandbox/approval envelope. */
+export function codexExtraArgsSecurityConflict(args: string[] | undefined): string | undefined {
+  if (!args) return undefined;
+  for (let index = 0; index < args.length; index++) {
+    const token = args[index]!.toLowerCase();
+    if (SECURITY_FLAGS.has(token) || [...SECURITY_FLAGS].some((flag) => token.startsWith(`${flag}=`))) return args[index];
+    if ((token === '-c' || token === '--config') && /(?:^|[.])(approval_policy|approvals_reviewer|sandbox|permissions?)(?:[.=]|$)/i.test(args[index + 1] ?? '')) {
+      return `${args[index]} ${args[index + 1]}`;
+    }
+  }
+  return undefined;
+}
