@@ -10,6 +10,24 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **`~/.cao/runs/<runId>@<repoHash>.json`: a run can announce itself to a desktop surface.** The new
+  `src/persistence/registry.ts` is the first user-level state in this codebase — every other path `cao`
+  builds derives from a repository root, so a run has until now been findable only by someone who already
+  knew which checkout it belonged to. An announced run writes one entry once it is running, rewrites it on
+  the same 20 s tick that already refreshes `lock.json` and `live.json`, and writes it a last time with the
+  terminal state, `endedAt` and `exitCode`. The entry is a **pointer plus a heartbeat, never a second copy
+  of run state**: everything else a reader shows comes from the run directory it points at, which is what
+  keeps a stale entry harmless. The key carries a hash of the repository root because run ids are unique
+  only within one repository, and two checkouts running on the same day both allocate `2026-09-10-001`.
+  Entries are retained after the run ends and reaped once they are older than `retainDays` (14 by default,
+  in `~/.cao/config.json`) — either since they ended, or, for an orchestrator that was hard-killed and
+  never got to say so, since they last heartbeated. Reaping deletes **pointers, never run directories**.
+  `CAO_HOME` moves the whole directory; one that is a UNC path, a mapped network drive, inside a
+  OneDrive/Dropbox/Google Drive folder or (on POSIX) not owner-only is refused with a reason, and a synced
+  directory's conflict copies are ignored rather than parsed.
+  **Nothing about using `cao` changes.** No command turns this on yet: announcing is off unless the
+  scheduler is handed an `emit` announcement, and with it off `cao` does not touch `~/.cao` at all. Every
+  registry call is best-effort — a home directory it cannot write warns once and never fails a run.
 - **A second published package: `code-agent-orchestrator-protocol`.** The types and pure logic that
   describe what `cao` writes to disk now live in `packages/protocol/`, an npm workspace in this repository
   with its own semver. It has zero runtime dependencies, uses no Node builtins and is browser-safe, so a
