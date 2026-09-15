@@ -33,6 +33,16 @@ contract moves, so most `code-agent-orchestrator` releases do not bump it (spec 
   - the transcript entry: `TranscriptEntry`, `FileOp`, `transcriptLine`, `parseTranscriptLine`;
   - transcript structure: `planTranscript`, `PlannedEntry`, `TranscriptFilter`, `TRANSCRIPT_FILTERS`,
     `FILTER_LABEL`, `nextFilter`, `filterEntries`.
+- `createTranscriptPlan()` — the same tree, kept up to date as the log arrives (spec §6.3.1). `append()`
+  takes the next entries and reports what moved as `{ added, changed }`; `plan()` returns the tree and is
+  reference-equal to the previous call until something does move, with a node that did not change still the
+  same object; `end()` marks every call nobody answered, as reaching the end of the log does; `reset()`
+  forgets an attempt, because tool ids come from the agent process and do not pair across one (§8.6).
+  `planTranscript` is unchanged and stays the one-shot path. The two are separate implementations tied by a
+  property — for every fixture and every split point, `incremental(a).append(b).plan()` equals
+  `planTranscript([...a, ...b])` — rather than one implementation with a mode flag. The property is also
+  run over generated logs whose entries arrive in orders no agent produces, which is where two
+  implementations of one algorithm actually drift.
 - New to the contract, and consumed by nothing yet: `PROTOCOL_VERSION`, `CAPABILITIES`, `MachineIdentity`,
   `RegistryEntry` (§4.2.3), `ControlRequest` (§4.3.1), `PendingInteractionFile` (§4.4.2) and `PresenceFile`
   (§4.6.1).

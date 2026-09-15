@@ -18,6 +18,17 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   interaction and transcript types, the run-directory layout (`createRunPaths`), the transcript structure
   (`planTranscript`, `PlannedEntry`, the kind filters), and the schemas of the registry, request,
   pending-interaction and presence files a companion surface will exchange with a run.
+- **`createTranscriptPlan()` in `code-agent-orchestrator-protocol`: the transcript tree, kept up to date as
+  the log arrives.** `planTranscript` reads a whole attempt to decide which calls went unanswered, which is
+  what `cao logs` and `cao peek` want and what a live view cannot afford — a following surface would re-plan
+  tens of thousands of entries several times a second and rebuild every row each time. The stateful planner
+  takes entries as they land (`append`, which reports what actually moved), hands back a tree whose
+  unchanged nodes are the same objects they were (`plan`), marks the calls nobody answered when the attempt
+  stops (`end`), and forgets an attempt at a retry boundary, where tool ids stop pairing (`reset`).
+  **`planTranscript` is untouched**; the two are separate implementations held together by a property test
+  that runs the incremental planner against it at every split point of every recorded attempt log, and of a
+  thousand generated ones whose entries arrive in orders no agent produces.
+  `cao`'s own transcript rendering still calls `planTranscript` and is unchanged.
   **Nothing about using `cao` changes.** It gained the package as its ninth dependency and re-exports every
   symbol from `src/index.ts`, so `import { … } from 'code-agent-orchestrator'` resolves exactly as before;
   the moved declarations were moved, not copied, and a test fails if any of them is ever declared twice.

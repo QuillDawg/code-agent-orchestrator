@@ -37,6 +37,32 @@ const entries = lines.map(parseTranscriptLine).filter((e) => e !== null);
 for (const item of planTranscript(entries)) render(item); // subagents nested, tools paired with their results
 ```
 
+`planTranscript` is one-shot and global: it reads the whole array, because whether a call went unanswered is
+decided by the *last* entry in it. That is the right shape for `cao logs`, for `cao peek`, and for a test.
+It is the wrong shape behind a tailer, where an attempt of tens of thousands of entries would be re-planned
+several times a second into an entirely new tree, handing a renderer fresh objects for rows that did not
+move. So the same algorithm is also available incrementally:
+
+```ts
+import { createTranscriptPlan } from 'code-agent-orchestrator-protocol';
+
+const planner = createTranscriptPlan();
+
+onTailLines((lines) => {
+  const { added, changed } = planner.append(lines.map(parseTranscriptLine).filter((e) => e !== null));
+  // Update those rows, or take the whole tree — it is reference-equal to the last one until something moves,
+  // and a node that did not change is the same object it was.
+  render(planner.plan());
+});
+
+onAttemptEnded(() => planner.end());    // marks every call nobody answered
+onNextAttempt(() => planner.reset());   // tool ids do not pair across attempts
+```
+
+The two are tied together by a property, not by sharing code: for every fixture and every split point,
+`incremental(a).append(b).plan()` equals `planTranscript([...a, ...b])`. Change one and the other's test
+tells you.
+
 Paths are joined with `/`, because the package carries no `node:path`. Every platform CAO runs on accepts
 `/` in a filesystem call; a caller that wants the native separator normalises the string it was handed.
 
@@ -93,6 +119,9 @@ day the two renderers start disagreeing without anything failing.
 
 CI runs against a **range**, not a pair: the `planTranscript` fixture suite against the oldest supported and
 the newest published package, and the end-to-end suite against the oldest supported and the newest `cao`.
+The fixtures are recorded attempt logs in `test/fixtures/transcripts/`, written by
+`scripts/record-transcripts.ts` in the repository above; a surface reads that corpus rather than copying it,
+so the two renderers cannot be shown different input.
 
 ## Contributing
 
