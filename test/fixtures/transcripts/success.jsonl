@@ -1,0 +1,5 @@
+{"kind":"system","ts":"2026-09-15T15:40:09.177Z","text":"session 925f499c-95b6-4343-b2f3-90c969a5720f (fake-model)"}
+{"kind":"system","ts":"2026-09-15T15:40:09.177Z","text":"Claude capabilities: stream-json, structured-output"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.195Z","tool":"Read","line":"Read src/incremental-planner.ts","toolUseId":"t1"}
+{"kind":"text","ts":"2026-09-15T15:40:09.210Z","text":"Working on incremental-planner"}
+{"kind":"result","status":"success","summary":"Fake success for incremental-planner (attempt 1)","costUsd":0.01,"isError":false,"ts":"2026-09-15T15:40:09.234Z","raw":"{\"status\":\"success\",\"summary\":\"Fake success for incremental-planner (attempt 1)\",\"filesChanged\":[\"src/incremental-planner.ts\"],\"commits\":[],\"decisions\":[\"decision-incremental-planner\"],\"warnings\":[],\"followUp\":[]}"}

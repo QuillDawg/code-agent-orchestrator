@@ -1,0 +1,18 @@
+{"kind":"system","ts":"2026-09-15T15:40:09.429Z","text":"session 378c081c-90bb-4ebf-9a50-1ab2b1089d35 (fake-model)"}
+{"kind":"system","ts":"2026-09-15T15:40:09.429Z","text":"Claude capabilities: stream-json, structured-output"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.448Z","tool":"Agent","line":"Agent: Review the diff","toolUseId":"t1"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.448Z","tool":"Agent","line":"Agent: Check the tests","toolUseId":"t2"}
+{"kind":"text","ts":"2026-09-15T15:40:09.448Z","text":"Reviewing the diff","parentToolUseId":"t1"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.448Z","tool":"Grep","line":"Grep: TODO in src","toolUseId":"t4","parentToolUseId":"t1"}
+{"kind":"command","ts":"2026-09-15T15:40:09.448Z","command":"npm test","tool":"Bash","toolUseId":"t5","parentToolUseId":"t2"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.465Z","text":"src/a.ts:1:TODO","isError":false,"toolUseId":"t4","parentToolUseId":"t1"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.465Z","tool":"Agent","line":"Agent: Dig into src/a.ts","toolUseId":"t6","parentToolUseId":"t1"}
+{"kind":"text","ts":"2026-09-15T15:40:09.465Z","text":"Digging in","parentToolUseId":"t6"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.465Z","tool":"Read","line":"Read src/a.ts","toolUseId":"t8","parentToolUseId":"t6"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.481Z","text":"the contents","isError":false,"toolUseId":"t8","parentToolUseId":"t6"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.481Z","text":"One stale TODO","isError":false,"toolUseId":"t6","parentToolUseId":"t1"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.481Z","text":"tests passed","isError":false,"toolUseId":"t5","parentToolUseId":"t2"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.481Z","tool":"Write","line":"Write src/never.ts","filePath":"src/never.ts","fileOp":"write","toolUseId":"t9"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.481Z","text":"Found 1 TODO","isError":false,"toolUseId":"t1"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.481Z","text":"Tests are fine","isError":false,"toolUseId":"t2"}
+{"kind":"result","status":"success","summary":"Fake success for incremental-planner (attempt 1)","costUsd":0.01,"isError":false,"ts":"2026-09-15T15:40:09.487Z","raw":"{\"status\":\"success\",\"summary\":\"Fake success for incremental-planner (attempt 1)\",\"filesChanged\":[\"src/incremental-planner.ts\"],\"commits\":[],\"decisions\":[\"decision-incremental-planner\"],\"warnings\":[],\"followUp\":[]}"}

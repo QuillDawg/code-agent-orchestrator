@@ -1,0 +1,4 @@
+{"kind":"system","ts":"2026-09-15T15:40:09.652Z","text":"session 70167eeb-a25d-4270-b56c-265f93368c95 (fake-model)"}
+{"kind":"system","ts":"2026-09-15T15:40:09.652Z","text":"Claude capabilities: stream-json, structured-output"}
+{"kind":"command","ts":"2026-09-15T15:40:09.670Z","command":"npm run build","tool":"Bash","toolUseId":"t1"}
+{"kind":"error","text":"Claude exited while still waiting on a tool call it had started: \"$ npm run build\". The work in that call was lost; the attempt's transcript ends with it.","ts":"2026-09-15T15:40:09.693Z"}

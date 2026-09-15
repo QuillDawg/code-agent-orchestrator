@@ -1,0 +1,6 @@
+{"kind":"system","ts":"2026-09-15T15:40:09.552Z","text":"session e72fbadc-7f46-4d44-9a56-c17c4c493a25 (fake-model)"}
+{"kind":"system","ts":"2026-09-15T15:40:09.552Z","text":"Claude capabilities: stream-json, structured-output"}
+{"kind":"thinking","ts":"2026-09-15T15:40:09.576Z","text":"Let me consider the options here."}
+{"kind":"text","ts":"2026-09-15T15:40:09.576Z","text":"Working on incremental-planner"}
+{"kind":"thinking","ts":"2026-09-15T15:40:09.576Z","text":"Second thought."}
+{"kind":"result","status":"success","summary":"Fake success for incremental-planner (attempt 1)","costUsd":0.01,"isError":false,"ts":"2026-09-15T15:40:09.583Z","raw":"{\"status\":\"success\",\"summary\":\"Fake success for incremental-planner (attempt 1)\",\"filesChanged\":[\"src/incremental-planner.ts\"],\"commits\":[],\"decisions\":[\"decision-incremental-planner\"],\"warnings\":[],\"followUp\":[]}"}

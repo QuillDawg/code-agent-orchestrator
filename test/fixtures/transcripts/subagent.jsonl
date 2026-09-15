@@ -1,0 +1,11 @@
+{"kind":"system","ts":"2026-09-15T15:40:09.301Z","text":"session de2099dc-16ae-4db7-a245-8976e57c4183 (fake-model)"}
+{"kind":"system","ts":"2026-09-15T15:40:09.301Z","text":"Claude capabilities: stream-json, structured-output"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.321Z","tool":"Read","line":"Read src/incremental-planner.ts","toolUseId":"t1"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.337Z","text":"file contents","isError":false,"toolUseId":"t1"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.337Z","tool":"Agent","line":"Agent: Review the diff","toolUseId":"t2"}
+{"kind":"text","ts":"2026-09-15T15:40:09.337Z","text":"Reviewing the diff","parentToolUseId":"t2"}
+{"kind":"tool","ts":"2026-09-15T15:40:09.337Z","tool":"Grep","line":"Grep: TODO in src","toolUseId":"t4","parentToolUseId":"t2"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.353Z","text":"src/a.ts:1:TODO","isError":false,"toolUseId":"t4","parentToolUseId":"t2"}
+{"kind":"tool_result","ts":"2026-09-15T15:40:09.353Z","text":"Found 1 TODO","isError":false,"toolUseId":"t2"}
+{"kind":"text","ts":"2026-09-15T15:40:09.353Z","text":"Delegated review of incremental-planner"}
+{"kind":"result","status":"success","summary":"Fake success for incremental-planner (attempt 1)","costUsd":0.01,"isError":false,"ts":"2026-09-15T15:40:09.360Z","raw":"{\"status\":\"success\",\"summary\":\"Fake success for incremental-planner (attempt 1)\",\"filesChanged\":[\"src/incremental-planner.ts\"],\"commits\":[],\"decisions\":[\"decision-incremental-planner\"],\"warnings\":[],\"followUp\":[]}"}
