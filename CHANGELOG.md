@@ -10,6 +10,21 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **`cao run --emit`, `cao resume --emit`, `CAO_EMIT` and `cao emit enable|disable|status`: the switch that
+  turns announcing on.** In precedence order, `--emit` / `--no-emit` on the command line wins over
+  `CAO_EMIT=1` / `CAO_EMIT=0`, which wins over the per-user opt-in `cao emit enable` writes to
+  `~/.cao/config.json`, which wins over the default — **off**. The flag is strictly boolean and takes no
+  value, so `cao run --emit workflow.yaml` runs `workflow.yaml` rather than reading the path as the flag's
+  argument. `--emit-feed` and `CAO_EMIT_FEED` are reserved for the per-run live feed a later release adds;
+  they parse today, say they are reserved, and are never implied by the persisted opt-in.
+  `cao emit status` is the one command to run when a desktop surface shows nothing: it prints the effective
+  setting **and which row of that table decided it**, the resolved `~/.cao` and whether it passed the
+  path-shape check, how many entries are live and how many are retained, and which surfaces are present on
+  this machine right now. `--json` prints the same thing for a program to read. An entry's `capabilities`
+  list is written from **what the run actually wired up**, never from a constant, so a run advertises only
+  what it can really do.
+  **Nothing about using `cao` changes with the switch off**, which is the default: a run with emit off does
+  not create or touch `~/.cao` at all.
 - **`~/.cao/runs/<runId>@<repoHash>.json`: a run can announce itself to a desktop surface.** The new
   `src/persistence/registry.ts` is the first user-level state in this codebase — every other path `cao`
   builds derives from a repository root, so a run has until now been findable only by someone who already
