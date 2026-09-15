@@ -65,6 +65,7 @@ export {
   writeConfig,
   emitEnabled,
   emitSetting,
+  emitFeedSetting,
   listPresence,
   hasFreshPresence,
   isSyncConflictName,
@@ -73,3 +74,10 @@ export {
 } from './persistence/registry.js';
 export type { EmitConfig, EmitDecision, EmitSource, EntryLiveness, AnnounceOptions } from './persistence/registry.js';
 export type { EmitAnnouncement } from './workflow/scheduler.js';
+// The switch as a command applies it (§4.2.7), and §4.2.3's rule that an entry advertises what the run
+// actually wired up. An embedder that sets `SchedulerDeps.emit` needs the same derivation, or it invents a
+// second one that is wrong the first time a capability lands.
+export { planEmit, wiredCapabilities } from './cli/emit.js';
+export type { EmitPlan, PlanEmitOptions, WiredSurface } from './cli/emit.js';
+export { emitCommand, readEmitStatus, emitStatusLines, EMIT_ACTIONS } from './cli/commands/emit.js';
+export type { EmitAction, EmitStatus, EmitCommandOptions } from './cli/commands/emit.js';

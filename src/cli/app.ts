@@ -81,6 +81,11 @@ export interface RuntimeOptions {
   isResume?: boolean;
   approvalHandler?: SchedulerDeps['approvalHandler'];
   interactionHandler?: SchedulerDeps['interactionHandler'];
+  /**
+   * Announce this run in `~/.cao/runs` (§4.2.4). **Absent means off** — `planEmit` returns it only when
+   * §4.2.7 says emit is on, and with it absent the scheduler never touches `~/.cao`.
+   */
+  emit?: SchedulerDeps['emit'];
   onError?: (err: unknown) => void;
 }
 
@@ -124,6 +129,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     approvalHandler: opts.approvalHandler,
     interactionHandler: opts.interactionHandler,
     isResume: opts.isResume,
+    emit: opts.emit,
     completion: new WorkflowCompletionStore(run.configPath),
   });
   return { store, processManager, runners, workspace, bus, scheduler, logger, redactor };

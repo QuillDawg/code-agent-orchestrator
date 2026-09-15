@@ -11,6 +11,7 @@ import { createInterruptController, clearStopRequest, watchStopRequests } from '
 import { ConsoleLogger, type Logger } from '../../logging/logger.js';
 import { Redactor } from '../../logging/redact.js';
 import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflowPath } from '../util.js';
+import { planEmit } from '../emit.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { ConfigError, OrchestratorError, UsageError } from '../../util/errors.js';
 import type { Runtime } from '../app.js';
@@ -30,6 +31,10 @@ export interface RunCommandOptions {
   repository?: string;
   claudeCommand?: string;
   activity?: boolean;
+  /** `--emit` / `--no-emit`; undefined when neither was given, which lets `CAO_EMIT` and `config.json` decide (§4.2.7). */
+  emit?: boolean;
+  /** `--emit-feed`; reserved by §4.2.7's transport row and served by nothing yet. */
+  emitFeed?: boolean;
 }
 
 export async function runCommand(configPath: string | undefined, opts: RunCommandOptions): Promise<number> {
@@ -79,7 +84,7 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
   if (!lock.ok) throw new UsageError(`Run ${run.runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
   out(renderHeader({ workflow, runId: run.runId, runners, layers, verbose: opts.verbose }));
-  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false });
+  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed });
 }
 
 export interface ExecuteOptions {
@@ -90,11 +95,17 @@ export interface ExecuteOptions {
   tui?: boolean;
   activity?: boolean;
   isResume: boolean;
+  emit?: boolean;
+  emitFeed?: boolean;
 }
 
 /** Shared by `run` and `resume`: wires renderer, signal handling and executes the scheduler. */
 export async function executeRun(opts: ExecuteOptions): Promise<number> {
   const { run } = opts;
+  // §4.2.7, resolved before anything is printed and before the dashboard takes the screen. `announcement` is
+  // undefined unless emit is on, and its absence is what keeps a run with emit off from touching `~/.cao`.
+  const emit = await planEmit({ emit: opts.emit, emitFeed: opts.emitFeed });
+  for (const note of emit.notes) process.stdout.write(`${warnLine(note)}\n`);
   const useTui = (opts.tui ?? true) && isInteractive();
   const redactor = new Redactor(opts.secrets);
   // Through the layout accessor, not a hand-built string: the run directory is described in exactly one
@@ -119,7 +130,7 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
     ? async (interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer> =>
         dashboard ? dashboard.requestInteraction(interaction, signal) : { kind: 'deny', message: 'No dashboard is attached; finish with status needs_input if you cannot continue' }
     : undefined;
-  const runtime: Runtime = createRuntime({ run, environment: opts.environment, secrets: opts.secrets, logger, verbose: opts.verbose, isResume: opts.isResume, approvalHandler, interactionHandler });
+  const runtime: Runtime = createRuntime({ run, environment: opts.environment, secrets: opts.secrets, logger, verbose: opts.verbose, isResume: opts.isResume, approvalHandler, interactionHandler, emit: emit.announcement });
   const { scheduler, bus, processManager, store } = runtime;
 
   const interrupt = createInterruptController({ scheduler, processManager, logger });

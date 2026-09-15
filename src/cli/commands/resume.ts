@@ -24,6 +24,10 @@ export interface ResumeOptions {
   maxConcurrency?: number;
   permissionMode?: PermissionMode;
   claudeCommand?: string;
+  /** `--emit` / `--no-emit`, exactly as on `cao run` (§4.2.7). */
+  emit?: boolean;
+  /** `--emit-feed`; reserved, and served by nothing yet. */
+  emitFeed?: boolean;
 }
 
 export async function resumeCommand(runRef: string | undefined, opts: ResumeOptions): Promise<number> {
@@ -90,5 +94,5 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   out(renderHeader({ workflow: run.workflow, runId, runners, layers, resumed: true, verbose: opts.verbose }));
   if (reconciliation.rerun.length) out(`Re-running: ${reconciliation.rerun.join(', ')}\n`);
 
-  return executeRun({ run, environment, secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: true });
+  return executeRun({ run, environment, secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: true, emit: opts.emit, emitFeed: opts.emitFeed });
 }

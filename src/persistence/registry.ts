@@ -19,6 +19,8 @@ import path from 'node:path';
 import {
   PROTOCOL_VERSION,
   createRunPaths,
+  isFutureProtocol,
+  stamp,
   type CapabilityToken,
   type MachineIdentity,
   type PresenceFile,
@@ -401,12 +403,6 @@ function isFresh(iso: string, now: number): boolean {
 
 // ---------------------------------------------------------------------------- the entry (§4.2.3)
 
-/** `protocol` first, and always this writer's version: every file across the boundary is stamped (§4.5). */
-function stamped(entry: RegistryEntry): RegistryEntry {
-  const { protocol: _written, ...rest } = entry;
-  return { protocol: PROTOCOL_VERSION, ...rest };
-}
-
 /** `\` → `/`, leaving case alone: the key lower-cases to collapse spellings, a path a human reads must not. */
 function toPosix(p: string): string {
   return p.replace(/\\/g, '/');
@@ -465,7 +461,7 @@ export async function writeEntry(entry: RegistryEntry): Promise<void> {
     assertSafeHome(home);
     const file = entryFile(entry.key, home);
     await ensureOwnerOnlyDir(path.dirname(file));
-    await writeFileAtomic(file, JSON.stringify(stamped(entry), null, 2));
+    await writeFileAtomic(file, JSON.stringify(stamp(entry), null, 2));
   });
 }
 
@@ -540,7 +536,7 @@ export async function reap(retainDays: number, now: number = Date.now()): Promis
     for (const { file, value } of await readAll(runsDir(caoHome()), isRegistryEntry)) {
       // A newer `cao` may mean something by fields this version cannot see. §4.5 says notice and refuse
       // rather than guess, and what guessing costs here is a deleted pointer.
-      if (typeof value.protocol === 'number' && value.protocol > PROTOCOL_VERSION) continue;
+      if (isFutureProtocol(value)) continue;
       if (!isExpired(value, cutoff, now, self)) continue;
       await fs.rm(file, { force: true }).catch(() => undefined);
     }
@@ -597,8 +593,7 @@ export async function writeConfig(config: EmitConfig): Promise<void> {
   await bestEffort(home, 'write config.json', async () => {
     assertSafeHome(home);
     await ensureOwnerOnlyDir(home);
-    const { protocol: _written, ...rest } = config;
-    await writeFileAtomic(configFile(home), JSON.stringify({ protocol: PROTOCOL_VERSION, ...rest }, null, 2));
+    await writeFileAtomic(configFile(home), JSON.stringify(stamp(config), null, 2));
   });
 }
 
@@ -631,6 +626,21 @@ export async function emitSetting(flag?: boolean, env: NodeJS.ProcessEnv = proce
 
 export async function emitEnabled(flag?: boolean, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   return (await emitSetting(flag, env)).enabled;
+}
+
+/**
+ * §4.2.7's other row: a **transport** is its own flag, orthogonal to `--emit` and independently defaulted
+ * off. Reserved here so the grammar is settled once; §10.1 is what implements the feed.
+ *
+ * There is deliberately **no `config.json` row**: a transport is never implied by the persisted opt-in.
+ * `cao emit enable` has to stay something one sentence can fairly describe — "a heartbeat file in `~/.cao`,
+ * and no network port" (§7.2) — and it stops being that the moment a stored preference can open one.
+ */
+export function emitFeedSetting(flag?: boolean, env: NodeJS.ProcessEnv = process.env): EmitDecision {
+  if (flag !== undefined) return { enabled: flag, source: 'flag' };
+  const raw = env.CAO_EMIT_FEED;
+  if (raw !== undefined) return { enabled: !OFF.has(raw.trim().toLowerCase()), source: 'env' };
+  return { enabled: false, source: 'default' };
 }
 
 // ---------------------------------------------------------------------------- presence (§4.6)

@@ -12,6 +12,7 @@ import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
 import { stopCommand } from './commands/stop.js';
 import { doctorCommand } from './commands/doctor.js';
+import { emitCommand, EMIT_ACTIONS } from './commands/emit.js';
 import { DEFAULT_WORKFLOW_FILES } from './util.js';
 import { OrchestratorError } from '../util/errors.js';
 import { packageInfo } from '../util/package-info.js';
@@ -85,6 +86,9 @@ export function buildProgram(): Command {
     .option('--permission-mode <mode>', `override the Claude permission mode (${PERMISSION_MODES.join('|')})`, permissionMode)
     .option('--repository <dir>', 'override the repository root (default: launch directory / git root)')
     .option('--claude-command <cmd>', 'override the Claude CLI command')
+    .option('--emit', 'announce this run to a desktop app on this machine (~/.cao); see cao emit status')
+    .option('--no-emit', 'do not announce this run, whatever cao emit and CAO_EMIT say')
+    .option('--emit-feed', 'reserved for the per-run live feed; it is not served yet')
     .option('--no-tui', 'disable the interactive dashboard (line output)')
     .option('--activity', 'print agent activity lines in line-output mode')
     .option('-v, --verbose', 'verbose output')
@@ -112,6 +116,9 @@ export function buildProgram(): Command {
     .option('--max-concurrency <n>', 'override execution.maxConcurrency for this run', positiveInt)
     .option('--permission-mode <mode>', `override the Claude permission mode (${PERMISSION_MODES.join('|')})`, permissionMode)
     .option('--claude-command <cmd>', 'override the Claude CLI command')
+    .option('--emit', 'announce this run to a desktop app on this machine (~/.cao); see cao emit status')
+    .option('--no-emit', 'do not announce this run, whatever cao emit and CAO_EMIT say')
+    .option('--emit-feed', 'reserved for the per-run live feed; it is not served yet')
     .option('--no-tui', 'disable the interactive dashboard')
     .option('--activity', 'print agent activity lines in line-output mode')
     .option('-v, --verbose', 'verbose output')
@@ -218,6 +225,15 @@ export function buildProgram(): Command {
     .option('--no-probe', 'skip the live agent probes (they start each agent mode and spend a small model call)')
     .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
 
+  program
+    .command('emit')
+    .description('Turn announcing runs to the desktop app on or off, and show what it is doing')
+    .argument('[action]', `${EMIT_ACTIONS.join('|')} (default: status)`)
+    .option('--emit', 'with status: resolve the chain as if a run were given --emit')
+    .option('--no-emit', 'with status: resolve the chain as if a run were given --no-emit')
+    .option('--json', 'machine-readable output')
+    .action((action: string | undefined, opts) => exitWith(() => emitCommand(action, opts)));
+
   // A short description says what a command is for; these say what to type, for the arguments that are not
   // obvious from the usage line alone (which run, which task, what happens when you name neither).
   const EXAMPLES: Record<string, string[]> = {
@@ -234,6 +250,7 @@ export function buildProgram(): Command {
     report: ['cao report', 'cao report 002 --out report.md'],
     clean: ['cao clean                               # worktrees of the latest run', 'cao clean 002 --all                     # worktrees and branches'],
     doctor: ['cao doctor', 'cao doctor --json                       # paste this into a bug report', 'cao doctor --no-probe                   # no agent is started, nothing is spent'],
+    emit: ['cao emit status                         # the setting, where it came from, and who is listening', 'cao emit enable                         # announce every run this user starts, from now on', 'cao run --emit                          # announce this one run only'],
   };
   for (const command of program.commands) {
     const lines = EXAMPLES[command.name()];
