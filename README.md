@@ -47,6 +47,7 @@ npm install -g code-agent-orchestrator@beta
   - [6. Spend capability where it matters](#6-spend-capability-where-it-matters)
 - [How it works](#how-it-works)
 - [Watching a run](#watching-a-run)
+- [The desktop app](#the-desktop-app)
 - [Workflow file cheat sheet](#workflow-file-cheat-sheet)
 - [CLI reference](#cli-reference)
 - [Environment variables](#environment-variables)
@@ -615,6 +616,24 @@ The list shows every task's files with `A`/`M`/`D`/`R` and `+N -M`. `↑↓`, `P
 Prefer plain text? `cao run --no-tui` prints a log instead, and `cao run --activity` adds the activity
 column to it. Every command has a `--json` counterpart for scripting.
 
+## The desktop app
+
+`cao` stays a standalone CLI — nothing below is required, and a run with no desktop app watching it
+behaves exactly as it always has. What `cao` gained is one capability: telling a separate desktop
+application, `cao-desktop`, that it exists, so that app can show live runs across several
+repositories without either project importing the other.
+
+```bash
+cao emit enable                  # announce every run this user starts, from now on
+cao run --emit                   # or announce just this one run
+cao emit status                  # what is announced, where that decision came from, and who is watching
+```
+
+Turning this on writes nothing but a small, user-level heartbeat file under `~/.cao` — no network
+port, no telemetry, and no change to how a run behaves when nobody is watching it. See
+[docs/desktop.md](docs/desktop.md) for the full contract: what gets written, the trust boundary, and
+how to diagnose a desktop app that shows nothing.
+
 ## Workflow file cheat sheet
 
 The keys you will use most. The complete schema is in [docs/configuration.md](docs/configuration.md).
@@ -697,9 +716,10 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 
 | Command | What it does |
 |---|---|
-| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--activity`, `--verbose` |
+| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
 | `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, plus the `cao run` overrides |
+| `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
 | `cao status [run]` | Progress table, run directory and orchestrator pid. `--json` |
 | `cao list` | Runs of this repository, newest first. `--limit N`, `--json` |
 | `cao logs [run] [task]` | A worker's transcript as one document. `--follow` opens the viewer; `--thinking`, `--raw`, `--stderr`, `--prompt`, `--attempt N`, `-n N`, `--json` |
@@ -734,6 +754,8 @@ Read by `cao` itself. Everything else in your environment passes through to the 
 |---|---|
 | `CAO_CLAUDE_COMMAND` | The Claude CLI to launch instead of `claude`. A command line, not only a path, so `node test/fixtures/fake-claude.mjs` works. `--claude-command` overrides it |
 | `CAO_CODEX_COMMAND` | The Codex CLI to launch instead of `codex`, same rules |
+| `CAO_EMIT` | `1`/`0` to announce this shell's runs to a desktop app on this machine (`~/.cao`), same precedence as `--emit`/`--no-emit` and `cao emit enable`. See [docs/desktop.md](docs/desktop.md) |
+| `CAO_HOME` | Use a different directory instead of `~/.cao` for the files above |
 | `CAO_DEBUG` | Print the stack trace when a command fails |
 | `CAO_ASCII` | Draw tables and status marks in ASCII. Guessed on a Windows terminal without a UTF-8 code page; `CAO_UNICODE=1` forces glyphs back on |
 | `NO_COLOR` / `FORCE_COLOR` | Disable or force ANSI colour. `--color auto\|always\|never` wins where a command has it |
@@ -865,6 +887,7 @@ change; `cao clean --branches` removes the branches once you are done with them.
 | [docs/configuration.md](docs/configuration.md) | The complete workflow YAML schema reference |
 | [docs/agent-cli-integration.md](docs/agent-cli-integration.md) | The exact command line each agent receives and how results are interpreted |
 | [docs/architecture.md](docs/architecture.md) | Internals: state machines, scheduler, persistence, isolation |
+| [docs/desktop.md](docs/desktop.md) | The `cao`/desktop app contract: the registry, the `emit` switch, presence, the trust boundary |
 | [examples/](examples/) | Runnable workflows: sequential, parallel, PRD implementation, reviews, context passing, model selection, agent smoke tests |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 

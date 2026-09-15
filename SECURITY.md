@@ -69,6 +69,35 @@ escape those rules. For example:
 - Shell commands in `hooks`, which are yours by definition.
 - Running a workflow file you do not trust. That is equivalent to running its author's scripts.
 
+## The desktop app trust boundary
+
+When [announcing is turned on](docs/desktop.md) (off by default), `cao` writes a small amount of
+state outside your repository, to `~/.cao` (`CAO_HOME` to override). This is the one place `cao`
+and a separate desktop application, `cao-desktop`, meet, and it deserves its own boundary because of
+what it is eventually for: **whatever can write into that directory can approve a tool call in a
+process that runs arbitrary commands.**
+
+- `~/.cao`, and everything under it, is created owner-only: `0700` on POSIX, and on Windows the
+  per-user profile ACL it inherits by being under your home directory — never widened by `cao`.
+- **Never point `CAO_HOME` at a shared location** — no network drive, no UNC path, no `/tmp`, no
+  directory shared between users or machines. `cao` refuses to write into a `CAO_HOME` it detects as
+  a UNC path, a mapped network drive, or a folder synced by OneDrive, Dropbox or Google Drive, and
+  (on POSIX) refuses one that is group- or world-writable.
+  - This is a check on **path shape**, not on access control lists, and it is worth being honest
+    about the difference: `fs.mkdir(mode)` is a no-op on Windows and a POSIX mode bit is a fiction on
+    an NTFS volume, so neither artifact can lean on filesystem permissions alone on that platform.
+    What the check catches is the failure that actually happens — a home directory that turns out to
+    be shared or silently synced to a cloud drive — not a weakened permission on an otherwise
+    single-user machine. Real DACL inspection on Windows is future hardening, not yet implemented.
+- `cao` treats anything it ever reads back out of `~/.cao` as a **request**, never as a command: it
+  is designed to require that a request name something already open (an interaction id that is
+  currently waiting on a human, say) and a value that parses as one of a fixed set of shapes. It can
+  never introduce a new tool call, widen a permission a workflow did not already grant, or reach a
+  run it was not already told about.
+
+Full detail — the registry, presence, and exactly what is and is not implemented yet — is in
+[docs/desktop.md](docs/desktop.md).
+
 ## Handling of your data
 
 Everything `cao` records — prompts, transcripts, results, diffs, costs — stays under `.orchestrator/` in your

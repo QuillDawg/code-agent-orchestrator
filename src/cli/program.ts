@@ -270,6 +270,8 @@ export function buildProgram(): Command {
       'Environment:',
       '  CAO_CLAUDE_COMMAND   Claude CLI to launch instead of `claude`',
       '  CAO_CODEX_COMMAND    Codex CLI to launch instead of `codex`',
+      '  CAO_EMIT             announce runs to a desktop app on this machine (1/0); see cao emit status',
+      '  CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)',
       '  CAO_DEBUG            print stack traces when a command fails',
       '  CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)',
       '  NO_COLOR/FORCE_COLOR disable or force ANSI colour (also --color)',

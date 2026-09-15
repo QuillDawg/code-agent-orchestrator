@@ -456,3 +456,27 @@ A fresh `cao run` skips marked tasks. Selecting a task with `--task` or `--from`
 Secret values (from `envFile`, secret-looking `environment` keys and common token patterns) are redacted from everything persisted.
 
 Redaction matches key names and known token shapes, so it cannot vet free-form content. Two kinds of bulk agent output are therefore kept out of the run-level `events.jsonl` entirely and live only under `attempts/<n>/`: worker output/transcripts, and the raw tool input of a permission prompt (whole file contents, complete shell commands) — the run log records just the interaction's id, kind, tool and title.
+
+## User-level configuration: `~/.cao/config.json`
+
+Everything above is workflow YAML, scoped to one repository. One setting lives outside any workflow
+and any repository instead, because it is a decision about *this user, on this machine* — whether
+`cao` announces its runs so a desktop app can see them:
+
+```jsonc
+// ~/.cao/config.json
+{
+  "protocol": 1,
+  "emit": true,          // set by `cao emit enable` / `cao emit disable`; never edit this by hand
+  "retainDays": 14        // how long an announced run's pointer is kept after it ends
+}
+```
+
+Unknown keys are preserved when `cao` rewrites this file, so an older and a newer `cao` on the same
+machine can share it without one silently dropping what the other wrote.
+
+Nothing here is read by `cao run` unless announcing is already relevant to that invocation, and
+`cao` never creates or writes this file except through `cao emit enable` / `cao emit disable`. The
+full precedence between this file, `--emit`/`--no-emit` and `CAO_EMIT`, what "announcing" actually
+writes, and how to diagnose a desktop app that shows nothing, are in
+[docs/desktop.md](desktop.md).

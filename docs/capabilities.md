@@ -753,6 +753,8 @@ anything: it will tell you to run `cao clean` but never runs it for you.
     lock.json                   # owning pid + heartbeat
     stop.json                   # a pending `cao stop` request, consumed by the running orchestrator
     report.md                   # the run's own report, rewritten whenever the run ends
+    requests/                   # reserved: a desktop app's other control requests (answer, approve, restart, kill)
+    interactions/               # reserved: pending-interaction payloads for a desktop app to render
     tasks/<task-id>/
       result.json               # structured result + git info + cost/usage
       context.md                # exactly what was injected
@@ -780,3 +782,23 @@ replays the attempt on a checkout of its base. The same per-file records ride al
 [`git.captureDiff` and `git.maxDiffBytes`](configuration.md#git).
 
 The two `events.jsonl` files serve different purposes. The **attempt** log is the verbatim transcript — every agent message, command, tool result and permission prompt exactly as the worker produced it, ending with a `result` or `error` entry recording how the attempt finished. A completion object the worker emitted is stored as a `result` entry too (with `intermediate: true` and the object itself in `raw`) rather than as agent text. The **run** log is the summary the orchestrator keeps: state transitions, and for an interaction only its id, kind, tool and title. Bulk and sensitive agent detail — worker output, transcripts, usage and raw tool input (whole file contents, complete shell commands) — deliberately stays in the per-attempt directory rather than the run log.
+
+### Beyond the repository: `~/.cao/`
+
+Everything above lives inside the repository, under `.orchestrator/`. When [announcing is turned
+on](configuration.md#user-level-configuration-caoconfigjson), `cao` additionally keeps one small,
+user-level directory outside any repository, so a desktop app can find your runs without already
+knowing which checkouts to look in:
+
+```
+~/.cao/
+  config.json           # your per-user opt-in and preferences (cao emit enable/disable)
+  runs/<key>.json        # one pointer + heartbeat per announced run, on this machine
+  presence/<pid>.json    # one file per surface (a desktop app) currently watching
+```
+
+Every field of a run's pointer file is itself read from the repository's own `.orchestrator/`
+directory above — nothing here is a second copy of run state, and a `cao` with no desktop app
+watching never touches this directory at all. See [docs/desktop.md](desktop.md) for the full
+contract, what triggers the directory being refused, and `cao emit status` for diagnosing an empty
+desktop window.
