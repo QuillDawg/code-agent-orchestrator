@@ -65,3 +65,33 @@ export type Capability = (typeof CAPABILITIES)[number];
  * capability this version has never heard of is read without complaint.
  */
 export type CapabilityToken = Capability | (string & {});
+
+/**
+ * `protocol` first, and always this writer's version. Spec §4: every file either side writes across the
+ * boundary carries `"protocol": 1` **as its first field** — registry entries, request files, interaction
+ * payloads and presence files alike.
+ *
+ * First is not decoration. A reader that has to parse the whole object before it can tell whether it
+ * understands the object has already done the thing §4.5 forbids, and a human running `head` on a file in
+ * `~/.cao` should see the version before anything it governs. `JSON.stringify` preserves insertion order for
+ * string keys, so putting it first here is what puts it first on disk.
+ *
+ * Any `protocol` already on the value is replaced rather than trusted: a shape read off disk, edited and
+ * written back is written by *this* build, and says so.
+ */
+export function stamp<T extends { protocol: ProtocolVersion }>(value: T): T {
+  const { protocol: _replaced, ...rest } = value;
+  return { protocol: PROTOCOL_VERSION, ...rest } as T;
+}
+
+/**
+ * Whether something read off disk was written by a **newer major than this build understands** (§4.5).
+ *
+ * The rule either side applies to one is to degrade or refuse *explicitly* and say so — never to guess at
+ * it, and never to silently drop it. What guessing costs differs by file (a reaped pointer, a request
+ * answered with the wrong semantics), which is why the predicate is shared and the reaction is not.
+ */
+export function isFutureProtocol(value: unknown): boolean {
+  const protocol = (value as { protocol?: unknown } | null | undefined)?.protocol;
+  return typeof protocol === 'number' && protocol > PROTOCOL_VERSION;
+}
