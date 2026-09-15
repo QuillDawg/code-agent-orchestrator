@@ -43,3 +43,33 @@ export { parseDuration, formatDuration } from './util/duration.js';
 // Stayed behind when the interaction types moved to the protocol package: these shape operator-facing text,
 // which is presentation rather than contract. Exported from here as they always were.
 export { NEEDS_INPUT_HINT, withoutWorkerInstructions, asSentence } from './util/text.js';
+// The registry (spec §4.2, §5.1). `SchedulerDeps.emit` is public, so the files it announces a run into have
+// to be readable from here too: an embedder that turns emit on would otherwise have no way to list, classify
+// or reap what its own runs wrote.
+export {
+  caoHome,
+  assertSafeHome,
+  homeRefusal,
+  machineIdentity,
+  sameMachine,
+  registryKey,
+  normalizedRepositoryRoot,
+  repositoryHash,
+  entryForRun,
+  entryLiveness,
+  writeEntry,
+  removeEntry,
+  listEntries,
+  reap,
+  readConfig,
+  writeConfig,
+  emitEnabled,
+  emitSetting,
+  listPresence,
+  hasFreshPresence,
+  isSyncConflictName,
+  setRegistryWarner,
+  DEFAULT_RETAIN_DAYS,
+} from './persistence/registry.js';
+export type { EmitConfig, EmitDecision, EmitSource, EntryLiveness, AnnounceOptions } from './persistence/registry.js';
+export type { EmitAnnouncement } from './workflow/scheduler.js';

@@ -36,7 +36,9 @@ import {
   type InteractionAnswer,
   type InteractionAnswerSource,
   type InteractionRecord,
+  type CapabilityToken,
 } from 'code-agent-orchestrator-protocol';
+import { entryForRun, readConfig, reap, writeEntry } from '../persistence/registry.js';
 import { NEEDS_INPUT_HINT, sanitizeText } from '../util/text.js';
 import { formatDuration } from '../util/duration.js';
 import type { RunStore } from '../persistence/run-store.js';
@@ -92,6 +94,23 @@ export interface SchedulerDeps {
   interactionHandler?: (interaction: Interaction, signal: AbortSignal) => Promise<InteractionAnswer>;
   isResume?: boolean;
   completion?: WorkflowCompletionStore;
+  /**
+   * Announce this run in `~/.cao/runs` and keep its heartbeat current (§4.2.4). **Absent means off**, and
+   * with it absent the scheduler never touches `~/.cao` at all — which is what keeps a `cao` with emit off
+   * byte-identical to the release before it (§5.9).
+   */
+  emit?: EmitAnnouncement;
+}
+
+/** spec.md §4.2.3 — what this run announces about itself. */
+export interface EmitAnnouncement {
+  /**
+   * What this run **actually wired up** at run start, not what this version could in principle do. A run
+   * whose inbox failed to start does not claim it can answer.
+   */
+  capabilities: CapabilityToken[];
+  /** Set only when `feed` is among `capabilities` (§10.1). */
+  feedUrl?: string | null;
 }
 
 export interface SchedulerResult {
@@ -269,6 +288,10 @@ export class WorkflowScheduler {
   private lastLiveWrite = 0;
   private heartbeatTimer: unknown;
   private finished = false;
+  private readonly emit?: EmitAnnouncement;
+  /** Registry writes are serialized so a heartbeat can never land on top of the terminal entry (§4.2.4). */
+  private announceChain: Promise<void> = Promise.resolve();
+  private announcing = false;
 
   constructor(deps: SchedulerDeps) {
     this.run = deps.run;
@@ -286,6 +309,7 @@ export class WorkflowScheduler {
     this.interactionHandler = deps.interactionHandler;
     this.isResume = deps.isResume ?? false;
     this.completion = deps.completion;
+    this.emit = deps.emit;
     this.taskDefs = new Map(this.workflow.tasks.map((t) => [t.id, t]));
     this.graph = new TaskGraph(this.workflow.tasks.map((t) => ({ id: t.id, dependsOn: t.dependsOn, docIndex: t.docIndex })));
     const layers = this.graph.layers();
@@ -386,6 +410,11 @@ export class WorkflowScheduler {
     this.run.orchestratorPid = process.pid;
     this.run.endedAt = undefined;
     await this.persist();
+    // §4.2.4 — announce the run once it is on disk as running, and reap opportunistically (§4.2.5). Both are
+    // no-ops with emit off, and neither can fail the run.
+    this.announcing = true;
+    this.announce();
+    this.kickOffReap();
     await this.hydrateWorkflowCompletions();
 
     if (this.isResume) {
@@ -1469,6 +1498,9 @@ export class WorkflowScheduler {
     await this.writeReport();
     await this.persist();
     await this.writeLive().catch(() => undefined);
+    // §4.2.4 — the final write, with the terminal state, `endedAt` and `exitCode`. The entry is **retained**:
+    // that is what lets a surface answer "which repositories do I have runs in" on a cold start.
+    await this.announceFinal();
     await this.store.releaseLock(this.run.runId).catch(() => undefined);
     const summary = summarize(this.run);
     if (state === 'completed') this.bus.emit({ type: 'workflow.completed', summary });
@@ -1536,6 +1568,39 @@ export class WorkflowScheduler {
   private transitionRun(to: WorkflowRun['state']): void {
     assertRunTransition(this.run.state, to);
     this.run.state = to;
+    this.announce();
+  }
+
+  // ------------------------------------------------------------------ the registry (spec.md §4.2.4)
+
+  /**
+   * Rewrite this run's registry entry. Fire-and-forget: the entry is a snapshot taken synchronously here, the
+   * writes are chained so they land in the order they were asked for, and `writeEntry` itself never throws.
+   *
+   * Nothing is announced before `execute()` has the run on disk as running, and nothing between
+   * `finalize()` marking the run finished and its own final write — the bare terminal state, without the
+   * `endedAt` and `exitCode` that arrive a few lines later, is a write nobody could use.
+   */
+  private announce(): void {
+    if (!this.emit || !this.announcing || this.finished) return;
+    const entry = entryForRun(this.run, this.emit);
+    this.announceChain = this.announceChain.then(() => writeEntry(entry));
+  }
+
+  /** The run is over; the entry must be on disk before the process is. */
+  private async announceFinal(): Promise<void> {
+    if (!this.emit) return;
+    const entry = entryForRun(this.run, this.emit);
+    this.announceChain = this.announceChain.then(() => writeEntry(entry));
+    await this.announceChain.catch(() => undefined);
+  }
+
+  /** §4.2.5 — reaping runs on every `cao run`/`cao resume` that writes an entry. Off the loop, never awaited. */
+  private kickOffReap(): void {
+    if (!this.emit) return;
+    void readConfig()
+      .then((config) => reap(config.retainDays))
+      .catch(() => undefined);
   }
 
   private saveChain: Promise<void> = Promise.resolve();
@@ -1589,6 +1654,9 @@ export class WorkflowScheduler {
     const tick = (): void => {
       void this.store.heartbeat(this.run.runId).catch(() => undefined);
       void this.writeLive().catch(() => undefined);
+      // §4.2.4 — the registry heartbeat is this same 20 s tick, so `lock.json`, `live.json` and the entry
+      // never disagree about when this orchestrator was last seen.
+      this.announce();
       this.heartbeatTimer = this.clock.setTimeout(tick, 20_000);
     };
     this.heartbeatTimer = this.clock.setTimeout(tick, 20_000);
