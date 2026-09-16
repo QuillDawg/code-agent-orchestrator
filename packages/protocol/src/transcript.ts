@@ -35,7 +35,14 @@ export type TranscriptEntry =
   | { kind: 'result'; ts: string; status?: string; summary?: string; costUsd?: number; isError: boolean; error?: string; intermediate?: boolean; raw?: string }
   | { kind: 'error'; ts: string; text: string }
   /** Session start/resume, compaction, orchestrator notes. */
-  | { kind: 'system'; ts: string; text: string };
+  | { kind: 'system'; ts: string; text: string }
+  /**
+   * An event type this build does not know (spec §4.5). The transcript is an **open enum**: new kinds land in
+   * `cao` first and are read by an older surface, so one that is dropped is a worker's work made invisible by a
+   * version number. `type` is the `kind` (or legacy `type`) as it was written, and `raw` is the line itself,
+   * unparsed — which is also how "unknown fields are preserved on any round-trip" is satisfied here.
+   */
+  | { kind: 'unknown'; ts: string; type: string; raw: string };
 
 export type TranscriptKind = TranscriptEntry['kind'];
 
@@ -70,12 +77,22 @@ export function transcriptLine(entry: TranscriptEntry): string {
       return `error: ${firstLine(entry.text)}`;
     case 'system':
       return entry.text;
+    // Never the raw record: this line is the activity column and live.json, where one line is all there is.
+    // The surface that can afford the detail renders it from `raw` (§4.5's "JSON detail expander").
+    case 'unknown':
+      return `(${entry.type})`;
   }
 }
 
 const KINDS: ReadonlySet<string> = new Set(['text', 'thinking', 'command', 'tool', 'tool_result', 'stderr', 'question', 'permission', 'result', 'error', 'system']);
 
-/** Parse one events.jsonl line. Accepts the current entry shape and the legacy `type:` records of older runs. */
+/**
+ * Parse one events.jsonl line. Accepts the current entry shape and the legacy `type:` records of older runs.
+ *
+ * `null` means **unreadable** — not "unknown". A line that is not JSON, or JSON that names no event type at
+ * all, is the only thing this drops; a type it simply does not recognise becomes an `unknown` entry and is
+ * rendered generically (§4.5).
+ */
 export function parseTranscriptLine(line: string): TranscriptEntry | null {
   let raw: Record<string, unknown>;
   try {
@@ -105,6 +122,10 @@ export function parseTranscriptLine(line: string): TranscriptEntry | null {
     case 'raw':
       return { kind: 'stderr', ts, text: String(raw.line ?? '') };
     default:
-      return null;
+      break;
   }
+  // §4.5 — "Unknown event types: rendered generically ... never dropped." Carried through with its name and
+  // the line exactly as written; a record that names no type at all is the unreadable case above.
+  const type = typeof raw.kind === 'string' ? raw.kind : typeof raw.type === 'string' ? raw.type : null;
+  return type === null ? null : { kind: 'unknown', ts, type, raw: line };
 }

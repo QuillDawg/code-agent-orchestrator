@@ -12,6 +12,19 @@ contract moves, so most `code-agent-orchestrator` releases do not bump it (spec 
 
 ## [Unreleased]
 
+### Added
+
+- `TranscriptEntry` gains an **`unknown`** member: `{ kind: 'unknown'; ts; type; raw }`. It is what
+  `parseTranscriptLine` now returns for a `kind` (or legacy `type`) this build does not recognise, instead
+  of `null`. Spec §4.5 requires an unknown event type to be rendered generically and never dropped, and a
+  `null` was indistinguishable from a corrupt line. `raw` is the line exactly as written, which is also how
+  unknown fields survive the round trip.
+
+  **For a consumer:** a `switch` over `TranscriptEntry['kind']` that was exhaustive now has one more member
+  to answer for — which is the point. §4.5: no switch over a wire enum may be exhaustive without a default
+  branch. `null` from `parseTranscriptLine` now means only "unreadable": not JSON, or JSON naming no event
+  type at all.
+
 ## [0.1.0]
 
 ### Added

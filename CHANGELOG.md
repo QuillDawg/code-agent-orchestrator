@@ -141,6 +141,14 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- A transcript event type this build does not know is now **rendered rather than dropped**.
+  `parseTranscriptLine` returned `null` for any unrecognised `kind`, which put an unknown event in the same
+  bucket as a corrupt line: gone from `cao logs`, `cao peek`, the viewer and any surface reading the same
+  package. Since new event types land in `cao` first and are read by whatever surface is already installed,
+  that is a worker's work made invisible by a version number. Such a line now parses to
+  `{ kind: 'unknown', type, raw }` — the type as it was written and the line itself, unparsed — and renders
+  as its type with the record beneath it. `null` now means only what it should: not JSON, or JSON that
+  names no event type at all.
 - A paused run now says what it is waiting for everywhere an operator looks. `cao run`'s "Workflow paused"
   block, `cao status`, `cao task <id>` and `report.md` all quote the question and print the exact
   `cao resume` command that answers it, from one shared derivation. `cao task <id>` never printed a result's

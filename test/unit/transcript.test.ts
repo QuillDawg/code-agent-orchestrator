@@ -152,6 +152,30 @@ describe('transcript rendering', () => {
     expect(transcriptLine({ kind: 'text', ts, text: '## Heading\nbody' })).toBe('Heading');
     expect(transcriptLine({ kind: 'command', ts, command: 'a\nb', tool: 'Bash' })).toBe('$ a');
   });
+
+  // spec §4.5 — "Unknown event types: rendered generically ... never dropped. New event types land in `cao`
+  // first, by construction", which means the surface that meets one is always the older one.
+  it('carries an event type it does not know through, rather than dropping it', () => {
+    const line = JSON.stringify({ kind: 'holographic_projection', ts, detail: { frames: 3 } });
+    expect(parseTranscriptLine(line)).toEqual({ kind: 'unknown', ts, type: 'holographic_projection', raw: line });
+
+    const legacy = JSON.stringify({ type: 'telemetry', ts, bytes: 12 });
+    expect(parseTranscriptLine(legacy)).toEqual({ kind: 'unknown', ts, type: 'telemetry', raw: legacy });
+
+    // One line, for the activity column and live.json; the record itself stays in `raw` for a surface with
+    // room to show it.
+    expect(transcriptLine({ kind: 'unknown', ts, type: 'holographic_projection', raw: line })).toBe('(holographic_projection)');
+
+    // `null` still means unreadable, and only that: not JSON, or JSON that names no event type at all.
+    expect(parseTranscriptLine(JSON.stringify({ ts, text: 'no type anywhere' }))).toBeNull();
+  });
+
+  it('renders an unknown entry rather than dropping it or throwing on it', () => {
+    const raw = JSON.stringify({ kind: 'holographic_projection', ts, detail: { frames: 3 } });
+    const lines = renderEntry({ kind: 'unknown', ts, type: 'holographic_projection', raw }, { color: false, width: 0 });
+    expect(lines.join(' ')).toContain('holographic_projection');
+    expect(lines.join(' ')).toContain('"frames":3');
+  });
 });
 
 describe('tool timing and subagent nesting', () => {

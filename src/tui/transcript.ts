@@ -163,6 +163,16 @@ function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: 
       return block([paint(sanitizeText(entry.text), 'red', color)], `${glyph('error')} `, ['red', 'bold'], color, width);
     case 'system':
       return block([paint(sanitizeText(entry.text), 'dim', color)], `${glyph('bullet')} `, 'dim', color, width);
+    // §4.5 — an event type this build does not know is still a line: its name, then the record as it was
+    // written. The terminal has no expander, so the detail is simply there, dim, below the name.
+    case 'unknown':
+      return block(
+        [paint(sanitizeText(entry.type), 'dim', color), ...textLines(entry.raw).map((l) => paint(l, 'dim', color))],
+        `${glyph('bullet')} `,
+        'dim',
+        color,
+        width,
+      );
   }
 }
 
