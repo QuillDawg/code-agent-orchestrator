@@ -53,11 +53,17 @@ export interface HeaderProps {
   columns: number;
   now: number;
   role: WorkspaceRole;
+  /**
+   * What the badge says (§2.1, §3.2): `owner`, `observing · owner pid N`, `abandoned · resume?`. The role
+   * decides how it is painted; the text comes from `ownershipBadge`, so the header, `cao status` and the
+   * banner cannot disagree about the same run.
+   */
+  badge?: string;
   /** The "needs you" line, already sanitized by the caller; omitted when nothing is waiting. */
   attention?: string;
 }
 
-export function Header({ run, theme, columns, now, role, attention }: HeaderProps): React.JSX.Element {
+export function Header({ run, theme, columns, now, role, badge, attention }: HeaderProps): React.JSX.Element {
   const summary = summarize(run);
   const running = run.workflow.tasks.filter((t) => run.tasks[t.id]?.state === 'running').length;
   const waiting = waitingTasks(run).length;
@@ -96,7 +102,7 @@ export function Header({ run, theme, columns, now, role, attention }: HeaderProp
         {'   '}
         {running}/{run.workflow.execution.maxConcurrency}
         {'   '}
-        {theme.paint(`[${role}]`, role === 'owner' ? 'badge' : 'warning')}
+        {theme.paint(`[${badge ?? role}]`, role === 'owner' ? 'badge' : 'warning')}
         {usage.costUsd !== undefined ? `   ${formatCost(usage.costUsd)}` : ''}
         {!narrow && usage.inputTokens ? theme.paint(`   ${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens ?? 0)} out`, 'muted') : ''}
       </Text>

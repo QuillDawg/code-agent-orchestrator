@@ -1,4 +1,5 @@
 import { openStore, readOrchestrator, questionLines, table, taskDuration, currentAttempt, headingRule } from '../util.js';
+import { ownershipOf } from '../ownership.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { stateGlyph, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
@@ -21,11 +22,15 @@ export async function statusCommand(runRef: string | undefined, opts: StatusOpti
   const live = await store.readLive(runId);
   const lock = await store.readLock(runId);
   const orchestrator = await readOrchestrator(store, runId);
-  const orchestratorAlive = orchestrator?.alive ?? false;
+  // §2.1's four states, from the one classifier the workspace reads them with: this process, another live
+  // process, an owner that is gone, or nobody. `orchestratorAlive` is the first two, which is what this
+  // command has always printed.
+  const ownership = ownershipOf(orchestrator);
+  const orchestratorAlive = ownership.kind === 'self' || ownership.kind === 'owned';
   const summary = summarize(run);
   const usage = runUsage(run);
   if (opts.json) {
-    out(JSON.stringify({ run: { ...run, workflow: undefined }, summary, usage, live, lock, orchestrator, orchestratorAlive }, null, 2));
+    out(JSON.stringify({ run: { ...run, workflow: undefined }, summary, usage, live, lock, orchestrator, orchestratorAlive, ownership: ownership.kind }, null, 2));
     return 0;
   }
   const now = Date.now();

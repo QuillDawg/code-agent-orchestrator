@@ -12,7 +12,9 @@
 import { type ResolvedTask, type TaskRunState, type TranscriptEntry, type WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { STATE_LABEL, stateGlyph, summarize } from '../../workflow/states.js';
 import type { EndedAction } from './ended.js';
+import type { PendingLine } from './observer.js';
 import { glyph } from '../../util/glyphs.js';
+import { truncateVisible } from '../../cli/util.js';
 import { formatClock, formatDuration } from '../../util/duration.js';
 import { firstLine } from '../../util/misc.js';
 import { sanitizeText } from '../../cli/color.js';
@@ -197,7 +199,7 @@ function wrapPlain(text: string, width: number): string[] {
  * cannot see and therefore does not have. On a narrow terminal that meant losing Approve and Reject, which
  * are the only two things a paused run can be moved on with.
  */
-export function actionLines(actions: EndedAction[], columns: number): string[] {
+export function actionLines(actions: readonly { key: string; label: string }[], columns: number): string[] {
   const width = Math.max(10, columns - 2);
   const lines: string[] = [];
   let current = '';
@@ -238,6 +240,45 @@ export function endedLines(run: WorkflowRun, theme: Theme, block: EndedBlock): D
   lines.push(...failureLines(run, theme, { actions: false }).slice(0, -1));
   if (block.banner) for (const line of wrapPlain(block.banner, Math.max(20, block.columns - 2))) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
   else for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
+  lines.push({ text: ' ' });
+  return lines;
+}
+
+export interface ObserverBlock {
+  /** The sentence naming the process that owns the run (§2.1). */
+  banner: string;
+  /** The controls this window may send; empty when the run advertises none. */
+  actions: readonly { key: string; label: string }[];
+  /** What the owner is waiting on a human for, shown read-only (`[D37]`). */
+  pending: PendingLine[];
+  /** Where those are answered: "answer in the owning terminal (pid N)". */
+  answerHint: string;
+  columns: number;
+}
+
+/**
+ * What the Overview leads with while this window is watching a run another process owns (§2.1, `[D37]`).
+ *
+ * The order is the order the questions come in: what the run is doing, who is driving it, what it is waiting
+ * on a human for — and only then what can be done from here. The pending block comes **above** the actions
+ * deliberately: it is the one thing on the screen this window cannot act on, and an operator who reads it
+ * after a list of keys has already tried to press one.
+ */
+export function observerLines(run: WorkflowRun, theme: Theme, block: ObserverBlock): DetailLine[] {
+  const summary = summarize(run);
+  const outcome = RUN_OUTCOME[run.state] ?? run.state;
+  const token = run.state === 'running' ? 'info' : run.state === 'failed' ? 'danger' : 'warning';
+  const width = Math.max(20, block.columns - 2);
+  const lines: DetailLine[] = [
+    { text: [theme.paint(`Run ${outcome.toLowerCase()}`, token), `${summary.success + summary.skipped}/${summary.total} done`, ...(summary.failed + summary.blocked ? [`${summary.failed + summary.blocked} failed`] : [])].join('   '), bold: true },
+  ];
+  for (const line of wrapPlain(block.banner, width)) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
+  lines.push(...failureLines(run, theme, { actions: false }).slice(0, -1));
+  for (const pending of block.pending) {
+    const what = truncateVisible(`${pending.taskId} (${pending.what})`, Math.max(10, width - block.answerHint.length - 6));
+    lines.push({ text: `  ${theme.paint('?', 'warning')} ${what}  ${theme.paint(block.answerHint, 'muted')}` });
+  }
+  for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
   lines.push({ text: ' ' });
   return lines;
 }

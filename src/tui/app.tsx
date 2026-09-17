@@ -34,7 +34,7 @@ import type { EventBus } from '../events/event-bus.js';
 import type { RunController } from '../workflow/control/controller.js';
 import { controlEnvelope } from '../workflow/control/commands.js';
 import { STATE_LABEL, stateGlyph } from '../workflow/states.js';
-import { spinnerFrames } from '../util/glyphs.js';
+import { glyph, spinnerFrames } from '../util/glyphs.js';
 import { formatDuration, formatDurationShort } from '../util/duration.js';
 import { TranscriptViewer, type ViewerTask } from './viewer.js';
 import { Modal, type PendingItem } from './dashboard/modal.js';
@@ -53,6 +53,7 @@ import {
   selectCursor,
   selectDraft,
   selectFocus,
+  selectControls,
   selectListCursor,
   selectNotice,
   selectOverlay,
@@ -75,8 +76,10 @@ import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, w
 import { workspaceLayout } from './workspace/layout.js';
 import { footerHints, QUIT_ANSWERS } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
-import { AnswerField, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { AnswerField, DiagnosticsPanel, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
 import { endedActionFor, endedActions } from './workspace/ended.js';
+import { answerElsewhere, observerActionFor, observerActions, pendingLines, type ObserverAction } from './workspace/observer.js';
+import type { ObserverSurface } from '../workflow/control/observer.js';
 
 export interface DashboardOptions {
   run: WorkflowRun;
@@ -99,6 +102,14 @@ export interface DashboardOptions {
   role?: WorkspaceRole;
   /** The observer banner, naming the process that owns the run (§2.1, [D37]). */
   banner?: string;
+  /** What the header badge says: `owner`, `observing · owner pid N`, `abandoned · resume?` (§2.1). */
+  badge?: string;
+  /**
+   * How a run another process owns is driven (§2.1, §2.3, [D37]): stop, kill and restart as requests in
+   * `requests/`, and the tokens that run advertises. Absent for a run this process owns, which is what
+   * takes the observer's keys off the screen rather than leaving them there to be refused.
+   */
+  observer?: ObserverSurface;
   /**
    * Leave the workspace. Given by the session that owns the Ink tree: on an ended run `Q` calls it at once,
    * and "stop and quit" calls it alongside `onInterrupt` so the session leaves when the stop has landed
@@ -107,6 +118,17 @@ export interface DashboardOptions {
   onQuit?: () => void;
   /** Start another execution of this run (§2.4, [D36]); absent, and in observer mode, the actions are off. */
   onResume?: (request: ResumeRequest) => void;
+}
+
+/** Who owns the run this workspace is showing, and what that lets it do (§2.1, [D37]). */
+export interface WorkspaceView {
+  role: WorkspaceRole;
+  /** The sentence naming the owning process, or nothing when this window is the owner. */
+  banner?: string;
+  /** The header badge; `ownershipBadge` writes it. */
+  badge?: string;
+  /** Present only in observer mode: stop, kill and restart through the inbox (§2.3). */
+  observer?: ObserverSurface;
 }
 
 export interface DashboardController {
@@ -124,8 +146,23 @@ export interface DashboardController {
   attach(source: { run: WorkflowRun; bus: EventBus; controller: RunController }): void;
   /** That execution ended: settle what the modal still holds and draw the ended state. Stays mounted. */
   executionEnded(): void;
-  /** Who is driving, and the banner that says so (§2.1). */
-  setRole(role: WorkspaceRole, banner?: string): void;
+  /**
+   * Who is driving this run, and everything that follows from it (§2.1): the badge, the banner and — when
+   * another process owns it — the surface the observer's controls are sent through.
+   *
+   * One call rather than four setters because the four are one fact. A window that showed `observing` with
+   * no surface behind it would offer keys nothing could answer, and one that kept a surface after taking
+   * the run would send a request to itself.
+   */
+  setOwnership(view: WorkspaceView): void;
+  /**
+   * A file-backed view of the run moved on (§2.1, [D37]): take a snapshot of `run` and redraw.
+   *
+   * The owner's workspace is fed by the event bus through `followRun`; an observer has no bus to subscribe
+   * to, because the events it would carry are happening in another process. This is the same store, filled
+   * from the poll tick instead, so every panel renders from the shape it already renders from.
+   */
+  update(run: WorkflowRun): void;
   /**
    * Put a line in front of the operator that would otherwise have gone to stdout: a rejected action, a
    * resume that could not start, a note from `startRuntime`. The workspace has the screen, so there is
@@ -203,6 +240,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const helpCursor = useStore(store, selectListCursor('help'));
   const quitCursor = useStore(store, selectListCursor('quit'));
   const answerDraft = useStore(store, selectDraft(ANSWER_DRAFT));
+  const controls = useStore(store, selectControls);
 
   const [, setTick] = useState(0);
   const [pending, setPending] = useState<PendingItem | null>(props.shared.queue[0] ?? null);
@@ -312,16 +350,57 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const setNotice = (text: string) => store.getState().setNotice(text);
   // Stable, so the review view's own per-attempt cache is not thrown away on every spinner frame.
   const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
+  /**
+   * One control this window sent, in the Diagnostics history and in the notice (§2.2, §2.3).
+   *
+   * Both halves of the workspace record here, the owner's in-process commands and the observer's requests,
+   * because the question they answer is the same one — "what did I ask this run to do, and what came back" —
+   * and a notice that is gone in four seconds is not an answer to it.
+   */
+  const recordControl = (id: string, label: string): void => store.getState().recordControl({ id, label });
+  const settleControl = (id: string, label: string, status: 'accepted' | 'applied' | 'rejected' | 'timeout', reason?: string): void => {
+    store.getState().settleControl(id, status, reason);
+    setNotice(`${label} sent ${glyph('arrow')} ${status}${reason ? `: ${reason}` : ''}`);
+  };
+
+  /**
+   * A control sent to the process that owns the run (§2.3, [D37]). It is a file, not a call: nothing here
+   * changes the run, the owner reads the request on its own tick and its answer comes back as an ack.
+   *
+   * The id is this window's own, not the request's: it keys the history row, and the row exists from the
+   * moment the operator presses the key rather than from the moment the file lands.
+   */
+  const sendControl = (action: ObserverAction): void => {
+    const surface = props.observer;
+    if (!surface) return;
+    const id = controlEnvelope('tui').id;
+    const label = `${action.kind}${action.taskId ? ` ${action.taskId}` : ''}`;
+    recordControl(id, label);
+    setNotice(`${label} sent to pid ${surface.ownerPid ?? '?'}…`);
+    void surface
+      .send({ kind: action.kind, taskId: action.taskId })
+      .then((outcome) => settleControl(id, label, outcome.status, outcome.reason))
+      .catch((err: unknown) => settleControl(id, label, 'rejected', (err as Error).message));
+  };
+
   const restart = (task: ResolvedTask | undefined): void => {
     if (!task) return;
     // The controller decides, not the screen: it holds the run state this frame is only a picture of, and
     // its rejection is already a sentence written for this notice.
     const attempts = run.tasks[task.id]?.attempts;
     const expected = attempts?.[attempts.length - 1]?.number;
+    const envelope = controlEnvelope('tui', expected ? { attempt: expected } : undefined);
+    recordControl(envelope.id, `restart ${task.id}`);
     void controller
-      .submit({ kind: 'restart', taskId: task.id }, controlEnvelope('tui', expected ? { attempt: expected } : undefined))
-      .then((ack) => setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${task.id}" cannot be restarted.`) : `Restarting ${task.id}…`))
-      .catch((err: unknown) => setNotice(`Could not restart ${task.id}: ${(err as Error).message}`));
+      .submit({ kind: 'restart', taskId: task.id }, envelope)
+      .then((ack) => {
+        store.getState().settleControl(envelope.id, ack.status, ack.reason);
+        setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${task.id}" cannot be restarted.`) : `Restarting ${task.id}…`);
+      })
+      .catch((err: unknown) => {
+        store.getState().settleControl(envelope.id, 'rejected', (err as Error).message);
+        setNotice(`Could not restart ${task.id}: ${(err as Error).message}`);
+      });
   };
   const follow = (task: ResolvedTask | undefined): void => {
     if (task) store.getState().setView({ kind: 'follow', taskId: task.id });
@@ -340,6 +419,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   // The actions an ended run offers, and whether this process may run them: an observer has no lock to take
   // and says so in a banner instead ([D36], [D37]).
   const canResume = Boolean(props.onResume) && (props.role ?? 'owner') === 'owner';
+  // Observer mode (§2.1, [D37]): the controls are the ones the run advertises and the selection allows, and
+  // everything else on the screen is read-only, including the questions a worker is waiting on.
+  const observing = (props.role ?? 'owner') === 'observer' && Boolean(props.observer);
+  const obsActions = useMemo(
+    () => (observing && props.observer ? observerActions(run, selected, props.observer.capabilities) : []),
+    [observing, props.observer, run, selected],
+  );
+  /** Whether this window has already asked the owner to stop; the next Ctrl+C escalates to kill (§2.3). */
+  const stopSent = useRef(false);
   const actions = useMemo(() => (props.finished && canResume ? endedActions(run, selected) : []), [props.finished, canResume, run, selected]);
   const resume = (request: ResumeRequest): void => {
     props.onResume?.(request);
@@ -393,9 +481,12 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     for (const action of actions) {
       entries.push({ id: `ended:${action.kind}:${action.taskId ?? ''}`, label: action.label, hint: action.key, run: () => runAction(action) });
     }
+    for (const action of obsActions) {
+      entries.push({ id: `observer:${action.kind}:${action.taskId ?? ''}`, label: `${action.label} (request to pid ${props.observer?.ownerPid ?? '?'})`, hint: action.key, run: () => sendControl(action) });
+    }
     entries.push(
       { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
-      ...(props.finished ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
+      ...(props.finished || observing ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
       { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
       { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
       { id: 'action:quit', label: props.finished ? 'Quit the workspace' : 'Quit: stay, stop and quit, or plain output', hint: 'Q', run: requestQuit },
@@ -415,7 +506,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     }
     return entries;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, run, selected, store, actions, props.finished]);
+  }, [tasks, run, selected, store, actions, obsActions, observing, props.finished]);
   const paletteMatches = useMemo(() => filterPalette(paletteEntries, paletteQuery), [paletteEntries, paletteQuery]);
 
   // ------------------------------------------------------------------ keys
@@ -424,12 +515,26 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const detailKeys = (view.kind === 'usage' || view.kind === 'detail') && !pending;
 
   useInput((input, key) => {
-    if (key.ctrl && input === 'c') {
-      // The workspace does not leave on Ctrl+C any more (§2.4): the run is asked to stop and this screen is
-      // where the operator reads how it went. A second one inside the hard deadline still forces and exits.
-      setNotice(props.finished ? 'The run has already ended. Q leaves with its exit code.' : 'Stopping the run; the workspace stays open. (Ctrl+C again to force)');
-      onInterrupt();
+    if (!key.ctrl || input !== 'c') return;
+    if (observing) {
+      // There is no worker in this process to interrupt (§2.1). Ctrl+C means the same thing it means in the
+      // owner's window - stop this run - but it travels as a request, and the second one escalates to kill
+      // exactly as a second `cao stop` always has (§2.3).
+      const stop = obsActions.find((a) => a.kind === 'stop');
+      const kill = obsActions.find((a) => a.kind === 'kill');
+      const action = stopSent.current && kill ? kill : stop;
+      if (!action) {
+        setNotice(`This run does not accept a stop from another process. Stop it in the terminal that owns it (pid ${props.observer?.ownerPid ?? '?'}).`);
+        return;
+      }
+      if (action.kind === 'stop') stopSent.current = true;
+      sendControl(action);
+      return;
     }
+    // The workspace does not leave on Ctrl+C any more (§2.4): the run is asked to stop and this screen is
+    // where the operator reads how it went. A second one inside the hard deadline still forces and exits.
+    setNotice(props.finished ? 'The run has already ended. Q leaves with its exit code.' : 'Stopping the run; the workspace stays open. (Ctrl+C again to force)');
+    onInterrupt();
   });
 
   useInput(
@@ -549,6 +654,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         else state.setCursor(Math.max(0, Math.min(store.getState().cursor + delta, visible.length - 1)));
       };
 
+      // The observer's controls come first, for the same reason the ended run's do below: `R` here means
+      // "ask the owner to re-run this", and the local restart it would otherwise reach has nothing to act on.
+      const observerAction = obsActions.length && input ? observerActionFor(obsActions, input) : undefined;
+      if (observerAction) {
+        sendControl(observerAction);
+        return;
+      }
+
       // An ended run's actions come first: `R` means "re-run this task through a fresh resume" rather than
       // "restart it in the running scheduler", and there is no scheduler left to restart anything in.
       const endedAction = actions.length && input ? endedActionFor(actions, input) : undefined;
@@ -622,7 +735,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) });
   const spinner = spinnerFrames();
   const runningGlyph = motion ? spinner[frame.current % spinner.length]! : stateGlyph('running');
-  const header = <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} attention={attention} />;
+  const header = <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} badge={props.badge} attention={attention} />;
 
   if (pending) {
     return (
@@ -730,7 +843,18 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             focused={focus === 'main'}
             runningGlyph={runningGlyph}
             peek={(taskId, entries) => controller.peek(taskId, entries)}
-            ended={props.finished ? { actions, banner: canResume ? undefined : props.banner, columns: layout.mainWidth } : undefined}
+            ended={!observing && props.finished ? { actions, banner: canResume ? undefined : props.banner, columns: layout.mainWidth } : undefined}
+            observer={
+              observing
+                ? {
+                    banner: props.banner ?? '',
+                    actions: obsActions,
+                    pending: pendingLines(run),
+                    answerHint: answerElsewhere(props.observer?.ownerPid),
+                    columns: layout.mainWidth,
+                  }
+                : undefined
+            }
           />
         );
       case 'changes':
@@ -757,6 +881,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             focused={focus === 'main'}
           />
         );
+      case 'diagnostics':
+        return <DiagnosticsPanel controls={controls} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
       default:
         return <Placeholder tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
     }
@@ -803,7 +929,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                   theme={theme}
                 />
               ) : (
-                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} ended={actions} />
+                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} ended={actions} observer={observing ? obsActions : undefined} />
               )
             ) : (
               mainPanel()
@@ -812,7 +938,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         </Box>
       </Box>
       <Footer
-        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, actions)}
+        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, observing ? obsActions : actions)}
         columns={columns}
         theme={theme}
         columnsShown={layout.footerColumns}
@@ -958,6 +1084,7 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
   let finished = false;
   let closing = false;
   let seq = 0;
+  let observedSeq = 0;
   let disarm: (() => void) | undefined;
 
   // One store for the life of the workspace, fed from whichever execution is current: a store created per
@@ -1022,8 +1149,15 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
       shared.notify();
       refresh();
     },
-    setRole(role, banner) {
-      current = { ...current, role, banner };
+    setOwnership(view) {
+      current = { ...current, role: view.role, banner: view.banner, badge: view.badge, observer: view.observer };
+      refresh();
+    },
+    update(run) {
+      current = { ...current, run };
+      // `seq` counts the polls this window has folded in. Nothing here shares a sequence with the owner's
+      // bus, and nothing needs to: it exists so a subscriber can tell one update from the next.
+      store.getState().setSnapshot({ seq: (observedSeq += 1), at: Date.now(), run });
       refresh();
     },
     notify(text) {

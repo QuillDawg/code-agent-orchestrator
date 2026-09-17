@@ -25,6 +25,23 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   run another terminal owns it opens read-only and names the pid. With no run it lists the recent runs of
   the repository with their state, age and cost and offers the workflow files beside them; without a
   terminal (piped, `CI`, `--no-tui`) it prints that list and exits 0, and `--json` prints it as JSON.
+- **A workspace on a run another terminal is executing.** Opening `cao ui <run>` on a run somebody else
+  owns — or losing the run to another terminal while the workspace was idle — now gives a window that keeps
+  up with it instead of a frozen picture with a banner over it. `workflow.json` and `live.json` are
+  re-read every 500 ms and folded together the way `cao status` reads the pair, so the task states, the
+  activity, the usage and the cost move; transcripts, earlier attempts and diffs come from the run
+  directory through the same tailer `cao logs --follow` uses. The header badge says `observing · owner pid
+  N`, and `abandoned · resume?` the moment that process stops existing — at which point the window becomes
+  an owner candidate again and the resume actions come back. **It never takes the lock**: `S` stops the
+  run, `K` kills it and `R` re-runs the selected task by writing a request into `requests/` and showing the
+  owner's answer — `sent → applied`, `rejected: <reason>`, or "no answer yet" when the wait elapses, which
+  is not a refusal — and every control sent from the window is listed in the Diagnostics tab, so the answer
+  outlives the notice. Only what the run advertises in its registry entry is offered; a run with no entry
+  is assumed to accept what an owner of this build accepts. Approvals and questions are shown read-only
+  with "answer in the owning terminal (pid N)" and no key answers them: a permission decision stays in the
+  terminal that owns the run until presence gating ships `[D3]`.
+- `cao status --json` gains `ownership`: `self`, `owned`, `abandoned` or `ended`, from the same classifier
+  the workspace badges a run with. Additive; the printed output is unchanged.
 - **A run that has ended can be resumed from the workspace.** `S` resumes the run, `R` re-runs the selected
   task, `>` resumes from it and everything downstream, `A` answers a task that ended asking a question and
   resumes with the answer, and `A`/`X` approve or reject a paused approval gate. Each one is the

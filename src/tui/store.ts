@@ -62,6 +62,27 @@ export type Overlay = { kind: 'none' } | { kind: 'palette' } | { kind: 'search' 
 /** The draft field the answer-and-resume form types into; one field, because one answer is sent at a time. */
 export const ANSWER_DRAFT = 'answer';
 
+/**
+ * One control this window sent, and what came back (§2.2, §2.3).
+ *
+ * It is presentation state and not run state: the run records what it *applied*, and this records what an
+ * operator *asked for* from here — including the ones the owner refused and the ones nobody answered, which
+ * are exactly the two the run directory has nothing to say about. The Diagnostics panel lists them and the
+ * notice area shows the latest, so "did my stop get through" has an answer that outlives the notice.
+ */
+export interface ControlRecord {
+  /** The envelope or request id, which is how the outcome finds the row it belongs to. */
+  id: string;
+  at: number;
+  /** What was asked for, in the words the operator pressed: `stop`, `restart implement-api`. */
+  label: string;
+  status: 'sent' | 'accepted' | 'applied' | 'rejected' | 'timeout';
+  reason?: string;
+}
+
+/** How many of them are kept. A window that has sent fifty controls is not looking for the first one. */
+export const CONTROL_HISTORY_LIMIT = 50;
+
 /** The run as the screen last saw it, stamped so a subscriber can tell one coalesced update from the next. */
 export interface RunSnapshot {
   /** The bus sequence number of the last event folded into this snapshot; 0 for the snapshot taken at attach. */
@@ -88,6 +109,8 @@ export interface PresentationState {
   overlay: Overlay;
   notice: string | null;
   snapshot: RunSnapshot | null;
+  /** Controls sent from this window, oldest first (§2.3). */
+  controls: ControlRecord[];
 
   setView(view: View): void;
   setTab(tab: WorkspaceTab): void;
@@ -106,6 +129,10 @@ export interface PresentationState {
   /** Show `text` for `ttlMs`, replacing any notice already up. `null` clears it now. */
   setNotice(text: string | null, ttlMs?: number): void;
   setSnapshot(snapshot: RunSnapshot): void;
+  /** A control has just been sent; it is listed as `sent` until an answer arrives. */
+  recordControl(record: Pick<ControlRecord, 'id' | 'label'>): void;
+  /** The owner answered (or did not): the row keeps its place in the order it was sent in. */
+  settleControl(id: string, status: ControlRecord['status'], reason?: string): void;
 }
 
 export type PresentationStore = StoreApi<PresentationState>;
@@ -135,6 +162,7 @@ export function createPresentationStore(clock: Clock = systemClock): Presentatio
     overlay: { kind: 'none' },
     notice: null,
     snapshot: null,
+    controls: [],
 
     setView: (view) => set({ view }),
     setTab: (tab) => set({ tab }),
@@ -167,6 +195,12 @@ export function createPresentationStore(clock: Clock = systemClock): Presentatio
     // A task list can shrink between snapshots (a resume reads a different workflow), so the cursor is
     // re-clamped here rather than left pointing past the end until the next key press.
     setSnapshot: (snapshot) => set({ snapshot, cursor: clamp(get().cursor, Math.max(0, snapshot.run.workflow.tasks.length - 1)) }),
+    recordControl: (record) => {
+      const added: ControlRecord = { ...record, at: clock.now(), status: 'sent' };
+      set({ controls: [...get().controls, added].slice(-CONTROL_HISTORY_LIMIT) });
+    },
+    settleControl: (id, status, reason) =>
+      set({ controls: get().controls.map((c) => (c.id === id ? { ...c, status, ...(reason ? { reason } : {}) } : c)) }),
   }));
 }
 
@@ -240,6 +274,7 @@ export const selectFocus = (s: PresentationState): FocusRegion => s.focus;
 export const selectCursor = (s: PresentationState): number => s.cursor;
 export const selectNotice = (s: PresentationState): string | null => s.notice;
 export const selectSnapshot = (s: PresentationState): RunSnapshot | null => s.snapshot;
+export const selectControls = (s: PresentationState): ControlRecord[] => s.controls;
 export const selectRun = (s: PresentationState): WorkflowRun | null => s.snapshot?.run ?? null;
 export const selectTasks = (s: PresentationState): ResolvedTask[] => taskList(s.snapshot);
 export const selectSelectedTask = (s: PresentationState): ResolvedTask | null => taskList(s.snapshot)[s.cursor] ?? null;

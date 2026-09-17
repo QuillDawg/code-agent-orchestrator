@@ -593,9 +593,12 @@ downstream · `A` answer a task that asked a question, and resume with the answe
 reject a paused approval gate · `Q` leave, returning the latest run's exit code.
 
 Each action validates first and takes the run lock again. Between them the workspace holds no lock, so
-another terminal may take the run; if one has, the workspace says so and the actions are off until it lets
-go. `cao ui <run>` opens the same workspace on a run that ended earlier — or on one another terminal is
-executing, read-only.
+another terminal may take the run; if one has, the workspace follows it instead: the badge says
+`observing · owner pid N`, the picture keeps up from `workflow.json` and `live.json`, and `S` stop, `K`
+kill and `R` re-run travel to that process as requests whose answers land in the Diagnostics tab.
+Approvals and questions are read-only there — *answer in the owning terminal (pid N)*. When that process
+goes, the badge says `abandoned · resume?` and the resume actions come back. `cao ui <run>` opens the same
+workspace on a run that ended earlier, or on one another terminal is executing.
 
 <details>
 <summary><strong>Dashboard keys</strong></summary>

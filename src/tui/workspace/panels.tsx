@@ -11,11 +11,13 @@ import { Box, Text } from 'ink';
 import { go as fuzzyGo } from 'fuzzysort';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
+import { formatClock } from '../../util/duration.js';
 import { renderMarkdown } from '../markdown.js';
 import { endedKeys, GLOBAL_KEYS, PROMPT_KEYS, QUIT_ANSWERS, VIEWER_KEYS, panelHelp, type KeyHelp } from './keys.js';
 import type { EndedAction } from './ended.js';
-import { TAB_LABEL, type FocusRegion, type WorkspaceTab } from '../store.js';
-import type { Theme } from '../theme.js';
+import { observerKeys, type ObserverAction } from './observer.js';
+import { TAB_LABEL, type ControlRecord, type FocusRegion, type WorkspaceTab } from '../store.js';
+import type { Theme, ThemeToken } from '../theme.js';
 import { windowOf } from '../window.js';
 
 /** What each unfilled tab is for, and when it arrives. Kept here so `?`, the tab and the docs agree. */
@@ -33,12 +35,72 @@ export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
     'Until then: F opens the transcript viewer that cao logs --follow shares, and cao logs <task> prints it.',
   ],
   diagnostics: [
-    'The Diagnostics panel arrives in stage 3.',
-    'It will hold the agent versions, the probe results, the lock and the request inbox.',
+    'The rest of the Diagnostics panel arrives in stage 3.',
+    'It will hold the agent versions, the probe results and the lock.',
     '',
     'Until then: cao doctor answers the same questions.',
   ],
 };
+
+/** What each control outcome is called on screen, and how it is painted (§2.3). */
+const CONTROL_STATUS: Record<ControlRecord['status'], { label: string; token: ThemeToken }> = {
+  sent: { label: 'sent…', token: 'muted' },
+  accepted: { label: 'accepted', token: 'info' },
+  applied: { label: 'applied', token: 'success' },
+  rejected: { label: 'rejected', token: 'danger' },
+  timeout: { label: 'no answer yet', token: 'warning' },
+};
+
+/** One row of the control history: when, what was asked, and what came back. */
+export function controlLine(record: ControlRecord): string {
+  const status = CONTROL_STATUS[record.status];
+  return `${formatClock(new Date(record.at).toISOString())}  ${record.label} ${glyph('arrow')} ${status.label}${record.reason ? `: ${record.reason}` : ''}`;
+}
+
+export interface DiagnosticsPanelProps {
+  controls: readonly ControlRecord[];
+  rows: number;
+  columns: number;
+  theme: Theme;
+}
+
+/**
+ * The Diagnostics tab: the controls this window has sent, then what the panel will hold in stage 3.
+ *
+ * The history is here rather than only in the notice area because a notice lasts four seconds and the
+ * question it answers — "did the stop I sent get through to the other terminal" — outlasts it (§2.3). The
+ * newest row is at the bottom, so the panel reads as the log it is.
+ */
+export function DiagnosticsPanel({ controls, rows, columns, theme }: DiagnosticsPanelProps): React.JSX.Element {
+  const notes = PLACEHOLDER_TEXT.diagnostics ?? [];
+  // The history first, the stage-3 note with whatever is left: a row of it is worth more than a row of a
+  // sentence that says the same thing on every frame.
+  const historyRows = Math.max(0, Math.min(controls.length + 1, rows - 2));
+  const shown = controls.slice(-Math.max(0, historyRows - 1));
+  const noteRows = Math.max(0, rows - 1 - historyRows - 1);
+  return (
+    <Box flexDirection="column" width={columns}>
+      <Text bold>{TAB_LABEL.diagnostics}</Text>
+      <Text wrap="truncate-end">{theme.paint('Controls sent from this window', 'title')}</Text>
+      {shown.length === 0 ? (
+        <Text wrap="truncate-end">{theme.paint('  none yet', 'muted')}</Text>
+      ) : (
+        shown.map((record) => (
+          <Text key={record.id} wrap="truncate-end">
+            {'  '}
+            {theme.paint(truncateVisible(controlLine(record), Math.max(10, columns - 2)), CONTROL_STATUS[record.status].token)}
+          </Text>
+        ))
+      )}
+      {noteRows > 0 && <Text> </Text>}
+      {notes.slice(0, noteRows).map((line, i) => (
+        <Text key={i} wrap="truncate-end">
+          {theme.paint(truncateVisible(line, columns), 'muted')}
+        </Text>
+      ))}
+    </Box>
+  );
+}
 
 export interface PlaceholderProps {
   tab: WorkspaceTab;
@@ -174,12 +236,15 @@ export interface HelpPanelProps {
   cursor: number;
   /** The ended-state actions, when the run has ended and this process may run them (§2.4). */
   ended?: EndedAction[];
+  /** The controls this window may send to the process that owns the run (§2.1, [D37]). */
+  observer?: ObserverAction[];
 }
 
 /** The help sections for the focused panel, most relevant first. */
-export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[]): Array<{ title: string; keys: KeyHelp[] }> {
+export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[], observer?: ObserverAction[]): Array<{ title: string; keys: KeyHelp[] }> {
   const panel = panelHelp(focus, tab);
   return [
+    ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} — the panel with the keys`, keys: panel.keys },
     { title: 'Anywhere', keys: GLOBAL_KEYS },
@@ -188,10 +253,11 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
   ];
 }
 
-export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended }: HelpPanelProps): React.JSX.Element {
-  const keyWidth = Math.min(22, Math.max(...helpSections(focus, tab, ended).flatMap((s) => s.keys.map((k) => k.keys.length))));
+export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended, observer }: HelpPanelProps): React.JSX.Element {
+  const sections = helpSections(focus, tab, ended, observer);
+  const keyWidth = Math.min(22, Math.max(...sections.flatMap((s) => s.keys.map((k) => k.keys.length))));
   const lines: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
-  for (const section of helpSections(focus, tab, ended)) {
+  for (const section of sections) {
     if (lines.length) lines.push({ text: ' ' });
     lines.push({ text: section.title, bold: true });
     for (const key of section.keys) lines.push({ text: `  ${key.keys.padEnd(keyWidth)}  ${key.what}`, dim: false });

@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { createWorkspaceSession, resumeRequestOptions, runWorkspaceSession, type ExecutionHandle } from '../../src/cli/workspace-session.js';
 import { RunLockedError } from '../../src/cli/app.js';
 import type { DashboardController, DashboardOptions } from '../../src/tui/app.js';
+import type { ObservedRun, RunObserver } from '../../src/workflow/control/observer.js';
 import type { SchedulerResult } from '../../src/workflow/scheduler.js';
 import type { WorkflowRun } from 'code-agent-orchestrator-protocol';
 
@@ -59,10 +60,11 @@ function fakeDashboard(react?: Reaction) {
       calls.push('executionEnded');
       fire('ended');
     },
-    setRole: (role, banner) => {
-      calls.push(`role:${role}${banner ? ':banner' : ''}`);
-      fire('role', role);
+    setOwnership: (view) => {
+      calls.push(`role:${view.role}${view.banner ? ':banner' : ''}${view.observer ? ':surface' : ''}`);
+      fire('role', view.role);
     },
+    update: (run) => calls.push(`update:${run.runId}`),
     notify: (text) => {
       calls.push(`notify:${text}`);
       fire('notice', text);
@@ -214,6 +216,113 @@ describe('the workspace session', () => {
     expect(dashboard.calls.some((c) => c.startsWith('notify:') && c.includes('pid 4242'))).toBe(true);
     // One execution only: the action that could not take the lock did not start a second.
     expect(executions).toBe(1);
+  });
+
+  /**
+   * The observer the session flips to, without a run directory behind it: a thing that can be started, told
+   * what to say on its next tick, and stopped. Everything the session does with a real one it does with
+   * this — subscribe, redraw, and let go when the ownership stops being "owned" (§2.1, [D37]).
+   */
+  function fakeObserver(runValue: WorkflowRun, onStarted?: () => void) {
+    const listeners = new Set<(view: ObservedRun) => void>();
+    const calls: string[] = [];
+    let view: ObservedRun = { run: runValue, ownership: { kind: 'owned', pid: 4242, resumable: false } };
+    const surface = { ownerPid: 4242, capabilities: ['stop'] as never, send: async () => ({ status: 'applied' as const }) };
+    const observer: RunObserver = {
+      get run() {
+        return view.run;
+      },
+      get ownership() {
+        return view.ownership;
+      },
+      controller: {} as never,
+      surface,
+      start: () => {
+        calls.push('start');
+        for (const l of [...listeners]) l(view);
+        onStarted?.();
+      },
+      stop: () => {
+        calls.push('stop');
+        listeners.clear();
+      },
+      tick: async () => undefined,
+      onChange: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    return {
+      observer,
+      calls,
+      /** The next tick, as the poll would deliver it. */
+      report(next: ObservedRun) {
+        view = next;
+        for (const l of [...listeners]) l(next);
+      },
+    };
+  }
+
+  it('follows the run it lost, and stops following when the owner lets go (§2.1)', async () => {
+    const target = run();
+    // The poll's first tick reports the run as owned; its second reports the owner gone.
+    const watcher = fakeObserver(target, () => watcher.report({ run: target, ownership: { kind: 'abandoned', pid: 4242, resumable: true } }));
+    const dashboard = fakeDashboard((event, options, detail) => {
+      if (event === 'ended') options.onResume!({ kind: 'resume' });
+      if (event === 'notice' && detail.includes('nothing owns it now')) {
+        // Into the observer's own log: what is asserted is that the poll had already been dropped by the
+        // time the operator was told the run was theirs to take, not merely that it stopped eventually.
+        watcher.calls.push('notice');
+        options.onQuit!();
+      }
+    });
+    const code = await runWorkspaceSession({
+      first: { run: target, environment: {}, secrets: [], isResume: false },
+      createDashboard: dashboard.factory,
+      observe: () => watcher.observer,
+      prepare: () => {
+        throw new RunLockedError('2026-09-17-001', 4242, ts);
+      },
+      execute: async (_options, session) => {
+        session.attach(handle(target));
+        return result('failed', 1);
+      },
+    });
+    expect(code).toBe(1);
+    // The poll ran while another process had the run, and the surface was wired up with it...
+    expect(watcher.calls).toEqual(['start', 'stop', 'notice']);
+    expect(dashboard.calls).toContain('role:observer:banner:surface');
+    // ...and once the owner had gone the window took the badge back, with no surface to send controls to.
+    expect(dashboard.calls).toContain('role:owner');
+    expect(dashboard.calls.some((c) => c.startsWith('update:'))).toBe(true);
+  });
+
+  it('stops watching the moment this process starts executing the run again', async () => {
+    const target = run();
+    const watcher = fakeObserver(target);
+    let ends = 0;
+    const dashboard = fakeDashboard((event, options) => {
+      if (event !== 'ended') return;
+      ends += 1;
+      if (ends === 1) options.onResume!({ kind: 'resume' });
+      else options.onQuit!();
+    });
+    await runWorkspaceSession({
+      idle: { run: target, store: {} as never, controller: {} as never, role: 'observer', banner: 'watching', observer: watcher.observer },
+      createDashboard: dashboard.factory,
+      prepare: async () => ({ run: target, environment: {}, secrets: [], isResume: true }),
+      execute: async (_options, session) => {
+        // Into the observer's own log, so the order of the two is what is asserted rather than the fact of
+        // them: the session closing would stop the poll eventually either way.
+        session.attach(handle(target));
+        watcher.calls.push('attached');
+        return result('completed', 0);
+      },
+    });
+    // `attach` is this process becoming the owner: the poll is dropped *before* the execution it is now
+    // the owner of starts, so nothing is left watching a run this process is executing.
+    expect(watcher.calls).toEqual(['start', 'stop', 'attached']);
+    expect(dashboard.calls).toContain('role:owner');
   });
 
   it('turns a resume that cannot start into a notice and stays open', async () => {

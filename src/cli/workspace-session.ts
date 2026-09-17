@@ -33,7 +33,9 @@ import { glyph } from '../util/glyphs.js';
 import { BELL } from '../util/misc.js';
 import { errorMessage } from '../util/errors.js';
 import type { WorkspaceRole } from '../tui/workspace/chrome.js';
-import type { DashboardController, DashboardOptions } from '../tui/app.js';
+import type { DashboardController, DashboardOptions, WorkspaceView } from '../tui/app.js';
+import { ownershipBadge, ownershipBanner } from './ownership.js';
+import type { RunObserver } from '../workflow/control/observer.js';
 import type { Interaction, InteractionAnswer, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import type { ExecuteOptions } from './commands/run.js';
 
@@ -69,6 +71,13 @@ export interface IdleRun {
   role: WorkspaceRole;
   /** The observer banner naming the owning process, when there is one (§2.1). */
   banner?: string;
+  /** The header badge; `owner` unless another process holds the run (§2.1). */
+  badge?: string;
+  /**
+   * The poll that keeps the picture current while another process owns this run (§2.1, `[D37]`). Present
+   * only when there is an owner to watch: a run nobody is executing does not change under the window.
+   */
+  observer?: RunObserver;
 }
 
 /** How the session mounts a workspace. Resolved before the loop starts, so `attach` never has to wait. */
@@ -90,6 +99,12 @@ export interface WorkspaceSessionOptions {
    * be tested without a run directory, a lock or an agent CLI.
    */
   prepare?: (request: ResumeRequest, session: WorkspaceSession & { readonly runId: string | undefined }) => Promise<ExecuteOptions | undefined>;
+  /**
+   * How a run this window no longer owns is watched (§2.1, `[D37]`). Used when another process takes the
+   * lock while this session is idle; `cao ui` builds its own and passes it in `idle` instead. Injected for
+   * the same reason `execute` and `prepare` are: the flip is then testable without a second process.
+   */
+  observe?: (runId: string) => Promise<RunObserver | undefined> | RunObserver | undefined;
   /** What the tail lines are written with once the workspace has let the terminal go. */
   writeTail?: (run: WorkflowRun, result: SchedulerResult) => void;
   repository?: string;
@@ -132,6 +147,10 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
   let pendingIntent: SessionIntent | undefined;
   let waiting: ((intent: SessionIntent) => void) | undefined;
   let idleRun: WorkflowRun | undefined = opts.idle?.run;
+  let observer: RunObserver | undefined;
+  let offObserver: (() => void) | undefined;
+  /** The banner on screen, so an unchanged one does not redraw the frame on every 500 ms tick. */
+  let lastBanner: string | undefined;
 
   const settle = (intent: SessionIntent): void => {
     if (waiting) {
@@ -211,12 +230,14 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
   };
 
   // ---------------------------------------------------------------- the workspace itself
-  const dashboardOptions = (run: WorkflowRun, bus: EventBus, controller: RunController, role: WorkspaceRole, banner?: string): DashboardOptions => ({
+  const dashboardOptions = (run: WorkflowRun, bus: EventBus, controller: RunController, view: WorkspaceView): DashboardOptions => ({
     run,
     bus,
     controller,
-    role,
-    banner,
+    role: view.role,
+    banner: view.banner,
+    badge: view.badge,
+    observer: view.observer,
     onMinimise: minimise,
     onInterrupt: interrupt,
     onQuit: () => settle({ kind: 'quit' }),
@@ -225,16 +246,59 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     theme: opts.theme,
   });
 
-  const ensureDashboard = (run: WorkflowRun, bus: EventBus, controller: RunController, role: WorkspaceRole, banner?: string): DashboardController => {
+  const ensureDashboard = (run: WorkflowRun, bus: EventBus, controller: RunController, view: WorkspaceView): DashboardController => {
     if (dashboard) {
       dashboard.attach({ run, bus, controller });
-      dashboard.setRole(role, banner);
+      dashboard.setOwnership(view);
       if (!dashboard.isOpen && !minimised) dashboard.open();
       return dashboard;
     }
-    dashboard = opts.createDashboard(dashboardOptions(run, bus, controller, role, banner));
+    dashboard = opts.createDashboard(dashboardOptions(run, bus, controller, view));
     dashboard.open();
     return dashboard;
+  };
+
+  // ---------------------------------------------------------------- observing (§2.1, [D37])
+  /**
+   * Follow a run another process owns.
+   *
+   * The poll is the only thing that moves while this is up: it re-reads `workflow.json`, `live.json` and the
+   * ownership on every tick, and each tick is pushed into the same store the owner's bus fills. When the
+   * ownership stops being "owned" — the other process finished, or died — the watching stops and this window
+   * becomes what it was before it flipped: a workspace on a run nobody is executing, with the actions §2.4
+   * gives it.
+   */
+  const stopObserving = (): void => {
+    offObserver?.();
+    offObserver = undefined;
+    observer?.stop();
+    observer = undefined;
+    lastBanner = undefined;
+  };
+
+  const observe = (next: RunObserver): void => {
+    stopObserving();
+    observer = next;
+    offObserver = next.onChange((view) => {
+      if (observer !== next) return;
+      if (view.ownership.kind === 'owned') {
+        const banner = ownershipBanner(view.ownership, view.run.runId);
+        if (banner !== lastBanner) {
+          lastBanner = banner;
+          dashboard?.setOwnership({ role: 'observer', banner, badge: ownershipBadge(view.ownership), observer: next.surface });
+        }
+        dashboard?.update(view.run);
+        return;
+      }
+      // The owner let go. Nothing is executing the run now, so this window may take it: the badge goes back
+      // to the owner's, the controls that crossed the boundary go away, and §2.4's actions come back.
+      idleRun = view.run;
+      stopObserving();
+      dashboard?.update(view.run);
+      dashboard?.setOwnership({ role: 'owner', badge: ownershipBadge(view.ownership) });
+      notify(`The process that was executing this run has gone; nothing owns it now. ${view.ownership.kind === 'abandoned' ? 'Resume it from here.' : ''}`.trim());
+    });
+    next.start();
   };
 
   const session: Session = {
@@ -254,7 +318,9 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
       execution = next;
       executing = true;
       idleRun = undefined;
-      ensureDashboard(next.run, next.bus, next.controller, 'owner');
+      // This process is the owner again, so there is nothing left to watch and nothing left to send.
+      stopObserving();
+      ensureDashboard(next.run, next.bus, next.controller, { role: 'owner', badge: 'owner' });
       // A request for a human reopens a minimised workspace: switch the surfaces back.
       offBus = next.bus.onAny((ev) => {
         if ((ev.type === 'task.interaction.requested' || ev.type === 'task.awaiting_approval') && dashboard && !dashboard.isOpen) {
@@ -266,7 +332,14 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     },
     openIdle(idle) {
       idleRun = idle.run;
-      ensureDashboard(idle.run, emptyBus(idle.run), idle.controller, idle.role, idle.banner).executionEnded();
+      lastBanner = idle.banner;
+      ensureDashboard(idle.run, emptyBus(idle.run), idle.controller, {
+        role: idle.role,
+        banner: idle.banner,
+        badge: idle.badge,
+        observer: idle.observer?.surface,
+      }).executionEnded();
+      if (idle.observer) observe(idle.observer);
     },
     executionEnded(result) {
       executing = false;
@@ -278,8 +351,18 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     },
     becomeObserver(pid) {
       const banner = `Another process (pid ${pid}) took this run; this window is watching. Actions are disabled until it lets go.`;
-      dashboard?.setRole('observer', banner);
+      lastBanner = banner;
+      dashboard?.setOwnership({ role: 'observer', banner, badge: `observing · owner pid ${pid}` });
       notify(banner);
+      // And now follow it: the banner alone is a window that has stopped telling the truth within a second.
+      // The first tick replaces the sentence above with `ownershipBanner`'s and wires the controls up.
+      const runId = session.runId;
+      if (!runId || !opts.observe) return;
+      void Promise.resolve(opts.observe(runId))
+        .then((next) => {
+          if (next) observe(next);
+        })
+        .catch(() => undefined);
     },
     requestApproval(task) {
       return dashboard ? dashboard.requestApproval(task) : Promise.resolve('defer' as const);
@@ -302,6 +385,7 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     async close() {
       if (closed) return;
       closed = true;
+      stopObserving();
       offBus?.();
       stopMinimisedKeys();
       detachPlainRenderer();
@@ -309,6 +393,25 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     },
   };
   return session;
+}
+
+/**
+ * The observer the session flips to when another process takes the run (§2.1, `[D36]`, `[D37]`).
+ *
+ * Imported here rather than at the top of the file so a headless run never loads it: the module reaches the
+ * file tailer, and §2.4's rule is that `--no-tui` pulls in nothing the workspace needs.
+ */
+async function defaultObserver(runId: string, opts: WorkspaceSessionOptions): Promise<RunObserver | undefined> {
+  try {
+    const { openStore } = await import('./util.js');
+    const { createRunObserver } = await import('../workflow/control/observer.js');
+    const store = await openStore(opts.first?.repository ?? opts.repository);
+    return createRunObserver({ store, runId, run: await store.loadRun(runId) });
+  } catch {
+    // The banner is already up and says who has the run; failing to *follow* it is not worth an error on
+    // top of that, and the operator can still read everything the last frame showed.
+    return undefined;
+  }
 }
 
 /** A bus nothing writes to, for a run this process is not executing. */
@@ -345,7 +448,7 @@ export async function runWorkspaceSession(opts: WorkspaceSessionOptions): Promis
   // Ink is imported here and nowhere higher: a headless run must not load the TUI, let alone the timers
   // and listeners it would create (§2.4, and the constraint the headless e2e asserts).
   const createDashboard = opts.createDashboard ?? (await import('../tui/app.js')).createDashboard;
-  const session = createWorkspaceSession({ ...opts, createDashboard });
+  const session = createWorkspaceSession({ ...opts, observe: opts.observe ?? ((runId) => defaultObserver(runId, opts)), createDashboard });
   let pending: ExecuteOptions | undefined = opts.first;
   let last: { run: WorkflowRun; result: SchedulerResult } | undefined;
   if (!pending && opts.idle) session.openIdle(opts.idle);

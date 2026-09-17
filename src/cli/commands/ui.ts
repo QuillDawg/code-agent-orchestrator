@@ -13,9 +13,11 @@
 import path from 'node:path';
 import { FileRunStore, type RunListEntry } from '../../persistence/run-store.js';
 import { createDetachedController } from '../../workflow/control/detached.js';
+import { createRunObserver } from '../../workflow/control/observer.js';
 import { runWorkspaceSession } from '../workspace-session.js';
 import { executeOnce, runCommand, writeRunTail } from './run.js';
-import { DEFAULT_WORKFLOW_FILES, findStoreRoot, isInteractive, readOrchestrator, table } from '../util.js';
+import { DEFAULT_WORKFLOW_FILES, findStoreRoot, isInteractive, table } from '../util.js';
+import { ownershipBadge, ownershipBanner, ownershipRefusal, readOwnership } from '../ownership.js';
 import { formatAge, formatLocal } from '../../util/duration.js';
 import { formatCost } from '../../tui/format.js';
 import { pathExists } from '../../util/fs.js';
@@ -66,27 +68,27 @@ export async function uiCommand(runRef: string | undefined, opts: UiOptions): Pr
     const store = new FileRunStore(root);
     const runId = await store.resolveRunId(runRef);
     const run = await store.loadRun(runId);
-    const orchestrator = await readOrchestrator(store, runId);
-    const owned = Boolean(orchestrator?.alive) && orchestrator!.pid !== process.pid;
+    // §2.1: which of the four states this run is in decides everything below — the badge, the banner, whether
+    // there is anything to poll, and whether a key press is a command or a request.
+    const ownership = await readOwnership(store, runId);
+    const owned = ownership.kind === 'owned';
     const role: WorkspaceRole = owned ? 'observer' : 'owner';
     if (!interactive) {
-      out(`${runId}  ${run.workflowName}  ${run.state}${owned ? `  owned by pid ${orchestrator!.pid}` : ''}`);
+      out(`${runId}  ${run.workflowName}  ${run.state}${owned ? `  owned by pid ${ownership.pid}` : ''}`);
       out(`Inspect it with "cao status ${runId}"; open it with "cao ui ${runId}" on a terminal.`);
       return 0;
     }
+    // A run nobody is executing does not change under the window, so it gets the reader that does not poll.
+    const observer = owned ? createRunObserver({ store, runId, run }) : undefined;
     return runWorkspaceSession({
       idle: {
         run,
         store,
         role,
-        banner: owned ? `Run ${runId} is owned by pid ${orchestrator!.pid}; this window is watching. Answer in that terminal.` : undefined,
-        controller: createDetachedController({
-          store,
-          run,
-          reason: owned
-            ? `Run ${runId} is owned by another process (pid ${orchestrator!.pid}); send controls from there, or with "cao stop ${runId}".`
-            : `No orchestrator owns run ${runId}. Start it again from here, or with "cao resume ${runId}".`,
-        }),
+        banner: ownershipBanner(ownership, runId),
+        badge: ownershipBadge(ownership),
+        observer,
+        controller: observer?.controller ?? createDetachedController({ store, run, reason: ownershipRefusal(ownership, runId) }),
       },
       execute: executeOnce,
       writeTail: (endedRun, result) => writeRunTail(endedRun, result, { summary: true }),

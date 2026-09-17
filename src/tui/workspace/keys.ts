@@ -134,9 +134,10 @@ const ALWAYS = ['Ctrl+P palette', '? help', 'Q minimise'];
  * The Changes panel draws its own key line at the bottom of itself - it has two levels and different keys in
  * each - so the footer stays out of its way and only names the chords that work everywhere.
  */
-export function footerHints(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[]): string {
+export function footerHints(focus: FocusRegion, tab: WorkspaceTab, ended?: readonly { key: string; label: string }[]): string {
   // An ended run's actions come first wherever they apply: they are the reason the workspace is still open
-  // (§2.4), and an operator looking for "how do I retry this" should not have to press `?` to find out.
+  // (§2.4), and an operator looking for "how do I retry this" should not have to press `?` to find out. The
+  // observer's controls lead for the same reason and are passed in the same way (§2.1).
   const lead = ended?.length ? ended.map((action) => `${action.key} ${action.label}`) : [];
   if (focus === 'main' && tab === 'changes') return [...lead, ...ALWAYS].join('   ');
   const panel = panelHelp(focus, tab).keys.map((help) => `${help.keys} ${help.short ?? help.what}`);

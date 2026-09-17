@@ -54,7 +54,8 @@ function workspaceDouble(react: Reaction) {
         options!.onQuit!();
       });
     },
-    setRole: () => undefined,
+    setOwnership: () => undefined,
+    update: () => undefined,
     notify: (text) => notices.push(text),
     requestApproval: () => Promise.resolve('defer' as const),
     requestInteraction: () => Promise.resolve({ kind: 'deny', message: 'no dashboard' }),
