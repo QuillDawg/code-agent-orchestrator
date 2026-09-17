@@ -28,6 +28,13 @@ export interface DetailLine {
   text: string;
   dim?: boolean;
   bold?: boolean;
+  /**
+   * This line only makes sense under the one above it: the `->` notes of an attempt row.
+   *
+   * `trimToRows` cuts the detail from the middle, and without this the tail could begin with two notes
+   * whose attempt row had just been cut away - two sentences hanging under a heading that is not there.
+   */
+  continuation?: boolean;
 }
 
 /** Attempts and interactions shown here; the rest are one `cao task` away. */
@@ -83,7 +90,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
     });
   }
   if (files.length > 0) {
-    out.push({ text: `Files:        ±${files.length}  ${files.slice(0, 6).map(fileLabel).join(', ')}${files.length > 6 ? ` … +${files.length - 6} (C for all)` : ''}` });
+    out.push({ text: `Files:        ${glyph('plusMinus')}${files.length}  ${files.slice(0, 6).map(fileLabel).join(', ')}${files.length > 6 ? ` ${glyph('ellipsis')} +${files.length - 6} (C for all)` : ''}` });
   }
 
   const history = attemptRows(state, now);
@@ -92,11 +99,11 @@ export function detailLines(input: DetailInput): DetailLine[] {
     out.push({ text: ' ' });
     out.push({ text: 'Attempts', bold: true });
     if (history.length > shownHistory.length) {
-      out.push({ text: `  … ${history.length - shownHistory.length} earlier attempt${history.length - shownHistory.length === 1 ? '' : 's'} (cao task ${task.id})`, dim: true });
+      out.push({ text: `  ${glyph('ellipsis')} ${history.length - shownHistory.length} earlier attempt${history.length - shownHistory.length === 1 ? '' : 's'} (cao task ${task.id})`, dim: true });
     }
     for (const row of shownHistory) {
       out.push({ text: `  ${row.line}` });
-      for (const note of row.notes) out.push({ text: `      ↳ ${note}`, dim: true });
+      for (const note of row.notes) out.push({ text: `      ${glyph('subArrow')} ${note}`, dim: true, continuation: true });
     }
   }
 
@@ -106,7 +113,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
     out.push({ text: ' ' });
     out.push({ text: 'Interactions', bold: true });
     if (interactions.length > shownInteractions.length) {
-      out.push({ text: `  … ${interactions.length - shownInteractions.length} earlier (cao task ${task.id})`, dim: true });
+      out.push({ text: `  ${glyph('ellipsis')} ${interactions.length - shownInteractions.length} earlier (cao task ${task.id})`, dim: true });
     }
     for (const row of shownInteractions) out.push({ text: `  ${row.line}` });
     out.push({ text: `  waited ${formatDuration(totalWaitedMs(interactions))} in total across ${interactions.length} request${interactions.length === 1 ? '' : 's'}`, dim: true });

@@ -383,7 +383,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     const id = controlEnvelope('tui').id;
     const label = `${action.kind}${action.taskId ? ` ${action.taskId}` : ''}`;
     recordControl(id, label);
-    setNotice(`${label} sent to pid ${surface.ownerPid ?? '?'}…`);
+    setNotice(`${label} sent to pid ${surface.ownerPid ?? '?'}${glyph('ellipsis')}`);
     void surface
       .send({ kind: action.kind, taskId: action.taskId })
       .then((outcome) => settleControl(id, label, outcome.status, outcome.reason))
@@ -409,7 +409,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       .submit({ kind: 'restart', taskId: task.id }, envelope)
       .then((ack) => {
         store.getState().settleControl(envelope.id, ack.status, ack.reason);
-        setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${task.id}" cannot be restarted.`) : `Restarting ${task.id}…`);
+        setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${task.id}" cannot be restarted.`) : `Restarting ${task.id}${glyph('ellipsis')}`);
       })
       .catch((err: unknown) => {
         store.getState().settleControl(envelope.id, 'rejected', (err as Error).message);
@@ -510,7 +510,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     }
     // Stop, then leave: the session is already waiting on the scheduler, so the quit it records here is
     // acted on the moment the run comes to a halt, with that run's exit code.
-    setNotice('Stopping the run, then leaving…');
+    setNotice(`Stopping the run, then leaving${glyph('ellipsis')}`);
     onInterrupt();
     props.onQuit?.();
   };
@@ -917,6 +917,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             loadDiff={loadDiff}
             isActive={focus === 'main' && !overlayOpen}
             onExit={() => focusPanel('tasks')}
+            onQuit={requestQuit}
           />
         );
       case 'report':
@@ -987,7 +988,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         </Box>
       </Box>
       <Footer
-        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })}
+        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : `Esc close   ${glyph('up')}${glyph('down')} move   Enter choose`) : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })}
         always={overlayOpen ? undefined : alwaysHintCells(mode)}
         columns={columns}
         theme={theme}

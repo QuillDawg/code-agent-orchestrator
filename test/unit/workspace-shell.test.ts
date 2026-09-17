@@ -13,9 +13,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { tmpDir } from '../helpers/index.js';
 import { windowOf, scrollbarColumn } from '../../src/tui/window.js';
 import { workspaceLayout, footerColumnsFor } from '../../src/tui/workspace/layout.js';
-import { alwaysHints, footerHints, panelHelp, globalKeys, VIEWER_KEYS, type KeyMode } from '../../src/tui/workspace/keys.js';
+import { alwaysHints, footerHints, panelHelp, globalKeys, viewerKeys, type KeyMode } from '../../src/tui/workspace/keys.js';
 import { filterPalette, helpSections, PLACEHOLDER_TEXT, reportLines, wrapLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
 import { attentionBadge, fitCells, headerRowsFor } from '../../src/tui/workspace/chrome.js';
+import { trimToRows } from '../../src/tui/workspace/overview.js';
 import { resolveTheme, reducedMotion, isThemeName, THEME_NAMES } from '../../src/tui/theme.js';
 import { altScreenEnabled, readUserConfig, BASE_RENDER_OPTIONS, workspaceRenderOptions } from '../../src/tui/render-options.js';
 import { WORKSPACE_TABS } from '../../src/tui/store.js';
@@ -291,7 +292,7 @@ describe('the keys the footer and ? agree on', () => {
   });
 
   it('still lists the transcript viewer and the global chords, so no old key is lost', () => {
-    const keys = [...globalKeys(), ...VIEWER_KEYS].map((k) => `${k.keys} ${k.what}`).join('\n');
+    const keys = [...globalKeys(), ...viewerKeys()].map((k) => `${k.keys} ${k.what}`).join('\n');
     for (const old of ['Ctrl+C', 'Q', '?', 'P task picker', '[ ]', 'g oldest line', 'k']) expect(keys).toContain(old);
   });
 });
@@ -311,6 +312,43 @@ describe('the panels a later stage fills', () => {
       for (const line of lines) expect([...line].length, `${columns}: ${line}`).toBeLessThanOrEqual(Math.max(20, columns));
       // Nothing is lost in the wrapping: the sentence naming today's answer survives whole.
       expect(lines.join(' ')).toContain('cao task <id> shows everything recorded about it.');
+    }
+  });
+
+  it('cuts a trimmed detail block above a note, not below the row it belongs to', () => {
+    // The detail is cut from the middle, and the tail used to be able to start with the `->` notes of an
+    // attempt row that had just been cut away: two sentences hanging under nothing.
+    const lines = [
+      { text: 'task-id' },
+      { text: 'Status:       failed' },
+      { text: 'Attempts' },
+      { text: '  #1  task  initial' },
+      { text: '      -> retried after attempt 1 failed', continuation: true },
+      { text: '      -> the build failed', continuation: true },
+    ];
+    // head 2, marker, tail 1 — and that one line used to be the second note of a row no longer on screen.
+    const trimmed = trimToRows(lines, 4, '  ... more');
+    expect(trimmed.map((l) => l.text)).not.toContain('      -> the build failed');
+    expect(trimmed.map((l) => l.text)).toEqual(['task-id', 'Status:       failed', '  ... more']);
+    // Nothing is dropped when it all fits.
+    expect(trimToRows(lines, 20, '  ... more')).toHaveLength(lines.length);
+    // ...and an ordinary tail is kept.
+    expect(trimToRows([...lines, { text: 'Latest activity' }, { text: '  npm test' }], 4, '  ... more').map((l) => l.text)).toContain('  npm test');
+  });
+
+  it('renders the markdown of a report in ASCII when the terminal cannot draw the glyphs', () => {
+    const previous = { ascii: process.env.CAO_ASCII, unicode: process.env.CAO_UNICODE };
+    process.env.CAO_ASCII = '1';
+    delete process.env.CAO_UNICODE;
+    try {
+      const lines = reportLines('# Report\n\n- one\n- two\n\n> a quote\n\n---\n', 60, false).join('\n');
+      for (const unicode of ['•', '▏', '─']) expect(lines, `${unicode} is still drawn`).not.toContain(unicode);
+      expect(lines).toContain('- one');
+    } finally {
+      if (previous.ascii === undefined) delete process.env.CAO_ASCII;
+      else process.env.CAO_ASCII = previous.ascii;
+      if (previous.unicode === undefined) delete process.env.CAO_UNICODE;
+      else process.env.CAO_UNICODE = previous.unicode;
     }
   });
 

@@ -300,6 +300,42 @@ describe('navigation', () => {
     }
   });
 
+  it('means the same thing by Q in the Changes tab as in every other panel', async () => {
+    // The review view was a screen of its own, where `Q` meant "back to the dashboard". As a panel of the
+    // workspace that made `Q` the only key with two meanings on one screen: back to the task list here,
+    // leave the workspace everywhere else. `Esc` is the way back now and `Q` is the way out.
+    let quits = 0;
+    const tree = renderTree(
+      <DashboardApp
+        run={runWith(['a', 'b']) as never}
+        bus={{ onAny: () => () => undefined } as never}
+        controller={controllerStub as never}
+        shared={shared()}
+        finished={false}
+        onMinimise={() => undefined}
+        onInterrupt={() => undefined}
+        onQuit={() => (quits += 1)}
+      />,
+      size,
+    );
+    try {
+      await wait();
+      tree.write('c');
+      await wait(80);
+      expect(tree.lastText()).toContain('[Changes]');
+      expect(tree.lastText()).toContain('Esc back');
+      expect(tree.lastText()).not.toContain('Esc/Q back');
+      tree.write('q');
+      await wait(60);
+      // A run that is still going asks first [D5], which is the same thing `Q` does in the other panels.
+      expect(tree.lastText()).toContain('The run is still going');
+      expect(quits).toBe(0);
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
   it('names what a waiting task is waiting for, not "approval" for every one of them', async () => {
     const run = runWith(['a', 'ask-human']) as unknown as { tasks: Record<string, { state: string; message?: string }> };
     run.tasks['ask-human'] = { ...run.tasks['ask-human']!, state: 'needs_input', message: 'postgres or sqlite?' };
@@ -476,6 +512,18 @@ describe('modes', () => {
       expect(frame).toContain('o review');
       expect(frame).toMatch(new RegExp('[|/\\-] implement-parser'));
       fits(tree, size);
+
+      // And so does everything the key hints, the header and the detail spell out: the arrows a key is
+      // named after, the separators, the attempt notes and the file counter were literals at the call
+      // site, so `CAO_ASCII=1` left a legacy console with mojibake in exactly the panel that explains it.
+      tree.write('?');
+      await wait();
+      const help = tree.lastText();
+      for (const unicode of ['↑', '↓', '←', '→', '↳', '·', '±', '—', '’']) {
+        expect(frame + help, `${unicode} is still drawn`).not.toContain(unicode);
+      }
+      expect(help).toContain('^v');
+      expect(help).toContain('the panel with the keys');
     } finally {
       tree.unmount();
       if (previous.ascii === undefined) delete process.env.CAO_ASCII;

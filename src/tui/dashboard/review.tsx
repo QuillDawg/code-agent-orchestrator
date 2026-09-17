@@ -16,6 +16,7 @@ import { summarizeDiff } from '../../cli/render/diff.js';
 import { fileLabel, recordFiles, shortenLabel, type ReviewFile } from './files.js';
 import { buildPane, EMPTY_PANE } from './pane.js';
 import { openInEditor } from './editor.js';
+import { glyph } from '../../util/glyphs.js';
 
 const STATUS_STYLE: Record<DiffFileStatus, Style> = { A: 'green', M: 'yellow', D: 'red', R: 'cyan' };
 
@@ -50,6 +51,14 @@ export interface ReviewViewProps {
   /** Injected by tests; the default hands the file to `$VISUAL`/`$EDITOR`. */
   openFile?: (path: string) => string;
   onExit: () => void;
+  /**
+   * `Q` when this view is a panel of the workspace rather than a screen of its own (§3.2).
+   *
+   * Embedded, `Q` here used to mean "back to the task list" while `Q` in every other panel meant "leave
+   * the workspace", which is one key with two meanings on one screen. With this given, `Esc` is the way
+   * back and `Q` is the way out; without it the view keeps the standalone behaviour.
+   */
+  onQuit?: () => void;
   isActive?: boolean;
 }
 
@@ -231,6 +240,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
       if (key.ctrl || key.meta) return;
       const lower = input.toLowerCase();
       if (lower === 'o') return openSelected();
+      if (lower === 'q' && props.onQuit) return props.onQuit();
       if (mode === 'pane') {
         if (key.escape || lower === 'q' || key.backspace) setMode('list');
         else if (key.leftArrow) moveFile(-1);
@@ -300,7 +310,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
           </Text>
         )}
         <Text dimColor wrap="truncate-end">
-          {footerLine(['↑↓ PgUp/PgDn scroll', 'g/G top/bottom', hunks.length > 1 ? 'n/p hunk' : '', files.length > 1 ? '←→ file' : '', 'o editor', 'Esc list'], width)}
+          {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn scroll`, 'g/G top/bottom', hunks.length > 1 ? 'n/p hunk' : '', files.length > 1 ? `${glyph('left')}${glyph('right')} file` : '', 'O editor', 'Esc list'], width)}
         </Text>
       </Box>
     );
@@ -346,7 +356,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
         </Text>
       )}
       <Text dimColor wrap="truncate-end">
-        {footerLine(['↑↓ PgUp/PgDn select', 'g/G first/last', 'Enter hunks', 'o editor', 'Esc/Q back'], width)}
+        {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn select`, 'g/G first/last', 'Enter hunks', 'O editor', props.onQuit ? 'Esc back' : 'Esc/Q back'], width)}
       </Text>
     </Box>
   );

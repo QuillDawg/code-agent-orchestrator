@@ -385,7 +385,7 @@ describe('quitting while the run is still going [D5]', () => {
         tree.write('q');
         await wait();
         const frame = tree.lastText();
-        for (const answer of ['go back to the workspace; nothing changes', 'stop the workers, then leave with the run’s exit code', 'the run carries on printing lines; D or Enter reopens this']) {
+        for (const answer of ['go back to the workspace; nothing changes', "stop the workers, then leave with the run's exit code", 'the run carries on printing lines; D or Enter reopens this']) {
           expect(frame, `${columns}x${rows} cut "${answer}"`).toContain(answer);
         }
         fits(tree, size);

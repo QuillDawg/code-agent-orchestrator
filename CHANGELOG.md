@@ -349,6 +349,19 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **`CAO_ASCII=1` reaches the whole workspace.** The state marks, the spinner and the bars already had ASCII
+  forms, but the arrows a key is named after (`↑↓`, `←→`), the header's `·`, the `↳` under an attempt, the
+  `±` file counter, the em dashes and the bullets and rules of the rendered report were spelled out in
+  Unicode wherever they were written — so a legacy console showed mojibake in exactly the panel that explains
+  the keys. They all come out of the glyph table now (`^v`, `<>`, `.`, `->`, `+/-`, `--`, `-`), and the key
+  tables are built per frame rather than at import, so the switch applies to them at all.
+- **`Q` in the Changes tab means what it means everywhere else.** The review view was once a screen of its
+  own, where `Q` went back to the dashboard; as a panel of the workspace that made `Q` the only key with two
+  meanings on one screen. `Esc` is the way back there now and `Q` is the way out. Its key line also says
+  `O editor` rather than `o editor`, which is the key `?` has always named.
+- **A detail cut short no longer starts mid-attempt.** The selected task's detail is cut from the middle when
+  the terminal is short, and the tail could begin with the `↳` notes of an attempt row that had just been cut
+  away — two sentences hanging under nothing.
 - **An ended run offers the actions for the task it leads with.** The Overview led with the failed task and
   then listed the actions for whatever the cursor happened to be on, so a run that failed on its third task
   said "migrate-runner failed" and offered "R Re-run scaffold-config" underneath it. When a run ends the

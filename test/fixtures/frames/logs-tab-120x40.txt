@@ -3,7 +3,7 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
  Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
 Tasks #/#                            Logs
 ▶ ✓ implement-par… claude|opus-#  █  The Logs panel arrives in stage #.
-  ✗ implement-ren… codex|gpt-#-… !█  It will hold this run’s own log: the orchestrator’s events, the runner’s stderr and
+  ✗ implement-ren… codex|gpt-#-… !█  It will hold this run's own log: the orchestrator's events, the runner's stderr and
   ○ review-and-me… claude         █  the doctor probes.
                                      Until then: F opens the transcript viewer that cao logs --follow shares, and cao
                                      logs <task> prints it.

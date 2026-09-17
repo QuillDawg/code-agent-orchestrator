@@ -9,6 +9,7 @@
  * them, because `?` in the workspace has to answer "what can I press" for the whole of it - including the
  * views it opens - and those keys have not changed.
  */
+import { glyph } from '../../util/glyphs.js';
 import { TAB_LABEL, type FocusRegion, type WorkspaceTab } from '../store.js';
 import type { EndedAction } from './ended.js';
 
@@ -41,7 +42,7 @@ const LEAVING_KEYS: Record<KeyMode, [KeyHelp, KeyHelp]> = {
     { keys: 'Ctrl+C', what: 'stop the run and stay here; again within 20s forces it' },
   ],
   ended: [
-    { keys: 'Q', what: 'quit and return the run’s exit code', short: 'quit' },
+    { keys: 'Q', what: "quit and return the run's exit code", short: 'quit' },
     { keys: 'Ctrl+C', what: 'nothing left to stop: the run has already ended' },
   ],
   observing: [
@@ -60,6 +61,15 @@ export function globalKeys(mode: KeyMode = 'executing'): KeyHelp[] {
   ];
 }
 
+/**
+ * The arrow key names, in whichever alphabet this terminal can draw (§3.2).
+ *
+ * Built per call rather than held in a module constant: `CAO_ASCII` is read when a glyph is asked for, and
+ * a table built at import time would have answered for whatever the environment said then.
+ */
+const UD = (): string => `${glyph('up')}${glyph('down')}`;
+const LR = (): string => `${glyph('left')}${glyph('right')}`;
+
 /** What a quit request offers while execution is still running [D5]. */
 export type QuitAnswerKind = 'stay' | 'stopAndQuit' | 'plain';
 
@@ -72,15 +82,17 @@ export interface QuitAnswer {
 
 export const QUIT_ANSWERS: QuitAnswer[] = [
   { key: 'S', kind: 'stay', label: 'Stay', what: 'go back to the workspace; nothing changes' },
-  { key: 'Q', kind: 'stopAndQuit', label: 'Stop and quit', what: 'stop the workers, then leave with the run’s exit code' },
+  { key: 'Q', kind: 'stopAndQuit', label: 'Stop and quit', what: "stop the workers, then leave with the run's exit code" },
   { key: 'P', kind: 'plain', label: 'Continue in plain output', what: 'the run carries on printing lines; D or Enter reopens this' },
 ];
 
 /** The keys of the quit prompt, for `?`. */
-export const QUIT_KEYS: KeyHelp[] = [
-  ...QUIT_ANSWERS.map((answer) => ({ keys: answer.key, what: `${answer.label} — ${answer.what}` })),
-  { keys: '↑↓ / Enter', what: 'choose an answer    Esc stays' },
-];
+export function quitKeys(): KeyHelp[] {
+  return [
+    ...QUIT_ANSWERS.map((answer) => ({ keys: answer.key, what: `${answer.label} ${glyph('dash')} ${answer.what}` })),
+    { keys: `${UD()} / Enter`, what: 'choose an answer    Esc stays' },
+  ];
+}
 
 /**
  * The ended-state actions as help rows (§2.4); empty while a run is still executing.
@@ -93,63 +105,68 @@ export function endedKeys(actions: EndedAction[]): KeyHelp[] {
 }
 
 /** The transcript viewer, reached with `F` and shared with `cao logs --follow`. */
-export const VIEWER_KEYS: KeyHelp[] = [
-  { keys: '←→ / Tab / 1-9', what: 'switch task    P task picker    [ ] earlier/later attempt' },
-  { keys: '↑↓ PgUp/PgDn', what: 'scroll    g oldest line    G newest line and follow again' },
-  { keys: 't / T / k', what: 'tool output, thinking, kind filter' },
-  { keys: '/ n N', what: 'search and step through matches' },
-  { keys: 'Esc / Q', what: 'back to the workspace' },
-];
+export function viewerKeys(): KeyHelp[] {
+  return [
+    { keys: `${LR()} / Tab / 1-9`, what: 'switch task    P task picker    [ ] earlier/later attempt' },
+    { keys: `${UD()} PgUp/PgDn`, what: 'scroll    g oldest line    G newest line and follow again' },
+    { keys: 't / T / k', what: 'tool output, thinking, kind filter' },
+    { keys: '/ n N', what: 'search and step through matches' },
+    { keys: 'Esc / Q', what: 'back to the workspace' },
+  ];
+}
 
 /** The prompt that opens by itself when a worker needs a human. */
-export const PROMPT_KEYS: KeyHelp[] = [
-  { keys: 'Y / A / N / R', what: 'allow, allow for the rest of the task, deny, deny with a reason' },
-  { keys: '1-9 / ↑↓ Enter', what: 'choose an answer    T type one    N decline' },
-];
+export function promptKeys(): KeyHelp[] {
+  return [
+    { keys: 'Y / A / N / R', what: 'allow, allow for the rest of the task, deny, deny with a reason' },
+    { keys: `1-9 / ${UD()} Enter`, what: 'choose an answer    T type one    N decline' },
+  ];
+}
 
-const TASK_LIST_KEYS: KeyHelp[] = [
-  { keys: '↑↓', what: 'move through the tasks', short: 'select' },
+const taskListKeys = (): KeyHelp[] => [
+  { keys: UD(), what: 'move through the tasks', short: 'select' },
   { keys: 'Enter', what: 'open the selected task in the panel', short: 'open' },
   { keys: 'F / L', what: "follow the task's live transcript", short: 'follow' },
   { keys: 'R', what: 'restart a failed, blocked, cancelled or skipped task', short: 'restart' },
   { keys: '/', what: 'search the task list', short: 'search' },
 ];
 
-const TAB_BAR_KEYS: KeyHelp[] = [
-  { keys: '←→', what: 'choose a tab; Home/End jump to the ends', short: 'tab' },
+const tabBarKeys = (): KeyHelp[] => [
+  { keys: LR(), what: 'choose a tab; Home/End jump to the ends', short: 'tab' },
   { keys: 'Enter', what: 'open the tab and focus its panel', short: 'open' },
 ];
 
-const OVERVIEW_KEYS: KeyHelp[] = [
-  { keys: '↑↓', what: 'move through the task table; PgUp/PgDn and Home/End too', short: 'select' },
+const overviewKeys = (): KeyHelp[] => [
+  { keys: UD(), what: 'move through the task table; PgUp/PgDn and Home/End too', short: 'select' },
   { keys: 'F / L', what: "follow the selected task's transcript", short: 'follow' },
   { keys: 'R', what: 'restart the selected task', short: 'restart' },
   { keys: 'U', what: 'usage per task: tokens, context, cost, time in tools', short: 'usage' },
   { keys: 'C', what: 'the Changes tab: what each task changed', short: 'changes' },
 ];
 
-const CHANGES_KEYS: KeyHelp[] = [
-  { keys: '↑↓ PgUp/PgDn', what: 'select a file    g/G first/last', short: 'select' },
-  { keys: 'Enter', what: 'open the hunks    N/P hunk    ←→ file', short: 'hunks' },
+const changesKeys = (): KeyHelp[] => [
+  { keys: `${UD()} PgUp/PgDn`, what: 'select a file    g/G first/last', short: 'select' },
+  { keys: 'Enter', what: `open the hunks    N/P hunk    ${LR()} file`, short: 'hunks' },
   { keys: 'O', what: 'open the file in $VISUAL / $EDITOR', short: 'editor' },
   { keys: 'Esc', what: 'back to the file list', short: 'back' },
 ];
 
-const REPORT_KEYS: KeyHelp[] = [
-  { keys: '↑↓', what: 'scroll the report; PgUp/PgDn and Home/End too', short: 'scroll' },
+const reportKeys = (): KeyHelp[] => [
+  { keys: UD(), what: 'scroll the report; PgUp/PgDn and Home/End too', short: 'scroll' },
   { keys: '/', what: 'search the report', short: 'search' },
 ];
 
-const PLACEHOLDER_KEYS: KeyHelp[] = [{ keys: '←→', what: 'another tab; this one is not filled in yet', short: 'tab' }];
+const placeholderKeys = (): KeyHelp[] => [{ keys: LR(), what: 'another tab; this one is not filled in yet', short: 'tab' }];
 
-const MAIN_KEYS: Record<WorkspaceTab, KeyHelp[]> = {
-  overview: OVERVIEW_KEYS,
-  session: PLACEHOLDER_KEYS,
-  logs: PLACEHOLDER_KEYS,
-  changes: CHANGES_KEYS,
-  report: REPORT_KEYS,
-  diagnostics: PLACEHOLDER_KEYS,
-};
+const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
+  ({
+    overview: overviewKeys,
+    session: placeholderKeys,
+    logs: placeholderKeys,
+    changes: changesKeys,
+    report: reportKeys,
+    diagnostics: placeholderKeys,
+  })[tab]();
 
 /**
  * The keys of the panel that has focus, and what to call it.
@@ -161,9 +178,9 @@ const MAIN_KEYS: Record<WorkspaceTab, KeyHelp[]> = {
  */
 export function panelHelp(focus: FocusRegion, tab: WorkspaceTab, taken: ReadonlySet<string> = new Set()): PanelHelp {
   const keep = (keys: KeyHelp[]): KeyHelp[] => (taken.size === 0 ? keys : keys.filter((help) => !(help.keys.length === 1 && taken.has(help.keys.toUpperCase()))));
-  if (focus === 'tabs') return { title: 'Tabs', keys: keep(TAB_BAR_KEYS) };
-  if (focus === 'main') return { title: TAB_LABEL[tab], keys: keep(MAIN_KEYS[tab]) };
-  return { title: 'Tasks', keys: keep(TASK_LIST_KEYS) };
+  if (focus === 'tabs') return { title: 'Tabs', keys: keep(tabBarKeys()) };
+  if (focus === 'main') return { title: TAB_LABEL[tab], keys: keep(mainKeys(tab)) };
+  return { title: 'Tasks', keys: keep(taskListKeys()) };
 }
 
 /**

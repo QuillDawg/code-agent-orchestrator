@@ -13,7 +13,7 @@ import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock } from '../../util/duration.js';
 import { renderMarkdown } from '../markdown.js';
-import { endedKeys, globalKeys, PROMPT_KEYS, QUIT_ANSWERS, VIEWER_KEYS, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
+import { endedKeys, globalKeys, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
 import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
@@ -31,7 +31,7 @@ export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
   ],
   logs: [
     'The Logs panel arrives in stage 3.',
-    'It will hold this run’s own log: the orchestrator’s events, the runner’s stderr and the doctor probes.',
+    "It will hold this run's own log: the orchestrator's events, the runner's stderr and the doctor probes.",
     '',
     'Until then: F opens the transcript viewer that cao logs --follow shares, and cao logs <task> prints it.',
   ],
@@ -45,7 +45,7 @@ export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
 
 /** What each control outcome is called on screen, and how it is painted (§2.3). */
 const CONTROL_STATUS: Record<ControlRecord['status'], { label: string; token: ThemeToken }> = {
-  sent: { label: 'sent…', token: 'muted' },
+  sent: { label: `sent${glyph('ellipsis')}`, token: 'muted' },
   accepted: { label: 'accepted', token: 'info' },
   applied: { label: 'applied', token: 'success' },
   rejected: { label: 'rejected', token: 'danger' },
@@ -156,7 +156,7 @@ export function reportLines(markdown: string, columns: number, color: boolean, s
 }
 
 export function ReportPanel({ markdown, rows, columns, theme, cursor, search, focused }: ReportPanelProps): React.JSX.Element {
-  if (markdown === null) return <Text dimColor>{'Reading report.md…'}</Text>;
+  if (markdown === null) return <Text dimColor>{`Reading report.md${glyph('ellipsis')}`}</Text>;
   if (markdown === undefined) {
     return (
       <Box flexDirection="column">
@@ -238,7 +238,7 @@ export function Palette({ entries, query, cursor, rows, columns, theme }: Palett
         );
       })}
       {entries.length === 0 && <Text dimColor>no match</Text>}
-      <Text wrap="truncate-end">{theme.paint('↑↓ choose   Enter run   Esc close', 'muted')}</Text>
+      <Text wrap="truncate-end">{theme.paint(`${glyph('up')}${glyph('down')} choose   Enter run   Esc close`, 'muted')}</Text>
     </Box>
   );
 }
@@ -272,10 +272,10 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
   return [
     ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
-    { title: `${panel.title} — the panel with the keys`, keys: panel.keys },
+    { title: `${panel.title} ${glyph('dash')} the panel with the keys`, keys: panel.keys },
     { title: 'Anywhere', keys: globalKeys(mode) },
-    { title: 'Transcript viewer (F)', keys: VIEWER_KEYS },
-    { title: 'When a worker needs you', keys: PROMPT_KEYS },
+    { title: 'Transcript viewer (F)', keys: viewerKeys() },
+    { title: 'When a worker needs you', keys: promptKeys() },
   ];
 }
 
@@ -304,7 +304,7 @@ export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended, obs
           {truncateVisible(line.text, columns)}
         </Text>
       ))}
-      <Text wrap="truncate-end">{theme.paint(`${slice.belowMarker ? `${slice.belowMarker}   ` : ''}↑↓ scroll   Esc close`, 'muted')}</Text>
+      <Text wrap="truncate-end">{theme.paint(`${slice.belowMarker ? `${slice.belowMarker}   ` : ''}${glyph('up')}${glyph('down')} scroll   Esc close`, 'muted')}</Text>
     </Box>
   );
 }

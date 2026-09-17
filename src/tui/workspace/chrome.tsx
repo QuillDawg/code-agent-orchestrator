@@ -91,7 +91,7 @@ export function Header({ run, theme, columns, now, role, badge, attention }: Hea
       <Text wrap="truncate-end">
         <Text bold>{run.workflowName}</Text>
         <Text dimColor>
-          {'  '}run {run.runId} {'·'} {run.repositoryRoot}
+          {'  '}run {run.runId} {glyph('bullet')} {run.repositoryRoot}
         </Text>
       </Text>
       <Text wrap="truncate-end">

@@ -57,7 +57,11 @@ export function trimToRows(lines: DetailLine[], rows: number, marker: string): D
   if (rows === 1) return [{ text: marker, dim: true }];
   const head = Math.ceil((rows - 1) * 0.6);
   const tail = rows - 1 - head;
-  return [...lines.slice(0, head), { text: marker, dim: true }, ...(tail > 0 ? lines.slice(-tail) : [])];
+  // A tail that starts with a continuation starts with a note whose row was cut away with the middle, so
+  // it reads as a sentence hanging under nothing. Drop those and let the block be a line shorter.
+  let end = tail > 0 ? lines.slice(-tail) : [];
+  while (end.length > 0 && end[0]!.continuation) end = end.slice(1);
+  return [...lines.slice(0, head), { text: marker, dim: true }, ...end];
 }
 
 export function Overview(props: OverviewProps): React.JSX.Element {
@@ -96,7 +100,7 @@ export function Overview(props: OverviewProps): React.JSX.Element {
       // worker is doing right now is worth more than the last line of the interaction history.
       activityRows: Math.max(detailRows >= 8 ? 1 : 0, Math.min(10, detailRows - 14)),
     });
-    detail = trimToRows(lines, detailRows, `  … cao task ${selected.id} for the rest`);
+    detail = trimToRows(lines, detailRows, `  ${glyph('ellipsis')} cao task ${selected.id} for the rest`);
   }
 
   return (
@@ -140,7 +144,7 @@ export function Overview(props: OverviewProps): React.JSX.Element {
             {theme.paint(agentLabel(task.agent, usage?.model ?? task.model), 'agent')}
             {ctx ? `  ${ctx}` : ''}
             {cost ? `  ${cost}` : ''}
-            {files ? theme.paint(`  ±${files}`, 'muted') : ''}
+            {files ? theme.paint(`  ${glyph('plusMinus')}${files}`, 'muted') : ''}
             {activity ? `  ${glyph('vrule')} ${activity}` : ''}
           </Text>
         );

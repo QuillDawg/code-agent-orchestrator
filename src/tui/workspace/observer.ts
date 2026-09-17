@@ -12,6 +12,7 @@
  */
 import type { CapabilityToken, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { sanitizeText } from '../../cli/color.js';
+import { glyph } from '../../util/glyphs.js';
 import type { ObserverControlKind } from '../../workflow/control/observer.js';
 import type { KeyHelp } from './keys.js';
 
@@ -60,7 +61,7 @@ export function observerActionFor(actions: ObserverAction[], input: string): Obs
  * twice in one help panel is what let the "Anywhere" section go on claiming the owner's meanings for both.
  */
 export function observerKeys(actions: ObserverAction[]): KeyHelp[] {
-  return actions.map((action) => ({ keys: action.key, what: `${action.label} — sent to the owner as a request`, short: action.label }));
+  return actions.map((action) => ({ keys: action.key, what: `${action.label} ${glyph('dash')} sent to the owner as a request`, short: action.label }));
 }
 
 /** One task the owner is waiting on a human for, as this window may show it: read-only (§2.1). */

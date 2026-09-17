@@ -35,7 +35,12 @@ export type GlyphName =
   | 'cursor'
   | 'vrule'
   | 'barFull'
-  | 'barEmpty';
+  | 'barEmpty'
+  | 'up'
+  | 'down'
+  | 'left'
+  | 'right'
+  | 'plusMinus';
 
 const UNICODE: Record<GlyphName, string> = {
   rule: '─',
@@ -66,6 +71,11 @@ const UNICODE: Record<GlyphName, string> = {
   vrule: '│',
   barFull: '█',
   barEmpty: '░',
+  up: '↑',
+  down: '↓',
+  left: '←',
+  right: '→',
+  plusMinus: '±',
 };
 
 const ASCII: Record<GlyphName, string> = {
@@ -97,6 +107,11 @@ const ASCII: Record<GlyphName, string> = {
   vrule: '|',
   barFull: '#',
   barEmpty: '-',
+  up: '^',
+  down: 'v',
+  left: '<',
+  right: '>',
+  plusMinus: '+/-',
 };
 
 const OFF = new Set(['', '0', 'false', 'no', 'off']);

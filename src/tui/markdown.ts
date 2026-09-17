@@ -3,6 +3,7 @@
  * lists, quotes and links; enough to make agent prose readable without a dependency.
  */
 import { balanceStyles, paint, sanitizeText, visibleLength } from '../cli/color.js';
+import { glyph, useUnicode } from '../util/glyphs.js';
 
 export interface MarkdownOptions {
   color: boolean;
@@ -50,11 +51,11 @@ export function renderMarkdown(text: string, opts: MarkdownOptions): string[] {
     const line = raw.replace(/\t/g, '  ');
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
-      out.push(paint(inFence ? `┌ ${line.trim().slice(3).trim()}` : '└', 'dim', color));
+      out.push(paint(inFence ? `${glyph('treeFirst')} ${line.trim().slice(3).trim()}` : glyph('treeLast'), 'dim', color));
       continue;
     }
     if (inFence) {
-      out.push(`${paint('│ ', 'dim', color)}${paint(line, 'gray', color)}`);
+      out.push(`${paint(`${glyph('vrule')} `, 'dim', color)}${paint(line, 'gray', color)}`);
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
@@ -67,7 +68,7 @@ export function renderMarkdown(text: string, opts: MarkdownOptions): string[] {
     const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
     if (bullet) {
       const indent = bullet[1]!;
-      out.push(...wrapLine(`${indent}${paint('•', 'cyan', color)} ${inline(bullet[2]!, color)}`, width, `${indent}  `));
+      out.push(...wrapLine(`${indent}${paint(useUnicode() ? '•' : '-', 'cyan', color)} ${inline(bullet[2]!, color)}`, width, `${indent}  `));
       continue;
     }
     const numbered = /^(\s*)(\d+)[.)]\s+(.*)$/.exec(line);
@@ -79,11 +80,11 @@ export function renderMarkdown(text: string, opts: MarkdownOptions): string[] {
     }
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote) {
-      out.push(...wrapLine(`${paint('▏', 'dim', color)} ${paint(inline(quote[1]!, color), 'italic', color)}`, width, '  '));
+      out.push(...wrapLine(`${paint(useUnicode() ? '▏' : '|', 'dim', color)} ${paint(inline(quote[1]!, color), 'italic', color)}`, width, '  '));
       continue;
     }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      out.push(paint('─'.repeat(Math.max(3, Math.min(40, width || 40))), 'dim', color));
+      out.push(paint(glyph('rule').repeat(Math.max(3, Math.min(40, width || 40))), 'dim', color));
       continue;
     }
     out.push(...wrapLine(inline(line, color), width));

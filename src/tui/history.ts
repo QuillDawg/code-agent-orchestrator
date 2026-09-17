@@ -12,6 +12,7 @@ import {
   type InteractionRecord,
   type TaskResult,
 } from 'code-agent-orchestrator-protocol';
+import { glyph } from '../util/glyphs.js';
 import { formatClock, formatDuration, formatDurationShort } from '../util/duration.js';
 import { firstLine, truncate } from '../util/misc.js';
 import { sanitizeText } from '../util/text.js';
@@ -156,7 +157,7 @@ export function attemptRows(state: TaskRunState, now = Date.now()): AttemptRow[]
     // A run directory written by another build can name a trigger or an outcome this one has no label for.
     // `attemptReason` and the report both fall back to the raw value; putting `undefined` in a cell here
     // would make the same records read differently in `cao task` than in `report.md`.
-    const parts = [`#${a.number}`, a.kind === 'merge' ? 'merge resolution' : 'task', TRIGGER_LABEL[a.triggeredBy] ?? a.triggeredBy, `${formatClock(a.startedAt)}${a.endedAt ? ` → ${formatClock(a.endedAt)}` : ''}`];
+    const parts = [`#${a.number}`, a.kind === 'merge' ? 'merge resolution' : 'task', TRIGGER_LABEL[a.triggeredBy] ?? a.triggeredBy, `${formatClock(a.startedAt)}${a.endedAt ? ` ${glyph('arrow')} ${formatClock(a.endedAt)}` : ''}`];
     if (durationMs !== undefined) parts.push(formatDuration(durationMs));
     parts.push(a.outcome ? (OUTCOME_LABEL[a.outcome] ?? a.outcome) : isLive(state, a) ? 'running' : 'no outcome');
     if (a.signal) parts.push(`signal ${a.signal}`);
