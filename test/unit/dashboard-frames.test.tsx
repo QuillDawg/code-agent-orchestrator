@@ -135,6 +135,11 @@ const wait = async (ms = 40): Promise<void> => {
   });
 };
 
+/** One captured frame, normalised the way the repository stores it. */
+async function golden(name: string): Promise<string> {
+  return (await fs.readFile(path.join(FIXTURE_DIR, `${name}.txt`), 'utf8')).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+}
+
 async function capture(name: string, size: { columns: number; rows: number }, marker: string, keys?: string): Promise<void> {
   const tree = renderTree(element, size);
   try {
@@ -198,4 +203,29 @@ describe('dashboard frames', () => {
       await capture(`detail-${size.name}`, size, 'Latest activity', '\r');
     });
   }
+
+  /**
+   * §2.5: the frame is sized to `useWindowSize()`, which is the hook that subscribes to the terminal's
+   * `resize`. Read through `useStdout()` instead, a new size only reaches the layout when something else
+   * happens to re-render - the spinner, once a second while nothing is in flight - and until then the
+   * dashboard is a 40-row frame inside a 24-row terminal, which is what scrolls the screen away.
+   */
+  it('re-lays out on the resize itself, not on the next spinner tick', async () => {
+    const tree = renderTree(element, { columns: 120, rows: 40 });
+    try {
+      await wait();
+      await tree.waitFor((frame) => frame.includes('R restart'));
+      expect(normalise(tree.lastText())).toBe(await golden('dashboard-120x40'));
+
+      // The harness emits `resize` and yields one macrotask - far less than the 1000 ms spinner interval
+      // of a run with nothing in flight, so whatever lands here landed because of the resize.
+      await React.act(async () => {
+        await tree.resize(80, 24);
+      });
+      expect(frameHeight(tree.lastFrame()), 'still laid out for the old terminal').toBeLessThanOrEqual(24);
+      expect(normalise(tree.lastText()), 'still laid out for the old terminal').toBe(await golden('dashboard-80x24'));
+    } finally {
+      tree.unmount();
+    }
+  });
 });

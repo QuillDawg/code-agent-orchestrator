@@ -8,7 +8,6 @@ import React from 'react';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { render } from 'ink-testing-library';
 import { prepareWorkflow, createRuntime, requireValid } from '../../src/cli/app.js';
 import { createRun } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
@@ -16,6 +15,7 @@ import { silentLogger } from '../../src/logging/logger.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
 import { stripAnsi } from '../../src/cli/color.js';
+import { renderTree } from '../helpers/ink-harness.js';
 import { tmpGitRepo, gitOut, waitFor, FAKE_CLAUDE } from '../helpers/index.js';
 
 const ENTER = String.fromCharCode(13);
@@ -56,15 +56,18 @@ describe('the review view over a real run', () => {
     });
     expect((await runtime.scheduler.execute()).state).toBe('completed');
 
-    const { lastFrame, stdin, unmount } = render(
+    // Through the harness, not `ink-testing-library`: the dashboard sizes itself to `useWindowSize()`, which
+    // needs a stdout that reports `rows`. 100x30 is the terminal these assertions were written against.
+    const tree = renderTree(
       <DashboardApp run={run} bus={runtime.bus} controller={runtime.controller} shared={shared()} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      { columns: 100, rows: 30 },
     );
     try {
       await wait();
-      stdin.write('c');
+      tree.write('c');
       // The view reads the captured diffs from the store before it can draw a row, so it is waited for
       // rather than slept at: a fixed pause is a race whenever the machine is busy.
-      const frameNow = (): string => stripAnsi(lastFrame() ?? '');
+      const frameNow = (): string => stripAnsi(tree.lastFrame());
       await waitFor(() => hasRow(frameNow(), 'edge-task', 'attempt 1', '4 files changed'), 10_000);
       await wait();
       let frame = frameNow();
@@ -79,14 +82,14 @@ describe('the review view over a real run', () => {
       expect(hasRow(frame, 'quiet-task', 'changed no files')).toBe(true);
 
       // The hunks of the first file, straight from the captured patch; the CRLF is not drawn as a control code.
-      stdin.write(ENTER);
+      tree.write(ENTER);
       await wait();
       frame = frameNow();
       expect(frame).toContain('blob.bin');
       expect(frame).toContain('binary contents omitted');
 
       // → walks to the next file without leaving the pane; crlf.txt is next in path order.
-      stdin.write(`${ESCAPE}[C`);
+      tree.write(`${ESCAPE}[C`);
       await wait();
       frame = frameNow();
       expect(frame).toContain('crlf.txt');
@@ -95,7 +98,7 @@ describe('the review view over a real run', () => {
       expect(frame).toContain('+two');
       expect(frame).not.toContain(String.fromCharCode(13));
     } finally {
-      unmount();
+      tree.unmount();
     }
   }, 60_000);
 });

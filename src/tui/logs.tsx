@@ -3,7 +3,7 @@
  * (running or finished) can be opened and switched from another terminal.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { render, useApp, useStdout } from 'ink';
+import { render, useApp, useWindowSize } from 'ink';
 import path from 'node:path';
 import type { FileRunStore } from '../persistence/run-store.js';
 import { type WorkflowRun, type TranscriptEntry, parseTranscriptLine } from 'code-agent-orchestrator-protocol';
@@ -43,7 +43,9 @@ function viewerTasks(run: WorkflowRun, live: Awaited<ReturnType<FileRunStore['re
 
 function LogsApp(opts: LogsViewerOptions): React.JSX.Element {
   const { exit } = useApp();
-  const { stdout } = useStdout();
+  // Sized to `useWindowSize()` so a resized terminal re-lays the viewer out at once (§2.5); `useStdout()`
+  // does not subscribe to `resize`, and nothing else here re-renders on a quiet follow.
+  const { rows, columns } = useWindowSize();
   const [run, setRun] = useState(opts.run);
   const [tasks, setTasks] = useState<ViewerTask[]>(() => viewerTasks(opts.run, null));
   const [taskId, setTaskId] = useState(opts.taskId);
@@ -108,8 +110,8 @@ function LogsApp(opts: LogsViewerOptions): React.JSX.Element {
       taskId={taskId}
       attempt={attempt}
       entries={entries}
-      width={stdout?.columns ?? 100}
-      height={stdout?.rows ?? 30}
+      width={columns}
+      height={rows}
       color={opts.color}
       thinking={opts.thinking}
       loadOlder={(oldest) => {

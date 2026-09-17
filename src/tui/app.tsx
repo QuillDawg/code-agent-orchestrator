@@ -4,7 +4,7 @@
  * be reopened; anything that needs a human (approval gate, permission prompt, question) reopens it.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { render, Box, Text, useInput, useApp, useStdout, type Instance } from 'ink';
+import { render, Box, Text, useInput, useApp, useWindowSize, type Instance } from 'ink';
 import {
   type WorkflowRun,
   type TaskRunState,
@@ -156,7 +156,11 @@ export interface AppProps extends DashboardOptions {
 export function DashboardApp(props: AppProps): React.JSX.Element {
   const { run, bus, controller, onMinimise, onInterrupt } = props;
   const { exit } = useApp();
-  const { stdout } = useStdout();
+  // `useWindowSize()`, not `useStdout()`: it subscribes to the terminal's `resize` and re-renders on it.
+  // Reading `stdout.columns` during render only picks a new size up when something else happens to re-render,
+  // which is the spinner tick - so the layout, `narrow` and every row budget below stayed a second behind a
+  // resize (§2.5).
+  const { rows, columns } = useWindowSize();
   const [, setTick] = useState(0);
   const [view, setView] = useState<View>({ kind: 'dashboard' });
   const [cursor, setCursor] = useState(0);
@@ -169,8 +173,6 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const tasks = useMemo(() => run.workflow.tasks, [run]);
   // Stable, so the review view's own cache is not thrown away on every spinner frame.
   const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
-  const rows = stdout?.rows ?? 30;
-  const columns = stdout?.columns ?? 100;
   // The width the transcript viewer already calls narrow, so one terminal is compact everywhere or nowhere.
   const narrow = columns < 100;
   const color = true;

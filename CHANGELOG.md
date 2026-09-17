@@ -165,6 +165,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   the character behind the cursor** when typing a denial reason or a `/` search — Backspace does, as it
   always did. And Ink 7 wraps an over-long line at a different word boundary, so on a terminal narrower
   than about 100 columns the dashboard's summary line now breaks before `$0.00` rather than before `Cost`.
+- **The dashboard and `cao logs --follow` re-draw the moment the terminal is resized.** Both sized their
+  frames from `useStdout()`, which does not subscribe to the terminal's `resize`: a resized window kept the
+  old layout - the wrong width for every truncation, the wrong row budget for every list - until something
+  else happened to re-render, which is the spinner up to a second later in the dashboard and the once-a-
+  second refresh in `cao logs`. Both now size from Ink's `useWindowSize()`.
 - **An agent CLI that refuses what CAO sent it is now a configuration error, not a crash, and is never
   retried.** `error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'`,
   `error: unknown option '--x'`, an `invalid_json_schema` from the model API, a JSON-RPC `-32602`, and an
