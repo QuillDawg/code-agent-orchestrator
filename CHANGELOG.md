@@ -170,6 +170,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   old layout - the wrong width for every truncation, the wrong row budget for every list - until something
   else happened to re-render, which is the spinner up to a second later in the dashboard and the once-a-
   second refresh in `cao logs`. Both now size from Ink's `useWindowSize()`.
+- **The dashboard redraws only the lines that changed.** It is mounted with Ink 7's incremental rendering,
+  which is the option the upgrade was argued for: a ticking spinner no longer rewrites the whole frame.
+  Kitty keyboard detection is set to `auto` at the same time - a terminal is asked once whether it speaks
+  the protocol, and one that does not answer is left exactly as it was.
 - **An agent CLI that refuses what CAO sent it is now a configuration error, not a crash, and is never
   retried.** `error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'`,
   `error: unknown option '--x'`, an `invalid_json_schema` from the model API, a JSON-RPC `-32602`, and an

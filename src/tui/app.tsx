@@ -745,7 +745,18 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
 
   const renderTree = opts.mount ?? render;
   const mount = (): Instance => {
-    const created = renderTree(<DashboardApp {...opts} shared={shared} finished={finished} />, { exitOnCtrlC: false, patchConsole: false });
+    const created = renderTree(<DashboardApp {...opts} shared={shared} finished={finished} />, {
+      // The render options §2.5 specifies. `incrementalRendering` is why Ink 7 is here at all: only the
+      // lines that changed are rewritten, which is what stops the dashboard flickering and tearing while a
+      // spinner ticks. `kittyKeyboard: {mode: 'auto'}` asks the terminal once whether it speaks the kitty
+      // protocol and is what Shift+Enter needs where it does [D15]; terminals that do not answer are left
+      // exactly as they were. `alternateScreen` is not set yet: [D4] makes it a user's choice through
+      // `--no-alt-screen`, `CAO_ALT_SCREEN` and the user config, none of which exist before stage 1.
+      incrementalRendering: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+      kittyKeyboard: { mode: 'auto' },
+    });
     instance = created;
     return created;
   };

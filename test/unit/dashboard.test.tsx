@@ -556,10 +556,12 @@ describe('Modal', () => {
 describe('createDashboard controller', () => {
   function harness() {
     const mounted: DashboardShared[] = [];
+    const options: Array<Record<string, unknown>> = [];
     let unmounts = 0;
     let exit!: () => void;
-    const mount = ((element: React.ReactElement) => {
+    const mount = ((element: React.ReactElement, opts: Record<string, unknown>) => {
       mounted.push((element.props as AppProps).shared);
+      options.push(opts);
       const exited = new Promise<void>((resolve) => (exit = resolve));
       return {
         // The real tree exits shortly after a rerender with finished=true; the stub does it immediately.
@@ -574,8 +576,22 @@ describe('createDashboard controller', () => {
       };
     }) as unknown as DashboardOptions['mount'];
     const controller = createDashboard({ run: {} as never, bus: {} as never, controller: {} as never, onMinimise: () => undefined, onInterrupt: () => undefined, mount });
-    return { controller, shared: () => mounted[mounted.length - 1]!, mounts: () => mounted.length, unmounts: () => unmounts };
+    return { controller, shared: () => mounted[mounted.length - 1]!, options: () => options[options.length - 1]!, mounts: () => mounted.length, unmounts: () => unmounts };
   }
+
+  /**
+   * §2.5 names the options the dashboard is mounted with. `incrementalRendering` is the one the upgrade was
+   * argued for - only changed lines are rewritten, so a ticking spinner does not redraw the screen - and
+   * `kittyKeyboard: {mode: 'auto'}` is what Shift+Enter needs in the terminals that speak the protocol [D15].
+   * Both default to off in Ink 7, so leaving them out is indistinguishable from not having upgraded.
+   * `alternateScreen` is deliberately absent: [D4] puts it under `--no-alt-screen` and `CAO_ALT_SCREEN`,
+   * which stage 1 owns.
+   */
+  it('mounts Ink with the render options the spec names', () => {
+    const h = harness();
+    h.controller.open();
+    expect(h.options()).toEqual({ incrementalRendering: true, exitOnCtrlC: false, patchConsole: false, kittyKeyboard: { mode: 'auto' } });
+  });
 
   it('opens on the first request and queues the rest', async () => {
     const h = harness();
