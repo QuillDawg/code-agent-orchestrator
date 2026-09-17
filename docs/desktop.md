@@ -246,6 +246,7 @@ Nothing else about how a run behaves changes: with no surface running it is byte
 Emit:     on  (cao emit enable, in config.json)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
+Controls: requests, stop, kill, restart
 Surfaces: none present
 
 Runs are announced, but no surface is present to read them.
@@ -259,6 +260,7 @@ Emit disabled for this user. Runs already announced keep their entries until the
 Emit:     off  (cao emit enable, in config.json)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
+Controls: requests, stop, kill, restart
 Surfaces: none present
 
 Runs are not announced, so a desktop app on this machine cannot see them.
@@ -287,6 +289,7 @@ $ CAO_HOME='//server/share/.cao' cao emit status
 Emit:     off  (the default — announcing is opt-in)
 Home:     //server/share/.cao  REFUSED: it is a UNC path
 Runs:     0 live, 0 retained
+Controls: requests, stop, kill, restart
 Surfaces: none present
 
 ! Nothing is announced: //server/share/.cao cannot be used because it is a UNC path.
@@ -329,6 +332,7 @@ $ cao emit status
 Emit:     off  (the default — announcing is opt-in)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
+Controls: requests, stop, kill, restart
 Surfaces: none present
 
 Runs are not announced, so a desktop app on this machine cannot see them.
@@ -345,6 +349,9 @@ Runs are not announced, so a desktop app on this machine cannot see them.
 - **`Runs`** — how many announced runs are currently live on this machine versus merely retained,
   plus how many are stale (an orchestrator that likely died without saving) or belong to another
   machine, when either is nonzero.
+- **`Controls`** — what a run started by this `cao` wires up and will act on if asked over the
+  request inbox described below: the same list it writes into its registry entry's `capabilities`.
+  It does not depend on whether a run is currently live — it says what the *next* run would accept.
 - **`Surfaces`** — every presence file currently fresh on this machine: who it is, and how long ago
   it last heartbeated. Empty here, with emit on, is the "a run is announced but nothing is present to
   answer it" state described under Presence above — which, until presence gating ships, is also

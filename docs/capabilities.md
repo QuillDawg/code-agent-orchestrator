@@ -684,7 +684,7 @@ and says what it found, one line per check:
 
 ```
 $ cao doctor
-cao 0.1.0-beta.1
+cao 0.1.0-beta.3
 Repository: /home/me/projects/api
 Run state:  /home/me/projects/api/.orchestrator/runs
 

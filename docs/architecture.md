@@ -39,7 +39,7 @@ src/
   conditions/evaluator.ts     safe `when` expression grammar
   templates/engine.ts         safe {{path}} substitution
   workspace/                  git.ts (explicit git wrapper), workspace-manager.ts (shared + git worktree strategies, merge-back), diff.ts (tree snapshots through a throwaway index, diff.patch/diff.json capture)
-  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl)
+  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl), requests.ts (reads and writes the request inbox: requests/<ULID>-<kind>.json, requests/acks/<ULID>.json, requests/rejected/; the CLI-side sendControlRequest is declared here too, unused so far)
   events/event-bus.ts         typed synchronous event bus
   logging/                    logger.ts, redact.ts
   tui/                        app.tsx (Ink dashboard: table, detail, usage, help), viewer.tsx (follow view, shared with `cao logs --follow`),
@@ -136,6 +136,38 @@ commands sent in the same tick apply in the order they were sent, and the second
   reported as refused because the run has since ended.
 
 Worktree selection is static: a task uses the `parallel` workspace when it sits in a plan layer with more than one task and `maxConcurrency > 1`; two tasks alone in their layers can never overlap, so this is safe and visible in `--dry-run`.
+
+## Request inbox
+
+The cross-process transport that lets another `cao` process reach the run controller without a signal or a
+shared process, `persistence/requests.ts` plus the owner's existing 500 ms tick
+(`execution/signals.ts:watchStopRequests`, unchanged in name because it grew this rather than gaining a
+second timer).
+
+- A sender (a second `cao task stop|restart|edit|prompt`, eventually `cao-desktop`) writes
+  `requests/<ULID>-<kind>.json` into the run directory and reads its answer back from
+  `requests/acks/<ULID>.json`; `sendControlRequest` builds both halves for a future CLI caller, though
+  nothing invokes it yet.
+- Each tick, the owner reads every file in `requests/` in ULID order (`readPendingRequests`), turns each one
+  into a `ControlCommand` (`commandForRequest`, `workflow/control/commands.ts`) and submits it to the
+  `RunController` with `source: 'inbox'` and the request's own id as the envelope id — so an inbox command is
+  deduplicated, staleness-checked and applied inside the scheduler loop exactly like a `tui` or `cli` one.
+  `approve`, `reject` and `answer` are refused rather than translated: a permission decision must not be
+  grantable by anyone who can write a file into the repository.
+  The ack is written before the request file is deleted, so a crash between the two leaves a request that is
+  asked again rather than one nobody answered, and a request already acked is never re-read.
+- `stop.json` is drained on the same tick, after the inbox: it becomes a synthetic `stop` request (or `kill`
+  if a stop is already pending), so `cao stop` from another terminal is unchanged from the outside and a
+  second one is still the kill.
+- A file that cannot be parsed, names an unknown kind, or carries a newer `protocol` than this build knows is
+  moved to `requests/rejected/` with a `.reason.txt` rather than being guessed at; a sync-conflict copy
+  (`*-DESKTOP-*.json`, `*.sync-conflict-*`, …) is skipped the same way `registry.ts` skips one.
+- `clearPendingRequests(paths, runId, 'startup' | 'shutdown')` answers whatever is left in `requests/` with a
+  rejection at the two ends of a run's process lifetime — a request nobody got to apply must not silently
+  stop or kill the run that resumes afterwards, and a sender waiting on `--wait` must not be left hanging
+  past the process that could have answered it.
+- `wiredCapabilities()` reports `requests`, `stop`, `kill`, `restart` for a run built this way; `edit` and
+  `prompt` are parsed and refused, not wired, so they stay out of that list.
 
 ## Agent session isolation
 
