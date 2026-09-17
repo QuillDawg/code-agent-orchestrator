@@ -72,7 +72,7 @@ The file itself looks like this:
   "endedAt": null,
   "exitCode": null,
   "taskCount": 7,
-  "capabilities": [],
+  "capabilities": ["requests", "stop", "kill", "restart"],
   "feedUrl": null
 }
 ```
@@ -85,11 +85,42 @@ the directory it points at is always the truth.
 
 `capabilities` is the one field worth calling out because it is easy to misread. It is not a
 version number and not a fixed list for this release of `cao` — it is exactly what **this run**
-wired up when it started. In this release that list is always empty: nothing yet polls for requests,
-writes interaction payloads, or checks who is present, so a run has nothing to advertise beyond the
-fact that it exists. A reader is expected to enable each affordance (a Stop button, an Answer
-button, and so on) only when its token is present, and to ignore any token it does not recognize —
-so an older reader talking to a newer `cao` degrades by feature, not by refusing the whole file.
+wired up when it started. A run started by this release polls its request inbox and acts on `stop`,
+`kill` and `restart`, and says so; it does not yet write interaction payloads or check who is
+present, so `interactions`, `presence`, `answer` and `approve` are absent and a reader must not
+offer them. A reader is expected to enable each affordance (a Stop button, an Answer button, and so
+on) only when its token is present, and to ignore any token it does not recognize — so an older
+reader talking to a newer `cao` degrades by feature, not by refusing the whole file.
+
+## Asking a run to do something: `requests/`
+
+A surface that wants a run to stop, to be killed, or to restart a task writes a file into that
+run's own directory and reads the answer back out of it:
+
+```
+.orchestrator/runs/<run-id>/
+  requests/<ULID>-<kind>.json    # what is being asked
+  requests/acks/<ULID>.json      # the one answer to it
+  requests/rejected/<file>       # a request that could not be read, moved rather than deleted
+```
+
+A request is `{ "protocol": 1, "id": "<ULID>", "kind": "stop", "requestedAt": "...", "source":
+"cao-desktop 0.1.0", "pid": 4188 }`, plus whatever its kind needs — `taskId` for `restart`, and
+`expected: { attempt, revision }` when the sender wants the request refused if the task has moved on
+since the screen it was built from was drawn. The `id` is a ULID and is also the file's name prefix,
+so a plain directory listing is request order.
+
+The owning orchestrator polls the directory every 500 ms, answers each request with
+`requests/acks/<ULID>.json` — `{ "protocol": 1, "id", "status": "applied" | "accepted" |
+"rejected", "reason": "…", "at": "…" }` — and only then deletes the request. An id is answered once
+for the life of the run: resending the same one after a lost ack returns the first answer verbatim
+rather than doing the thing twice. `reason` is a sentence written for a person, and is what a
+surface should show when a request is refused.
+
+`approve`, `reject` and `answer` are **not** accepted from disk in this release. They are read and
+answered with a rejection saying so, because a permission decision is exactly the thing that must
+not be grantable by anyone who can write a file in the repository; they are unlocked by the
+presence gating described below, not before it.
 
 `machine` matters for the same reason `capabilities` does: a `pid` only means something on the
 machine that wrote it. A bare hostname is not enough to tell that on its own — a WSL2 shell takes

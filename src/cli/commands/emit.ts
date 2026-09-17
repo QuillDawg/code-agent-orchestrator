@@ -9,7 +9,7 @@
  * reader who can only see the end of the chain has to guess at the rest. So `status` prints all of it, and
  * then says in one sentence what to do about the state it found.
  */
-import { PROTOCOL_VERSION, type PresenceFile } from 'code-agent-orchestrator-protocol';
+import { PROTOCOL_VERSION, type CapabilityToken, type PresenceFile } from 'code-agent-orchestrator-protocol';
 import {
   caoHome,
   configFile,
@@ -22,6 +22,8 @@ import {
   writeConfig,
   type EmitSource,
 } from '../../persistence/registry.js';
+import { INBOX_REQUEST_KINDS } from '../../execution/signals.js';
+import { wiredCapabilities } from '../emit.js';
 import { formatAge } from '../../util/duration.js';
 import { OrchestratorError, UsageError } from '../../util/errors.js';
 import { okLine, warnLine } from '../../util/marks.js';
@@ -52,6 +54,12 @@ export interface EmitStatus {
   homeUsable: boolean;
   /** Why not, in the same words the refusal warns with, or null when it is usable. */
   homeRefusal: string | null;
+  /**
+   * What a run this `cao` starts accepts from another process (§2.3, §4.2.3) — the same list it writes into
+   * its registry entry. §5.4's other question is "why is nothing I send having any effect", and the answer
+   * is often that this build does not wire what the sender is asking for.
+   */
+  capabilities: CapabilityToken[];
   runs: { live: number; retained: number; stale: number; unknown: number; total: number };
   surfaces: Array<{ pid: number; surface: string; heartbeatAt: string; understands: string[] }>;
 }
@@ -81,6 +89,7 @@ export async function readEmitStatus(flag?: boolean): Promise<EmitStatus> {
     home,
     homeUsable: refusal === null,
     homeRefusal: refusal,
+    capabilities: wiredCapabilities({ requests: true, requestKinds: INBOX_REQUEST_KINDS }),
     runs: {
       live,
       retained: entries.length - live,
@@ -108,6 +117,7 @@ export function emitStatusLines(status: EmitStatus, now = Date.now()): string[] 
     row('Emit', `${status.emit ? 'on' : 'off'}  (${SOURCE_TEXT[status.source]})`),
     row('Home', `${status.home}  ${status.homeUsable ? 'usable' : `REFUSED: ${status.homeRefusal}`}`),
     row('Runs', `${runs.live} live, ${runs.retained} retained${qualifiers.length ? ` (${qualifiers.join(', ')})` : ''}`),
+    row('Controls', status.capabilities.join(', ')),
     row(
       'Surfaces',
       status.surfaces.length

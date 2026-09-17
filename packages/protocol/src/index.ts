@@ -17,5 +17,6 @@ export * from './transcript-plan.js';
 export * from './paths.js';
 export * from './registry.js';
 export * from './requests.js';
+export * from './quota.js';
 export * from './pending-interaction.js';
 export * from './presence.js';

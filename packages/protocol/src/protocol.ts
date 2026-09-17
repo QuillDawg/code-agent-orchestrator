@@ -48,6 +48,10 @@ export const CAPABILITIES = [
   'approve',
   /** Accepts a `restart` request for a task (§4.3.3). */
   'restart',
+  /** Applies an `edit` to an unfinished task (spec §3.4). Advertised once the controller applies one. */
+  'edit',
+  /** Delivers a `prompt` to a task's worker (spec §3.5). Advertised once the controller applies one. */
+  'prompt',
   /** Writes pending-interaction payloads to `interactions/<uid>.json` (§4.4.2). */
   'interactions',
   /** Reads `~/.cao/presence/` and gates `canInteract` on it (§4.6). */

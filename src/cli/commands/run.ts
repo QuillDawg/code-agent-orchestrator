@@ -7,7 +7,7 @@ import { formatDiagnostics } from '../../workflow/validator.js';
 import { warnLine } from '../../util/marks.js';
 import { glyph } from '../../util/glyphs.js';
 import { renderHeader, attachPlainRenderer, renderSummary } from '../render/plain.js';
-import { createInterruptController, clearStopRequest, watchStopRequests } from '../../execution/signals.js';
+import { createInterruptController, clearPendingRequests, clearStopRequest, watchStopRequests, INBOX_REQUEST_KINDS } from '../../execution/signals.js';
 import { ConsoleLogger, type Logger } from '../../logging/logger.js';
 import { Redactor } from '../../logging/redact.js';
 import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflowPath } from '../util.js';
@@ -104,7 +104,8 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   const { run } = opts;
   // §4.2.7, resolved before anything is printed and before the dashboard takes the screen. `announcement` is
   // undefined unless emit is on, and its absence is what keeps a run with emit off from touching `~/.cao`.
-  const emit = await planEmit({ emit: opts.emit, emitFeed: opts.emitFeed });
+  // The inbox is wired below on every path this function takes, so the entry advertises it (§2.3, §4.2.3).
+  const emit = await planEmit({ emit: opts.emit, emitFeed: opts.emitFeed, wired: { requests: true, requestKinds: INBOX_REQUEST_KINDS } });
   for (const note of emit.notes) process.stdout.write(`${warnLine(note)}\n`);
   const useTui = (opts.tui ?? true) && isInteractive();
   const redactor = new Redactor(opts.secrets);
@@ -140,10 +141,15 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   const disposeSignals = interrupt.install();
   // A leftover request from the run that was stopped must not stop the one resuming it.
   await clearStopRequest(store.paths, run.runId);
+  await clearPendingRequests(store.paths, run.runId);
   const disposeStopWatcher = watchStopRequests({
     paths: store.paths,
     runId: run.runId,
-    onStop: (request) => interrupt.interrupt(`${request.source ?? 'cao stop'} (pid ${request.pid})`),
+    controller,
+    logger,
+    // The controller has already applied the stop by the time this runs, so this is the other half of a
+    // Ctrl+C and nothing more: shut the workers down, and force it if a second stop arrives.
+    onStop: (request) => interrupt.beginShutdown(`${request.source ?? 'cao stop'} (pid ${request.pid})`),
   });
 
   let detachPlain: (() => void) | undefined;

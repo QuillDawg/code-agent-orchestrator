@@ -75,6 +75,8 @@ const MOVE_LIST = [
   'filterEntries',
   // new to the contract
   'RegistryEntry', 'ControlRequest', 'PendingInteractionFile', 'PresenceFile', 'CAPABILITIES', 'PROTOCOL_VERSION',
+  // §2.2, §2.3 and §2.6 — the control contract and what an applied edit or prompt leaves behind
+  'ControlAck', 'ControlSource', 'ControlExpectation', 'TaskEdit', 'TaskRevision', 'PromptDelivery', 'QuotaSnapshot',
 ];
 
 beforeAll(() => {
@@ -200,8 +202,11 @@ describe('the new contract types (§4.2.3, §4.3.1, §4.4.2, §4.6.1)', () => {
   it('fixes PROTOCOL_VERSION at 1 and names every capability token the spec uses', async () => {
     const { PROTOCOL_VERSION, CAPABILITIES } = (await import('code-agent-orchestrator-protocol')) as typeof import('code-agent-orchestrator-protocol');
     expect(PROTOCOL_VERSION).toBe(1);
-    // The eight §4.2.3 advertises, plus `feed` (§10.1), which `feedUrl` is conditioned on.
-    expect([...CAPABILITIES]).toEqual(['requests', 'stop', 'kill', 'answer', 'approve', 'restart', 'interactions', 'presence', 'feed']);
+    // The eight §4.2.3 advertises, plus `feed` (§10.1), which `feedUrl` is conditioned on, and the two
+    // control kinds §2.6 adds — a run advertises `edit` and `prompt` only once it applies them.
+    expect([...CAPABILITIES]).toEqual([
+      'requests', 'stop', 'kill', 'answer', 'approve', 'restart', 'edit', 'prompt', 'interactions', 'presence', 'feed',
+    ]);
   });
 
   it('types a registry entry with the fields, nullability and machine identity §4.2.3 specifies', async () => {
@@ -237,11 +242,47 @@ describe('the new contract types (§4.2.3, §4.3.1, §4.4.2, §4.6.1)', () => {
   it('types a control request whose kind-specific fields are optional (§4.3.1)', async () => {
     const { CONTROL_REQUEST_KINDS, PROTOCOL_VERSION } = await import('code-agent-orchestrator-protocol');
     type Request = import('code-agent-orchestrator-protocol').ControlRequest;
-    expect([...CONTROL_REQUEST_KINDS]).toEqual(['stop', 'kill', 'approve', 'reject', 'answer', 'restart']);
+    expect([...CONTROL_REQUEST_KINDS]).toEqual(['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt']);
     const stop: Request = { protocol: PROTOCOL_VERSION, id: '01K7Q3M8XA', kind: 'stop', requestedAt: '2026-09-10T09:03:11.008Z', source: 'cao-desktop 0.1.0', pid: 4188 };
     const answer: Request = { ...stop, id: '01K7Q3N1B2', kind: 'answer', taskId: 'implement-api', uid: 'implement-api.2.1', answer: { kind: 'allow', scope: 'once' } };
     expect(Object.keys(stop)).toEqual(['protocol', 'id', 'kind', 'requestedAt', 'source', 'pid']);
     expect(answer.answer).toEqual({ kind: 'allow', scope: 'once' });
+
+    // §2.3 adds `edit` and `prompt` to the kinds a file may name, and `expected` to every kind: a request
+    // built on a task that has since moved on is refused rather than applied to work nobody looked at.
+    const edit: Request = { ...stop, id: '01K7Q3N1B3', kind: 'edit', taskId: 'implement-api', changes: { model: 'opus', note: 'try the bigger model' }, restart: true, expected: { attempt: 2, revision: 0 } };
+    const prompt: Request = { ...stop, id: '01K7Q3N1B4', kind: 'prompt', taskId: 'implement-api', text: 'use the repo helper', mode: 'steer' };
+    expect(edit.expected).toEqual({ attempt: 2, revision: 0 });
+    expect(prompt.mode).toBe('steer');
+  });
+
+  it('types a revision, a delivery and a quota snapshot the way §2.6 writes them', async () => {
+    const { PROMPT_DELIVERY_MODES, PROTOCOL_VERSION, TASK_EDIT_FIELDS } = await import('code-agent-orchestrator-protocol');
+    type Revision = import('code-agent-orchestrator-protocol').TaskRevision;
+    type Delivery = import('code-agent-orchestrator-protocol').PromptDelivery;
+    type Quota = import('code-agent-orchestrator-protocol').QuotaSnapshot;
+    expect([...PROMPT_DELIVERY_MODES]).toEqual(['steer', 'followUp', 'stopAndContinue']);
+    expect([...TASK_EDIT_FIELDS]).toEqual(['prompt', 'agent', 'model', 'effort', 'timeout', 'retries', 'maxBudgetUsd']);
+
+    const revision: Revision = {
+      number: 1, at: '2026-09-17T09:03:11.008Z', source: 'inbox', pid: 4188,
+      changes: { model: { from: 'sonnet', to: 'opus' } }, note: 'try the bigger model', appliedToAttempt: 3,
+    };
+    const delivery: Delivery = {
+      id: '01K7Q3N1B4', at: '2026-09-17T09:04:00.000Z', source: 'tui', mode: 'followUp',
+      transport: 'claude-stream', state: 'queued', text: 'use the repo helper',
+    };
+    const quota: Quota = {
+      protocol: PROTOCOL_VERSION, provider: 'claude', readAt: '2026-09-17T09:05:00.000Z', state: 'ok',
+      planType: 'max', windows: [{ label: '5-hour', durationMins: 300, usedPercent: 41, resetsAt: '2026-09-17T12:00:00.000Z' }],
+    };
+    expect(JSON.parse(JSON.stringify({ revision, delivery, quota }))).toEqual({ revision, delivery, quota });
+
+    // They hang off the run state the same way, and both are optional: a run that has never been edited
+    // carries neither field, and `schemaVersion` stays 1 (§2.6).
+    type Task = import('code-agent-orchestrator-protocol').TaskRunState;
+    const task: Task = { id: 'implement-api', state: 'running', attempts: [], retryWindowStart: 1, revisions: [revision] };
+    expect(task.revisions?.[0]?.number).toBe(1);
   });
 
   it('types a pending interaction and a presence file the way §4.4.2 and §4.6.1 write them', async () => {

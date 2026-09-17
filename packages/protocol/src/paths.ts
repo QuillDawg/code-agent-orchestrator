@@ -23,6 +23,12 @@ export interface RunPaths {
   lockFile(runId: string): string;
   runLogFile(runId: string): string;
   reportFile(runId: string): string;
+  /** The request inbox (§2.3): `<ULID>-<kind>.json`, one control request each. */
+  requestsDir(runId: string): string;
+  /** `requests/acks/<ULID>.json` — the owner's answer to one request. */
+  requestAcksDir(runId: string): string;
+  /** `requests/rejected/` — a request that could not be read or was written by a newer major, moved not deleted. */
+  requestRejectedDir(runId: string): string;
   taskDir(runId: string, taskId: string): string;
   resultFile(runId: string, taskId: string): string;
   contextFile(runId: string, taskId: string): string;
@@ -56,6 +62,7 @@ export function createRunPaths(repositoryRoot: string): RunPaths {
   const root = join(repositoryRoot, ORCHESTRATOR_DIR);
   const runsDir = join(root, 'runs');
   const runDir = (runId: string): string => join(runsDir, safeSegment(runId));
+  const requestsDir = (runId: string): string => join(runDir(runId), 'requests');
   const taskDir = (runId: string, taskId: string): string => join(runDir(runId), 'tasks', safeSegment(taskId));
   const attemptDir = (runId: string, taskId: string, attempt: number): string =>
     join(taskDir(runId, taskId), 'attempts', String(attempt));
@@ -70,6 +77,9 @@ export function createRunPaths(repositoryRoot: string): RunPaths {
     lockFile: (runId) => join(runDir(runId), 'lock.json'),
     runLogFile: (runId) => join(runDir(runId), 'orchestrator.log'),
     reportFile: (runId) => join(runDir(runId), 'report.md'),
+    requestsDir,
+    requestAcksDir: (runId) => join(requestsDir(runId), 'acks'),
+    requestRejectedDir: (runId) => join(requestsDir(runId), 'rejected'),
     taskDir,
     resultFile: (runId, taskId) => join(taskDir(runId, taskId), 'result.json'),
     contextFile: (runId, taskId) => join(taskDir(runId, taskId), 'context.md'),

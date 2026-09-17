@@ -286,6 +286,18 @@ up within a second (a file rather than a signal, so it behaves the same on Windo
 the workers are killed immediately, exactly like pressing Ctrl+C twice. Resume it afterwards like any other
 interrupted run.
 
+Underneath, that stop is now one of a general set of **control requests** the run accepts from any other
+process. The owner polls `requests/` in its run directory on the same one-second tick, applies each request
+inside its own scheduler loop — so a request can never land halfway through a task finishing — and writes
+the answer to `requests/acks/<id>.json` before it deletes the request that asked. `stop.json` is translated
+into one of these on arrival, which is why `cao stop` keeps working unchanged and a second one is still the
+kill. A request that cannot be read, or that was written by a newer `cao` than this one, is moved to
+`requests/rejected/` with a `.reason.txt` beside it rather than being guessed at or thrown away. Permission
+decisions — approving a gate, answering a worker's question — are deliberately **not** taken from a file:
+they are refused with a reason, and stay something you do in the terminal that owns the run.
+
+`cao emit status` prints what a run started by this `cao` will accept, on its `Controls:` row.
+
 `cao resume` takes the same overrides as `cao run`: `--max-concurrency`, `--permission-mode` and
 `--claude-command`, so a run interrupted because it was too parallel or too restricted can be continued with
 different settings instead of started again.
@@ -754,7 +766,9 @@ anything: it will tell you to run `cao clean` but never runs it for you.
     lock.json                   # owning pid + heartbeat
     stop.json                   # a pending `cao stop` request, consumed by the running orchestrator
     report.md                   # the run's own report, rewritten whenever the run ends
-    requests/                   # reserved: a desktop app's other control requests (answer, approve, restart, kill)
+    requests/<ULID>-<kind>.json # control requests from another process: stop, kill, restart
+      acks/<ULID>.json          #   the one answer to each, written before the request is deleted
+      rejected/                 #   a request that could not be read, moved rather than deleted
     interactions/               # reserved: pending-interaction payloads for a desktop app to render
     tasks/<task-id>/
       result.json               # structured result + git info + cost/usage

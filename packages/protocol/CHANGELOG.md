@@ -10,9 +10,33 @@ contract moves, so most `code-agent-orchestrator` releases do not bump it (spec 
 "is the shared code you compiled against still the shared code that is installed"; `PROTOCOL_VERSION` says
 "can this artifact read this file at all".
 
-## [Unreleased]
+## [0.2.0]
+
+The first minor since the package was cut. Everything in it is additive: no existing field changed meaning,
+`PROTOCOL_VERSION` stays `1`, and a `0.1.0` consumer compiles against `0.2.0` unchanged except for the one
+exhaustive-switch note below.
 
 ### Added
+
+- **`RunPaths` gains the request inbox**: `requestsDir(runId)`, `requestAcksDir(runId)` and
+  `requestRejectedDir(runId)` — `requests/`, `requests/acks/` and `requests/rejected/` under a run
+  directory (spec §2.3). As with every other accessor, nothing outside this package builds those paths.
+- **`CONTROL_REQUEST_KINDS` gains `edit` and `prompt`**, and `ControlRequest` gains the fields their kinds
+  need — `changes`, `restart`, `text`, `mode` — plus `expected?: ControlExpectation`
+  (`{ attempt?, revision? }`), which applies to every kind: a request built on a task that has since moved
+  on is refused rather than applied to work nobody looked at.
+- **`TaskEdit`** — what an `edit` asks to change — and **`TASK_EDIT_FIELDS`**, the keys a revision records a
+  before and after for.
+- **`PROMPT_DELIVERY_MODES`** / **`PromptDeliveryMode`** (`steer` | `followUp` | `stopAndContinue`).
+- **`TaskRevision`** (`TaskRunState.revisions?`) and **`PromptDelivery`** (`TaskAttempt.prompts?`,
+  `TaskAttempt.revision?`): what an applied edit and a delivered follow-up leave behind on a run (§2.6).
+  The shapes are here from this release; `cao` writes them from a later one.
+- **`QuotaSnapshot`** and `QuotaWindow`: what a provider last said was left of a rate-limited window.
+- Two capability tokens, **`edit`** and **`prompt`**. A `CAPABILITIES` list that was nine long is now
+  eleven; as §4.5 requires, a reader ignores tokens it does not know, so this is not a breaking change.
+
+  **For a consumer:** a run advertises a token only when it really wires that affordance up, so `edit` and
+  `prompt` will not appear in a registry entry until the orchestrator applies them.
 
 - **`ControlAck`**, the answer to one control command: `{ protocol, id, status, reason?, at }` with
   `status` one of `CONTROL_ACK_STATUSES` (`accepted` | `applied` | `rejected`). It is returned in process by

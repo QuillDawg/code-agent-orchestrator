@@ -7,7 +7,7 @@
 import type { InteractionAnswer } from './interaction.js';
 import type { ProtocolVersion } from './protocol.js';
 
-export const CONTROL_REQUEST_KINDS = ['stop', 'kill', 'approve', 'reject', 'answer', 'restart'] as const;
+export const CONTROL_REQUEST_KINDS = ['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt'] as const;
 
 /**
  * Closed on purpose, unlike the enums §4.5 leaves open: this is the *written* side of the wire, and the
@@ -15,6 +15,46 @@ export const CONTROL_REQUEST_KINDS = ['stop', 'kill', 'approve', 'reject', 'answ
  * than rendering it (§4.3.2). Nothing has to display an unknown kind.
  */
 export type ControlRequestKind = (typeof CONTROL_REQUEST_KINDS)[number];
+
+/**
+ * How a follow-up reaches a worker (spec §3.5): `steer` interrupts the turn in progress, `followUp` waits
+ * for it to finish, `stopAndContinue` ends the attempt and starts the next one carrying the text.
+ *
+ * Applied from S2; the shape is here so a sender can be built against it. Named for the delivery rather
+ * than just "mode" because `src/runners/claude/` already has a prompt mode, and it means something else.
+ */
+export const PROMPT_DELIVERY_MODES = ['steer', 'followUp', 'stopAndContinue'] as const;
+export type PromptDeliveryMode = (typeof PROMPT_DELIVERY_MODES)[number];
+
+/** The fields an edit may change (spec §3.4), and the keys a `TaskRevision` records a before and after for. */
+export const TASK_EDIT_FIELDS = ['prompt', 'agent', 'model', 'effort', 'timeout', 'retries', 'maxBudgetUsd'] as const;
+export type TaskEditField = (typeof TASK_EDIT_FIELDS)[number];
+
+/**
+ * What an `edit` asks to change (spec §3.4). Every field is optional, and an edit that names none of them is
+ * a no-op rather than a reset: absence means "leave it alone", which is what lets one screen send only the
+ * field the operator touched.
+ */
+export interface TaskEdit {
+  prompt?: string;
+  agent?: string;
+  model?: string;
+  effort?: string;
+  timeout?: string;
+  retries?: number;
+  maxBudgetUsd?: number;
+  note?: string;
+}
+
+/**
+ * The state a sender believed the task was in when it built the request (spec §2.2). A command built on a
+ * screen drawn some milliseconds ago is refused once the task has moved on, instead of being applied to work
+ * nobody looked at.
+ */
+export interface ControlExpectation {
+  attempt?: number;
+  revision?: number;
+}
 
 export interface ControlRequest {
   protocol: ProtocolVersion;
@@ -38,6 +78,19 @@ export interface ControlRequest {
   answer?: InteractionAnswer;
   /** `approve` | `reject`. */
   note?: string;
+  /** `edit` only: the fields to change (§3.4). */
+  changes?: TaskEdit;
+  /** `edit` only: whether to restart the task once the edit is applied. */
+  restart?: boolean;
+  /** `prompt` only: the text to deliver, verbatim. */
+  text?: string;
+  /**
+   * `prompt` only: how to deliver it. A `stop` request carries no mode — `stop.json` has never had one, and
+   * a stop from another terminal has always meant the cancelling kind, as Ctrl+C does.
+   */
+  mode?: PromptDeliveryMode;
+  /** Refuse the request if the task has moved on (§2.2). */
+  expected?: ControlExpectation;
 }
 
 /** Where a control command came from. Spec §2.2; `TaskRevision` records it too (§2.6). */

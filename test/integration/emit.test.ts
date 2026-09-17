@@ -76,8 +76,9 @@ describe('cao run --emit (§4.2.4, §4.2.7)', () => {
       feedUrl: null,
     });
     expect(entry.endedAt).toBeTruthy();
-    // §4.2.3 — what this build actually wired up, which is the announcement and nothing else.
-    expect(entry.capabilities).toEqual([]);
+    // §4.2.3, §2.3 — what this build actually wired up: the request inbox and the three kinds its watcher
+    // really acts on. `edit` and `prompt` are parsed and answered, but not applied, so they are not here.
+    expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
     expect(Object.keys(entry)[0]).toBe('protocol');
     expect(existsSync(path.join(entry.orchestratorDir, 'runs', runId!))).toBe(true);
     expect(warnings).toEqual([]);

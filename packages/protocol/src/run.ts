@@ -3,7 +3,7 @@ import type { ResolvedWorkflow, WorkspaceMode } from './workflow.js';
 import type { InteractionRecord } from './interaction.js';
 import type { RunnerFailure } from './runner.js';
 import type { FileOp } from './transcript.js';
-import type { ControlAck } from './requests.js';
+import type { ControlAck, ControlSource, PromptDeliveryMode, TaskEditField } from './requests.js';
 
 export const TASK_STATES = [
   'pending',
@@ -96,6 +96,52 @@ export interface FileTouch {
   lastOp: FileOp;
 }
 
+/**
+ * One applied edit of an unfinished task (spec §2.6, §3.4), appended to `TaskRunState.revisions`.
+ *
+ * `number` is the revision the task is *at* after this edit, so `expected.revision` on a later command has a
+ * number to compare against, and `changes` keeps both sides of every field: an edit is a thing that happened
+ * to a run, and a reader that only sees the new value cannot tell what it replaced.
+ *
+ * Written from S2; the shape is here from S0 so the inbox and the CLI can be built against it.
+ */
+export interface TaskRevision {
+  number: number;
+  at: string;
+  source: ControlSource;
+  pid: number;
+  changes: Partial<Record<TaskEditField, { from: unknown; to: unknown }>>;
+  note?: string;
+  /** The attempt the edit reached, once one has carried it. Absent while the task has not run since. */
+  appliedToAttempt?: number;
+}
+
+/**
+ * One follow-up sent to a task's worker (spec §2.6, §3.5), appended to `TaskAttempt.prompts`.
+ *
+ * `state` is the whole story a sender needs: `queued` is written the moment the command is taken, and moves
+ * to `delivered` only when the transport says the worker has it. `transport: 'none'` is the honest answer
+ * for an agent whose CLI cannot be spoken to mid-turn.
+ *
+ * `text` is redacted before it is written, like everything else persisted from a prompt.
+ *
+ * Written from S2; the shape is here from S0.
+ */
+export interface PromptDelivery {
+  id: string;
+  at: string;
+  source: ControlSource;
+  mode: PromptDeliveryMode;
+  transport: 'claude-stream' | 'codex-app-server' | 'codex-exec' | 'none';
+  state: 'queued' | 'accepted' | 'delivered' | 'rejected' | 'failed';
+  reason?: string;
+  /** Redacted. */
+  text: string;
+  turnId?: string;
+  /** The attempt that carried it, when a follow-up outlived the attempt it was written for. */
+  carriedByAttempt?: number;
+}
+
 export interface TaskAttempt {
   number: number;
   kind: 'task' | 'merge';
@@ -122,6 +168,10 @@ export interface TaskAttempt {
   files?: Record<string, FileTouch>;
   /** Every human interaction (permission prompt / question) this attempt went through. */
   interactions?: InteractionRecord[];
+  /** The revision of the task this attempt was started from (§2.6). Absent means the task has never been edited. */
+  revision?: number;
+  /** Follow-ups sent to this attempt's worker (§2.6, §3.5). */
+  prompts?: PromptDelivery[];
 }
 
 export interface TaskRunState {
@@ -145,6 +195,8 @@ export interface TaskRunState {
   approval?: { decision: 'approved' | 'rejected'; at: string; note?: string };
   /** Set while state === 'waiting': what the worker is waiting on. */
   pendingInteraction?: InteractionRecord;
+  /** Every edit applied to this task, oldest first (§2.6, §3.4). Absent means it has never been edited. */
+  revisions?: TaskRevision[];
 }
 
 /**

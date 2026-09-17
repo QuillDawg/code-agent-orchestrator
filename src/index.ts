@@ -90,3 +90,22 @@ export { planEmit, wiredCapabilities } from './cli/emit.js';
 export type { EmitPlan, PlanEmitOptions, WiredSurface } from './cli/emit.js';
 export { emitCommand, readEmitStatus, emitStatusLines, EMIT_ACTIONS } from './cli/commands/emit.js';
 export type { EmitAction, EmitStatus, EmitCommandOptions } from './cli/commands/emit.js';
+
+// The request inbox (§2.3): the cross-process transport for the run controller. An embedder that drives a
+// run from another process writes a request and waits for its ack rather than inventing a second channel.
+export {
+  controlAck,
+  controlRequest,
+  deleteRequest,
+  readAck,
+  readPendingRequests,
+  requestFileName,
+  sendControlRequest,
+  writeAck,
+  writeControlRequest,
+  DEFAULT_ACK_WAIT_SECONDS,
+} from './persistence/requests.js';
+export type { PendingRequest, SendControlRequestOptions, SentControlRequest } from './persistence/requests.js';
+export { commandForRequest, envelopeForRequest } from './workflow/control/commands.js';
+export type { RequestTranslation } from './workflow/control/commands.js';
+export { clearPendingRequests, INBOX_REQUEST_KINDS } from './execution/signals.js';

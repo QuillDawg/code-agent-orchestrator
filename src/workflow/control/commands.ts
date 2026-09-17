@@ -7,24 +7,23 @@
  * `ControlAck` lives in the protocol package instead, because an ack is written to disk for the inbox to
  * read (§2.3); the command union and the envelope never leave the process that built them.
  */
-import type { ControlSource, InteractionAnswer } from 'code-agent-orchestrator-protocol';
+import { PROMPT_DELIVERY_MODES } from 'code-agent-orchestrator-protocol';
+import type {
+  ControlExpectation,
+  ControlRequest,
+  ControlSource,
+  InteractionAnswer,
+  PromptDeliveryMode,
+  TaskEdit,
+} from 'code-agent-orchestrator-protocol';
 import { nowIso } from '../../util/misc.js';
 import { ulid } from '../../util/ulid.js';
 
 /**
- * The fields an edit may change (spec §3.4). Declared here so the inbox, the CLI and the TUI can be built
- * against the whole command shape now; **applying** an edit ships in stage 2.
+ * The fields an edit may change (spec §3.4). The shape itself lives in the protocol package, because a
+ * request file carries one across the process boundary (§2.3); **applying** an edit ships in stage 2.
  */
-export interface TaskEdit {
-  prompt?: string;
-  agent?: string;
-  model?: string;
-  effort?: string;
-  timeout?: string;
-  retries?: number;
-  maxBudgetUsd?: number;
-  note?: string;
-}
+export type { TaskEdit };
 
 export type ControlCommand =
   /** Run-level, exactly as today: `wait` lets workers finish their turn, `cancel` aborts them. */
@@ -36,7 +35,7 @@ export type ControlCommand =
   /** Return a terminal non-success task to `pending` so the run picks it up again. */
   | { kind: 'restart'; taskId: string }
   | { kind: 'edit'; taskId: string; changes: TaskEdit; restart: boolean }
-  | { kind: 'prompt'; taskId: string; text: string; mode: 'steer' | 'followUp' | 'stopAndContinue' }
+  | { kind: 'prompt'; taskId: string; text: string; mode: PromptDeliveryMode }
   | { kind: 'approve'; taskId: string; note?: string }
   | { kind: 'reject'; taskId: string; note?: string }
   | { kind: 'answer'; taskId: string; interactionId: string; answer: InteractionAnswer };
@@ -59,7 +58,7 @@ export interface ControlEnvelope {
   source: ControlSource;
   pid: number;
   at: string;
-  expected?: { attempt?: number; revision?: number };
+  expected?: ControlExpectation;
 }
 
 /**
@@ -83,4 +82,66 @@ export function commandTaskId(command: ControlCommand): string | undefined {
 export function revisionCount(state: unknown): number {
   const revisions = (state as { revisions?: readonly unknown[] } | null | undefined)?.revisions;
   return Array.isArray(revisions) ? revisions.length : 0;
+}
+
+// ---------------------------------------------------------------------------- from the inbox (§2.3)
+
+/**
+ * What a request file turned into: a command to submit, or the sentence to acknowledge it with.
+ *
+ * This is the whole trust boundary of the inbox. A file cannot ask for anything the union cannot express,
+ * and the three permission kinds never become a command at all - they are refused here, before the
+ * controller is called, because `[D3]` puts them behind presence gating rather than behind a file anyone
+ * with write access to the run directory can create.
+ */
+export type RequestTranslation = { ok: true; command: ControlCommand } | { ok: false; reason: string };
+
+/** §2.3: `approve`, `reject` and `answer` are not taken from disk, whatever the run is doing. */
+const PERMISSION_FROM_DISK =
+  'permission controls are not accepted from disk until presence gating ships';
+
+function needsTask(kind: string): RequestTranslation {
+  return { ok: false, reason: `A ${kind} request has to name a task, and this one does not.` };
+}
+
+/** The envelope a request arrives in: its own id, so the ack on disk answers the file that asked. */
+export function envelopeForRequest(request: ControlRequest): ControlEnvelope {
+  return {
+    id: request.id,
+    source: 'inbox',
+    pid: typeof request.pid === 'number' ? request.pid : 0,
+    at: typeof request.requestedAt === 'string' ? request.requestedAt : nowIso(),
+    ...(request.expected ? { expected: request.expected } : {}),
+  };
+}
+
+export function commandForRequest(request: ControlRequest): RequestTranslation {
+  const taskId = typeof request.taskId === 'string' && request.taskId !== '' ? request.taskId : undefined;
+  switch (request.kind) {
+    case 'stop':
+      // No mode on the wire: a stop from another terminal has always meant the cancelling kind, the way
+      // Ctrl+C does, and `stop.json` has never carried one.
+      return { ok: true, command: { kind: 'stop', mode: 'cancel' } };
+    case 'kill':
+      return { ok: true, command: { kind: 'kill' } };
+    case 'restart':
+      return taskId ? { ok: true, command: { kind: 'restart', taskId } } : needsTask('restart');
+    case 'edit':
+      if (!taskId) return needsTask('edit');
+      return { ok: true, command: { kind: 'edit', taskId, changes: request.changes ?? {}, restart: request.restart === true } };
+    case 'prompt': {
+      if (!taskId) return needsTask('prompt');
+      const text = typeof request.text === 'string' ? request.text : '';
+      if (text.trim() === '') return { ok: false, reason: 'A prompt request has to carry the text to deliver, and this one is empty.' };
+      const mode = request.mode !== undefined && (PROMPT_DELIVERY_MODES as readonly string[]).includes(request.mode) ? request.mode : 'followUp';
+      return { ok: true, command: { kind: 'prompt', taskId, text, mode } };
+    }
+    case 'approve':
+    case 'reject':
+    case 'answer':
+      return {
+        ok: false,
+        reason: `Do this in the terminal that owns this run${taskId ? ` (task "${taskId}")` : ''}: ${PERMISSION_FROM_DISK}.`,
+      };
+  }
 }

@@ -2,7 +2,7 @@
  * The CLI consistency pass, driven the way a user drives it: one real run against the fake Claude, then the
  * read-only commands over its run directory.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { execa } from 'execa';
@@ -26,8 +26,20 @@ import { statusCommand } from '../../src/cli/commands/status.js';
 import { stopCommand } from '../../src/cli/commands/stop.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { diffCommand } from '../../src/cli/commands/diff.js';
+import { emitCommand } from '../../src/cli/commands/emit.js';
+import { entryFile, registryKey } from '../../src/persistence/registry.js';
+import { controlRequest, readAck, writeControlRequest } from '../../src/persistence/requests.js';
 
 const NL = String.fromCharCode(10);
+
+/** `waitFor` takes a synchronous predicate; waiting on another process means waiting on the filesystem. */
+async function until(cond: () => Promise<boolean>, timeoutMs = 30_000): Promise<void> {
+  const start = Date.now();
+  while (!(await cond())) {
+    if (Date.now() - start > timeoutMs) throw new Error('until timed out');
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 const YAML = ['name: consistency', 'tasks:', '  - id: implement-api', '    prompt: p', '  - id: implement-ui', '    prompt: p'].join(NL) + NL;
 
 async function writeWorkflow(repo: string, yaml = YAML): Promise<string> {
@@ -330,4 +342,94 @@ describe('CLI consistency', () => {
     expect(shown.stdout).toContain('filesChanged: src/red.ts');
     expect(shown.stdout).toContain('W src/hidden.ts');
   }, 30_000);
+});
+
+/**
+ * The request inbox across a real process boundary (§2.3).
+ *
+ * Everything else in this file drives the CLI in-process, which cannot show the property that matters here:
+ * that a **second `cao`** can reach a run it does not own, and that the run answers it on disk. So this one
+ * starts `node dist/bin.js run` as a child, talks to it through the run directory, and reads what it wrote
+ * back.
+ */
+describe('the request inbox, from another process', () => {
+  const root = process.cwd();
+  const bin = path.join(root, 'dist', 'bin.js');
+  const saved = { CAO_HOME: process.env.CAO_HOME, CAO_EMIT: process.env.CAO_EMIT };
+
+  /** Newest mtime under a directory, so a stale `dist/` is rebuilt rather than silently tested. */
+  async function newestUnder(dir: string): Promise<number> {
+    let newest = 0;
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const full = path.join(dir, entry.name);
+      newest = Math.max(newest, entry.isDirectory() ? await newestUnder(full) : (await fs.stat(full)).mtimeMs);
+    }
+    return newest;
+  }
+
+  beforeAll(async () => {
+    const built = await fs.stat(bin).then((s) => s.mtimeMs, () => 0);
+    const sources = Math.max(await newestUnder(path.join(root, 'src')), await newestUnder(path.join(root, 'packages', 'protocol', 'src')));
+    if (built <= sources) await execa('npm', ['run', 'build'], { cwd: root, shell: true });
+  }, 300_000);
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('answers a request from a second cao, stops the run when one arrives, and advertises what it wired', async () => {
+    const repo = await tmpGitRepo('cao-inbox-proc-');
+    const home = path.join(await tmpDir('cao-inbox-home-'), '.cao');
+    // A worker that takes its time, so there is a run to talk to while it is still going.
+    const env = { CAO_HOME: home, CAO_EMIT: '1', CAO_CLAUDE_COMMAND: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_DELAY_MS: '1500' };
+    await writeWorkflow(repo, ['name: inbox', 'tasks:', '  - id: implement-api', '    prompt: p'].join(NL) + NL);
+
+    const orchestrator = execa(process.execPath, [bin, 'run', 'workflow.yaml', '--no-tui'], { cwd: repo, env, reject: false });
+    try {
+      const store = new FileRunStore(repo);
+      const paths = createNativeRunPaths(repo);
+      let runId = '';
+      await until(async () => {
+        runId = (await store.listRuns().catch(() => []))[0]?.runId ?? '';
+        return runId !== '' && (await pathExists(paths.lockFile(runId)));
+      }, 30_000);
+
+      // A request this run can read but cannot grant: the task is running, so it cannot be restarted. The
+      // point is the round trip — a file written by a process that owns nothing, answered by the one that does.
+      const refused = controlRequest('restart', { taskId: 'implement-api' });
+      await writeControlRequest(paths, runId, refused);
+      await until(async () => (await readAck(paths, runId, refused.id)) !== null, 30_000);
+      const refusal = await readAck(paths, runId, refused.id);
+      expect(refusal).toMatchObject({ protocol: 1, id: refused.id, status: 'rejected' });
+      expect(refusal!.reason).toContain('still running');
+      expect(await pathExists(path.join(paths.requestsDir(runId), `${refused.id}-restart.json`))).toBe(false);
+
+      // And `cao stop` in a second terminal, which still writes `stop.json` in this beta (§2.7): the owner
+      // turns it into a stop request with an id of its own and answers that too.
+      const stopped = await execa(process.execPath, [bin, 'stop', runId], { cwd: repo, env, reject: false });
+      expect(stopped.exitCode).toBe(0);
+      const finished = await orchestrator;
+      expect(finished.exitCode).not.toBe(0);
+
+      const ackNames = await fs.readdir(paths.requestAcksDir(runId));
+      const acks = await Promise.all(ackNames.map(async (n) => JSON.parse(await fs.readFile(path.join(paths.requestAcksDir(runId), n), 'utf8')) as { id: string; status: string }));
+      expect(acks.map((a) => a.status).sort()).toEqual(['applied', 'rejected']);
+      expect((await store.loadRun(runId)).state).toBe('interrupted');
+
+      // §2.3, §4.2.3 — the entry advertises exactly the four the inbox really acts on, and `cao emit status`
+      // answers the same question for someone whose request is having no effect.
+      const entry = JSON.parse(await fs.readFile(entryFile(registryKey(repo, runId), home), 'utf8')) as { capabilities: string[] };
+      expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
+      process.env.CAO_HOME = home;
+      const status = await captureCli(() => emitCommand('status', { json: true }));
+      expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
+    } finally {
+      orchestrator.kill();
+      await orchestrator.catch(() => undefined);
+    }
+  }, 180_000);
 });

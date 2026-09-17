@@ -10,6 +10,33 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **A run can be driven from another terminal: the request inbox.** A process that does not own a run now
+  asks it for something by writing one file into the run's own directory —
+  `requests/<ULID>-<kind>.json` with `stop`, `kill` or `restart` — and reads the answer back out of
+  `requests/acks/<ULID>.json`. The owner picks it up on the 500 ms tick it already ran for `stop.json`,
+  hands it to the run controller so it is applied inside the scheduler's loop like every other command, and
+  writes the acknowledgment **before** it deletes the request, so a crash in between leaves a request that
+  is asked again rather than one nobody answered. The ULID is also the file name's prefix, which makes a
+  plain directory listing request order, and an id is answered once for the life of the run: a resend after
+  a lost ack gets the first answer back, verbatim, instead of doing the thing twice. A request naming a
+  task can carry `expected: { attempt, revision }` and is refused if the task has moved on since.
+  `approve`, `reject` and `answer` are read and refused with a reason: a permission decision must not be
+  grantable by anyone who can write a file in the repository, and they stay something you do in the
+  terminal that owns the run until presence gating ships. A file that cannot be read, or that was written
+  by a newer `cao` than this one, is moved to `requests/rejected/` with a `.reason.txt` beside it rather
+  than guessed at or thrown away; a sync-conflict copy is skipped the way the registry skips one.
+  **Nothing about `cao stop` changes**: it still writes `stop.json`, which the owner translates into a stop
+  request of its own, and a second one is still the kill.
+- **`cao emit status` says what a run can be asked to do.** A new `Controls:` row, and a `capabilities`
+  field in `--json`, list what a run this `cao` starts wires up — the same list it writes into its registry
+  entry. "Why is the thing I am sending having no effect" is the other half of the question `cao emit
+  status` exists to answer.
+- Protocol package `0.2.0` (`cao` follows to `^0.2.0`): `createRunPaths` gains `requestsDir`,
+  `requestAcksDir` and `requestRejectedDir`; `CONTROL_REQUEST_KINDS` gains `edit` and `prompt`;
+  `ControlRequest` gains `expected`, `changes`, `restart`, `text` and `mode`; and `TaskEdit`,
+  `TaskRevision`, `PromptDelivery`, `QuotaSnapshot`, `ControlExpectation`, `PROMPT_DELIVERY_MODES` and
+  `TASK_EDIT_FIELDS` are new, along with the `edit` and `prompt` capability tokens. All additive:
+  `WorkflowRun.schemaVersion` stays `1` and workflow YAML is untouched.
 - **One door into a running workflow: the run controller.** Everything outside `src/workflow/` that changes
   a run's execution state now goes through one object, built with the runtime and handed to the dashboard
   and to signal handling. A command carries an envelope — a ULID, who sent it, their pid, and optionally
@@ -109,6 +136,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **An announced run now advertises what it accepts.** A registry entry's `capabilities` was always `[]`,
+  because nothing polled for requests; a run started by this release writes
+  `["requests", "stop", "kill", "restart"]`, which is exactly what its inbox acts on. `edit` and `prompt`
+  are parsed and answered but not applied yet, so they are deliberately not in the list — a surface enables
+  an affordance by token, and a run must not claim one it cannot honour.
 - **An attempt the orchestrator cancelled now ends its transcript with the cancellation.** The attempt's
   `events.jsonl` used to stop at whatever the worker said last, so `cao logs` on a cancelled attempt ended
   mid tool call and gave no sign of why; it now closes with `cancelled by the orchestrator`, like every

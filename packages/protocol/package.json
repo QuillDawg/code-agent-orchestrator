@@ -1,6 +1,6 @@
 {
   "name": "code-agent-orchestrator-protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The wire contract shared by the code-agent-orchestrator CLI and CAO Desktop: run-directory layout, workflow/run/event types, transcript entries and planning, and the registry, request, interaction and presence file schemas. Zero runtime dependencies, no Node builtins, browser-safe.",
   "type": "module",
   "license": "MIT",
