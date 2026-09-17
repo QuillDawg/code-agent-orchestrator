@@ -10,6 +10,30 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **One door into a running workflow: the run controller.** Everything outside `src/workflow/` that changes
+  a run's execution state now goes through one object, built with the runtime and handed to the dashboard
+  and to signal handling. A command carries an envelope — a ULID, who sent it, their pid, and optionally
+  the attempt and revision the sender believed the task was on — and comes back with one acknowledgment:
+  `applied`, `accepted` or `rejected` with a reason written as a sentence for a human. The id deduplicates
+  for the life of the run (kept in `workflow.json` under `run.controls.seen`, the last 1000), so a command
+  sent twice is applied once and the resend gets the first answer back, and a request built on state that
+  has since moved on is refused instead of applied to something nobody looked at. Every command is applied
+  **inside** the scheduler's loop, between two of its own events, so it can never land halfway through an
+  attempt finishing.
+  The commands are `stop`, `kill`, `restart` and the new `cancelTask`; `edit`, `prompt`, `approve`,
+  `reject` and `answer` are declared and answered with "not available yet", so the surfaces that will send
+  them can be built against the whole shape. **Nothing about using `cao` changes**: Ctrl+C, `cao stop` and
+  the dashboard's `R` do exactly what they did, through the new door.
+  For an embedder, `createRuntime()` now returns a `controller` beside the scheduler, and
+  `createRunController`, `controlEnvelope`, `RunController`, `ControlCommand`, `ControlEnvelope`, `TaskEdit`
+  and `Runtime` are exported from the library root.
+- **`cancelTask`: stop one task without stopping the run.** The attempt's abort signal fires, whatever it
+  was asking a human is denied first (with the same "finish with status needs_input if you cannot continue"
+  hint every other denial carries), the attempt is recorded as `cancelled` and the task ends `cancelled`
+  — which `restart` and `cao resume` already accept. A task whose attempt has already ended and is merging
+  back cannot be aborted, so the command is acknowledged as `accepted` and takes effect when that
+  finalization lands, ending the task rather than spending a retry on it. No key or CLI flag sends this
+  yet; the screens and commands that will are next.
 - **`cao run --emit`, `cao resume --emit`, `CAO_EMIT` and `cao emit enable|disable|status`: the switch that
   turns announcing on.** In precedence order, `--emit` / `--no-emit` on the command line wins over
   `CAO_EMIT=1` / `CAO_EMIT=0`, which wins over the per-user opt-in `cao emit enable` writes to
@@ -85,6 +109,14 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **An attempt the orchestrator cancelled now ends its transcript with the cancellation.** The attempt's
+  `events.jsonl` used to stop at whatever the worker said last, so `cao logs` on a cancelled attempt ended
+  mid tool call and gave no sign of why; it now closes with `cancelled by the orchestrator`, like every
+  other way an attempt can end. Claude and `codex exec` only — the Codex app-server already wrote it.
+- **The dashboard's `R` says what the run controller said.** Pressing `R` on a task that cannot be
+  restarted used to print one fixed line whatever the reason; the notice is now the controller's own
+  answer, so a task that is still running says so and is told to be cancelled first. The message for a task
+  that has simply not failed is unchanged.
 - **The terminal UI runs on Ink 7 and React 19.** `ink` moves from 5.2 to `^7.1.1`, `react` and
   `@types/react` to 19, and `commander` to 15; `zustand`, `fuzzysort` and `ink-link` join them. Node 22
   stays the floor and no screen, key or exit code changes: `--help` and `--version` still exit 0, a usage

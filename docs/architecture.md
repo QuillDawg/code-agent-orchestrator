@@ -32,6 +32,7 @@ src/
     render/diff.ts            reads a captured diff.patch: section lookup by path (git's quoting undone), stat and colour
   config/                     schema.ts (zod), loader.ts (YAML, repository/launch dir, env), normalize.ts (defaults, templates, foreach, DAG rules)
   workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts
+    control/                  commands.ts (the ControlCommand union and its envelope), controller.ts (RunController: the only way anything outside workflow/ changes execution state)
   runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
@@ -51,7 +52,7 @@ src/
   util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
                               instruction the scheduler appends to deny messages, and the helpers that take it back off for an
                               operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,
-                              async-queue, duration, errors, fs, misc
+                              async-queue, duration, errors, fs, misc, ulid.ts (time-sortable ids for control commands)
 packages/
   protocol/                   code-agent-orchestrator-protocol: the wire contract, its own npm workspace and its own semver. Zero runtime
                               dependencies, no Node builtins, browser-safe. The workflow/run/result/event/interaction/transcript types, the
@@ -84,6 +85,7 @@ The run directory a run writes is documented in
 | `RunStore` | persistence interface; `FileRunStore` writes `.orchestrator/runs/<id>/…` atomically |
 | `EventBus` | `WorkflowEvent` union consumed by persistence, renderers and the dashboard |
 | `ProcessManager` | every child process the orchestrator spawns: registry, output capture, timeouts, tree termination |
+| `RunController` | `submit(command, envelope) → ControlAck`; the single door through which the TUI and the CLI stop, kill, restart or cancel. Deduplicated by envelope id, refused when the state it was built on has moved on, and applied inside the scheduler loop |
 
 ## State machines
 
@@ -96,12 +98,37 @@ Run: `created → running → completed | failed | paused | interrupted`; `pause
 `WorkflowScheduler.execute()`:
 
 1. Mark the run `running`, persist, run `WorkspaceManager.prepareRun` (base commit/branch, `.git/info/exclude`, prune), run `beforeWorkflow` hooks, apply `--task/--from` selection.
-2. Loop: `promoteReady()` (topological walk: dependency check → `when` → approval gates → ready) → `launchReady()` (respects `maxConcurrency` and retry delays) → wait on a wake queue (`attempt_done`, `approval`, `retry_due`, `stop`) → handle → persist.
+2. Loop: `promoteReady()` (topological walk: dependency check → `when` → approval gates → ready) → `launchReady()` (respects `maxConcurrency` and retry delays) → wait on a wake queue (`attempt_done`, `finalized`, `approval`, `retry_due`, `stop`, `restart`, `control`) → handle → persist.
 3. `launch()`: allocate attempt number, mark `running`, **persist**, acquire workspace (shared mutex or worktree), build context + prompt (`prompt.md`, `context.md`), emit `task.started`, run `beforeTask` hooks, start the runner without awaiting it. Failures anywhere in launch become a `crash` outcome and flow through the normal failure path.
 4. `handleAttemptDone()`: record the attempt, finalize the workspace (git capture, merge-back), on merge conflict start a `merge` attempt (Claude session in the shared tree) if configured, then apply the outcome: success / skipped / needs_input / blocked / cancelled / retryable failure. Retry budget = `retry.attempts` counting only task attempts since `retryWindowStart` (reset on resume). `onFailure` then applies `stop`, `continue` or `skip_dependents`.
 5. `finalize()`: cancel leftover pending tasks when stopping, compute the run state (`interrupted` for Ctrl+C, `paused` for approvals/input, `failed`, `completed`), run cleanup and `afterWorkflow`, persist, release the lock, emit the terminal event.
 
 Invariants: a single loop mutates task state; persist-before-act; a process exit code is never a result; the scheduler never imports the TUI; all timers go through an injectable `Clock`.
+
+## Run controller
+
+Everything outside `src/workflow/` that changes a run's execution state goes through one object,
+`RunController` (`workflow/control/controller.ts`), built in `createRuntime()` and handed to the dashboard
+and the CLI. It is not a second engine: `submit()` puts the command on the scheduler's wake queue as a
+`control` wake, so it is applied *between* two of the scheduler's own events and never inside one — two
+commands sent in the same tick apply in the order they were sent, and the second sees what the first did.
+
+- **Commands:** `stop` (`wait` | `cancel`), `kill`, `cancelTask`, `restart`, and, declared but not yet
+  applied, `edit`, `prompt`, `approve`, `reject` and `answer`.
+- **Envelope:** a ULID `id`, the `source` (`tui` | `cli` | `inbox` | `desktop`), the sender's pid, a
+  timestamp and an optional `expected` (attempt, revision). The id deduplicates for the life of the run —
+  persisted under `run.controls.seen` in `workflow.json`, capped at the last 1000 — so a resend after a lost
+  ack is answered with the first ack and applied once. A mismatched `expected` is refused rather than
+  applied to state the sender never saw.
+- **Answer:** one `ControlAck` (`accepted` | `applied` | `rejected`) with a `reason` written as a sentence
+  for a human, because it is the text the TUI shows as a notice and the CLI prints. `applied` means the run
+  already reflects the command; `accepted` means something has to finish first.
+- **`cancelTask`** denies whatever the attempt was asking a human, aborts it, and lets the ordinary
+  `cancelled` outcome carry the task to `cancelled` — the state `restart` already accepts. An attempt that
+  has already ended and is merging back cannot be aborted, so the command is `accepted` and applied when
+  that finalization lands, ending the task instead of retrying it.
+- **After `finalize()`** the controller stays alive: the read-only accessors keep answering and every
+  command is refused with "This run has ended". A finalized scheduler is never reused.
 
 Worktree selection is static: a task uses the `parallel` workspace when it sits in a plan layer with more than one task and `maxConcurrency > 1`; two tasks alone in their layers can never overlap, so this is safe and visible in `--dry-run`.
 
@@ -157,7 +184,7 @@ It reads only: it will name a `cao clean` invocation but never run one.
 
 ## Process management and Ctrl+C
 
-`ProcessManager.spawn` pipes stdin/stdout/stderr (stdin can be kept open for interactive workers: `writeStdin`/`endStdin`), writes `stdout.log`/`stderr.log`, keeps a ring buffer, enforces the task timeout and registers the process. Workspace finalization after an attempt (git capture, merge-back) runs off the scheduler loop and re-enters through a `finalized` wake, so a merge-resolution session holding the shared-tree lock can never deadlock another task's merge-back. Termination: POSIX children are spawned detached and killed by process group (SIGTERM, then SIGKILL after `killGrace`); on Windows stdin is closed, then `taskkill /PID <pid> /T /F` kills the tree. `createInterruptController` handles SIGINT/SIGTERM and the dashboard's Ctrl+C: first interrupt → `scheduler.requestStop('cancel', 'signal')` + graceful shutdown; second → force kill, synchronous state save, exit 130. `process.on('exit')` performs a last kill sweep.
+`ProcessManager.spawn` pipes stdin/stdout/stderr (stdin can be kept open for interactive workers: `writeStdin`/`endStdin`), writes `stdout.log`/`stderr.log`, keeps a ring buffer, enforces the task timeout and registers the process. Workspace finalization after an attempt (git capture, merge-back) runs off the scheduler loop and re-enters through a `finalized` wake, so a merge-resolution session holding the shared-tree lock can never deadlock another task's merge-back. Termination: POSIX children are spawned detached and killed by process group (SIGTERM, then SIGKILL after `killGrace`); on Windows stdin is closed, then `taskkill /PID <pid> /T /F` kills the tree. `createInterruptController` handles SIGINT/SIGTERM and the dashboard's Ctrl+C: first interrupt → a `stop`/`cancel` command through the run controller + graceful shutdown; second → `forceKill()`, which is force kill, synchronous state save, exit 130. A `kill` command escalates to that same `forceKill()` once the run's state has been stopped, so the escalation is named rather than inferred from two interrupts. `process.on('exit')` performs a last kill sweep.
 
 ## Persistence and resume
 

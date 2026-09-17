@@ -39,3 +39,40 @@ export interface ControlRequest {
   /** `approve` | `reject`. */
   note?: string;
 }
+
+/** Where a control command came from. Spec §2.2; `TaskRevision` records it too (§2.6). */
+export const CONTROL_SOURCES = ['tui', 'cli', 'inbox', 'desktop'] as const;
+export type ControlSource = (typeof CONTROL_SOURCES)[number];
+
+/**
+ * What became of a command the run controller was given (spec §2.2).
+ *
+ * `accepted` and `applied` are not the same answer: `applied` means the run's state already reflects the
+ * command when the ack is written, `accepted` means the controller has taken it and something else has to
+ * finish first — a task in merge-back is cancelled once its finalization lands, not before.
+ */
+export const CONTROL_ACK_STATUSES = ['accepted', 'applied', 'rejected'] as const;
+export type ControlAckStatus = (typeof CONTROL_ACK_STATUSES)[number];
+
+/**
+ * The answer to one control command: written to `requests/acks/<ULID>.json` when the command came from the
+ * inbox (§2.3), returned directly when it came from this process.
+ *
+ * `reason` is a sentence an operator can act on, because it is the text the TUI shows as a notice and the
+ * CLI prints before exiting 2 — never an error code and never the shape of the internal state that refused.
+ */
+export interface ControlAck {
+  protocol: ProtocolVersion;
+  /** The `id` of the command being answered; a duplicate id is answered with the first ack, verbatim. */
+  id: string;
+  status: ControlAckStatus;
+  reason?: string;
+  at: string;
+}
+
+/**
+ * How many answered command ids a run remembers (spec §2.2). Deduplication has to outlive a retry of the
+ * writer, not the whole run: an inbox request is deleted once acked, so the window only has to cover a
+ * sender that resends, and a thousand of them is far more than a human-driven run ever produces.
+ */
+export const CONTROL_SEEN_LIMIT = 1000;

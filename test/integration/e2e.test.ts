@@ -19,6 +19,7 @@ import { taskCommand } from '../../src/cli/commands/task.js';
 import { logsCommand } from '../../src/cli/commands/logs.js';
 import { reportCommand } from '../../src/cli/commands/report.js';
 import { renderSummary } from '../../src/cli/render/plain.js';
+import { controlEnvelope } from '../../src/workflow/control/commands.js';
 import type { RunReport } from '../../src/workflow/report.js';
 
 const ACCEPTANCE = `
@@ -574,6 +575,54 @@ tasks:
     const trace = await readTrace(traceFile);
     expect(trace.map((t) => `${t.taskId}#${t.attempt}`)).toEqual(['a#1', 'b#1', 'b#2', 'c#1']);
     expect(reloaded.tasks.b!.attempts[1]!.triggeredBy).toBe('resume');
+  }, 60_000);
+
+  it('cancels one of two parallel tasks through the run controller and lets the other finish', async () => {
+    const repo = await tmpGitRepo('cao-e2e-cancel-');
+    const yaml = 'name: c\nexecution:\n  maxConcurrency: 2\ntasks:\n  - id: keep\n    parallelGroup: g\n    prompt: p\n  - id: drop\n    parallelGroup: g\n    prompt: p\n';
+    const configPath = await writeWorkflow(repo, yaml);
+    const prepared = await prepareWorkflow(configPath, { launchDirectory: repo, claudeCommand: FAKE_CLAUDE });
+    requireValid(prepared);
+    const store = new FileRunStore(prepared.workflow.repositoryRoot);
+    const run = await createRun(store, { workflow: prepared.workflow, rawConfig: prepared.loaded.raw });
+    const env = fakeEnv(repo, { FAKE_CLAUDE_TASK_MODES: JSON.stringify({ drop: 'hang' }) });
+    const runtime = createRuntime({ run, environment: env, secrets: [], logger: silentLogger });
+    const execution = runtime.scheduler.execute();
+    await waitFor(() => run.tasks.drop?.state === 'running' && run.tasks.drop.attempts[0]?.pid !== undefined, 15_000);
+    const pid = run.tasks.drop!.attempts[0]!.pid!;
+    // As in the interrupt test: the pid exists before the fake has booted, and cancelling in between would
+    // race node's startup rather than the worker.
+    const traceFile = path.join(repo, '.orchestrator', 'trace.jsonl');
+    for (const start = Date.now(); !(await readTrace(traceFile)).some((t) => t.taskId === 'drop'); ) {
+      if (Date.now() - start > 15_000) throw new Error('fake Claude for task drop never wrote its trace line');
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    const ack = await runtime.controller.submit({ kind: 'cancelTask', taskId: 'drop' }, controlEnvelope('cli'));
+    expect(ack).toMatchObject({ protocol: 1, status: 'applied', reason: 'Attempt 1 of "drop" was cancelled.' });
+
+    const result = await execution;
+    await waitFor(() => !isProcessAlive(pid), 10_000);
+    // One task cancelled, the run around it untouched: its neighbour ran to completion.
+    expect(run.tasks.keep!.state).toBe('success');
+    expect(run.tasks.drop!.state).toBe('cancelled');
+    expect(run.tasks.drop!.reason).toBe('user_interrupt');
+    expect(run.tasks.drop!.attempts).toHaveLength(1);
+    expect(result.summary).toMatchObject({ success: 1, cancelled: 1 });
+
+    // The attempt's own transcript ends with the cancellation rather than with the last thing the worker said.
+    const attemptEvents = (await fs.readFile(path.join(store.paths.attemptDir(run.runId, 'drop', 1), 'events.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { kind: string; text?: string });
+    expect(attemptEvents[attemptEvents.length - 1]).toMatchObject({ kind: 'error', text: 'cancelled by the orchestrator' });
+
+    // And the run directory says so to a second terminal, which is the only thing that one can read.
+    const shown = await captureCli(() => taskCommand(['drop'], { repository: repo }));
+    expect(shown.stdout).toContain('Status:           Cancelled  (cancelled by the operator)');
+    const reloaded = await store.loadRun(run.runId);
+    expect(reloaded.tasks.drop!.state).toBe('cancelled');
+    expect(reloaded.controls!.seen.map((a) => a.status)).toEqual(['applied']);
   }, 60_000);
 
   it('runs a single selected task with --task', async () => {

@@ -3,6 +3,7 @@ import type { ResolvedWorkflow, WorkspaceMode } from './workflow.js';
 import type { InteractionRecord } from './interaction.js';
 import type { RunnerFailure } from './runner.js';
 import type { FileOp } from './transcript.js';
+import type { ControlAck } from './requests.js';
 
 export const TASK_STATES = [
   'pending',
@@ -146,6 +147,18 @@ export interface TaskRunState {
   pendingInteraction?: InteractionRecord;
 }
 
+/**
+ * The control commands this run has already answered (spec §2.2), oldest first and capped at
+ * `CONTROL_SEEN_LIMIT`.
+ *
+ * The whole ack is kept, not just the id, because a duplicate has to be answered with **the first ack** —
+ * the same status and the same reason. A sender that resends after a crash therefore learns what happened
+ * the first time instead of being told, truthfully but uselessly, that its id is already known.
+ */
+export interface RunControls {
+  seen: ControlAck[];
+}
+
 export interface RunSelection {
   only?: string[];
   from?: string[];
@@ -176,6 +189,8 @@ export interface WorkflowRun {
   exitCode?: number;
   /** Where the run wrote its `report.md` when it ended; relative to `repositoryRoot` when it is inside it. */
   reportPath?: string;
+  /** Answered control commands, for deduplication across a resend and across a resume (§2.2). */
+  controls?: RunControls;
 }
 
 export interface RunSummary {

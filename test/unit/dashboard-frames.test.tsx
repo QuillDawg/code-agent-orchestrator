@@ -108,7 +108,7 @@ const scheduler = {
 const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
 
 const element = (
-  <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />
+  <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />
 );
 
 /** Colour out, digits flattened: what is left is the shape of the frame. */

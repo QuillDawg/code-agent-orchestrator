@@ -748,6 +748,7 @@ anything: it will tell you to run `cao clean` but never runs it for you.
   latest                        # id of the most recent run
   runs/<run-id>/
     workflow.json               # full run snapshot, rewritten atomically after every transition
+                                #   (including run.controls.seen: the answered control commands, last 1000)
     events.jsonl                # append-only run log: state changes and summaries
     live.json                   # current progress, usage, file counts, pending interaction
     lock.json                   # owning pid + heartbeat

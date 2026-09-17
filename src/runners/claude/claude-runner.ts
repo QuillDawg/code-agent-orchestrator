@@ -419,7 +419,12 @@ export class ClaudeRunner implements TaskRunner {
       transcript.finish({ ...e, ts: nowIso() } as TranscriptEntry);
     };
     const outcome = ((): RunnerOutcome => {
-      if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
+      if (input.signal.aborted) {
+        // Like every other outcome below: the transcript ends with what happened to the attempt rather than
+        // stopping mid tool call, so `cao logs` on a cancelled attempt shows the cancellation.
+        finishEntry({ kind: 'error', text: 'cancelled by the orchestrator' });
+        return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
+      }
       if (exit.timedOut) {
         finishEntry({ kind: 'error', text: `timed out after ${input.timeoutMs}ms` });
         return { kind: 'error', outcome: 'timeout', message: `timed out after ${input.timeoutMs}ms`, exitCode: exit.code, signal: exit.signal, usage: finalUsage };

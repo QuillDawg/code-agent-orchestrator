@@ -18,6 +18,7 @@ import { GitWorkspaceManager, SharedOnlyWorkspaceManager, type WorkspaceManager 
 import { WorkflowEventBus } from '../events/event-bus.js';
 import { ShellHookRunner } from '../execution/hooks.js';
 import { WorkflowScheduler, type SchedulerDeps } from '../workflow/scheduler.js';
+import { createRunController, type RunController } from '../workflow/control/controller.js';
 import { Redactor } from '../logging/redact.js';
 import { ConsoleLogger, type Logger } from '../logging/logger.js';
 import { Git } from '../workspace/git.js';
@@ -96,6 +97,11 @@ export interface Runtime {
   workspace: WorkspaceManager;
   bus: WorkflowEventBus;
   scheduler: WorkflowScheduler;
+  /**
+   * The only way anything outside `src/workflow/` changes this run's execution state (spec §2.2). The
+   * dashboard and the CLI commands hold this; nothing but `src/workflow/` holds the scheduler.
+   */
+  controller: RunController;
   logger: Logger;
   redactor: Redactor;
 }
@@ -132,7 +138,8 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     emit: opts.emit,
     completion: new WorkflowCompletionStore(run.configPath),
   });
-  return { store, processManager, runners, workspace, bus, scheduler, logger, redactor };
+  const controller = createRunController({ scheduler });
+  return { store, processManager, runners, workspace, bus, scheduler, controller, logger, redactor };
 }
 
 export async function detectClaudeForWorkflow(workflow: ResolvedWorkflow): Promise<{ version?: string; command: string; found: boolean; error?: string }> {

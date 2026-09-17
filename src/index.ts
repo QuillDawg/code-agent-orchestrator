@@ -39,6 +39,15 @@ export { Redactor } from './logging/redact.js';
 export { ConsoleLogger, silentLogger } from './logging/logger.js';
 export type { Logger } from './logging/logger.js';
 export { prepareWorkflow, createRuntime } from './cli/app.js';
+export type { Runtime } from './cli/app.js';
+// The run controller (spec §2.2). `createRuntime` returns one, so an embedder that drives a run needs the
+// type it holds and the commands it can send; this is the supported way to stop, restart or cancel from
+// outside `workflow/`.
+export { createRunController } from './workflow/control/controller.js';
+export type { RunController, RunControllerDeps, RunControllerReads } from './workflow/control/controller.js';
+export { controlEnvelope } from './workflow/control/commands.js';
+export type { ControlCommand, ControlCommandKind, ControlEnvelope, TaskEdit } from './workflow/control/commands.js';
+export { ulid } from './util/ulid.js';
 export { parseDuration, formatDuration } from './util/duration.js';
 // Stayed behind when the interaction types moved to the protocol package: these shape operator-facing text,
 // which is presentation rather than contract. Exported from here as they always were.

@@ -57,7 +57,7 @@ describe('the review view over a real run', () => {
     expect((await runtime.scheduler.execute()).state).toBe('completed');
 
     const { lastFrame, stdin, unmount } = render(
-      <DashboardApp run={run} bus={runtime.bus} scheduler={runtime.scheduler} shared={shared()} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      <DashboardApp run={run} bus={runtime.bus} controller={runtime.controller} shared={shared()} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
     );
     try {
       await wait();

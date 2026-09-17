@@ -14,6 +14,16 @@ contract moves, so most `code-agent-orchestrator` releases do not bump it (spec 
 
 ### Added
 
+- **`ControlAck`**, the answer to one control command: `{ protocol, id, status, reason?, at }` with
+  `status` one of `CONTROL_ACK_STATUSES` (`accepted` | `applied` | `rejected`). It is returned in process by
+  the run controller and written to `requests/acks/<ULID>.json` when the command came from disk, so both
+  sides read one shape. `reason` is a sentence for a human, never a code.
+- **`ControlSource`** (`CONTROL_SOURCES`: `tui` | `cli` | `inbox` | `desktop`) — who sent a command.
+- **`CONTROL_SEEN_LIMIT`** (1000): how many answered command ids a run remembers, so a resend after a lost
+  ack is answered rather than applied twice.
+- **`WorkflowRun.controls?: RunControls`** — `{ seen: ControlAck[] }`, oldest first. Additive and optional;
+  `schemaVersion` stays `1` and a reader that does not know the field ignores it.
+
 - `TranscriptEntry` gains an **`unknown`** member: `{ kind: 'unknown'; ts; type; raw }`. It is what
   `parseTranscriptLine` now returns for a `kind` (or legacy `type`) this build does not recognise, instead
   of `null`. Spec §4.5 requires an unknown event type to be rendered generically and never dropped, and a

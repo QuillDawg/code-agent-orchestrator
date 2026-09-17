@@ -24,6 +24,15 @@ export class AsyncQueue<T> {
   get size(): number {
     return this.items.length;
   }
+
+  /**
+   * Take everything queued and leave the queue empty. For a consumer that has stopped consuming: the
+   * scheduler answers the control commands still waiting here when its loop ends, instead of leaving their
+   * callers on a promise nothing will ever settle.
+   */
+  drain(): T[] {
+    return this.items.splice(0, this.items.length);
+  }
 }
 
 export class RingBuffer<T> {

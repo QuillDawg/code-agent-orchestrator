@@ -1,7 +1,8 @@
 /** Ctrl+C / SIGTERM handling: stop scheduling, terminate workers, persist state, exit 130. */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { WorkflowScheduler } from '../workflow/scheduler.js';
+import type { RunController } from '../workflow/control/controller.js';
+import { controlEnvelope } from '../workflow/control/commands.js';
 import type { ProcessManager } from './process-manager.js';
 import type { Logger } from '../logging/logger.js';
 import type { RunPaths } from 'code-agent-orchestrator-protocol';
@@ -9,7 +10,11 @@ import { pathExists, readJsonIfExists, writeFileAtomic } from '../util/fs.js';
 import { nowIso } from '../util/misc.js';
 
 export interface InterruptControllerOptions {
-  scheduler: WorkflowScheduler;
+  /**
+   * The run controller, not the scheduler: a signal is one more caller asking the run to stop, and it goes
+   * through the same door as a keystroke or an inbox request (spec §2.2).
+   */
+  controller: RunController;
   processManager: ProcessManager;
   logger: Logger;
   hardDeadlineMs?: number;
@@ -20,20 +25,26 @@ export interface InterruptControllerOptions {
 export interface InterruptController {
   /** Request a graceful stop (first call) or force-kill everything (second call). */
   interrupt(source?: string): void;
+  /**
+   * What the second interrupt does, by name: kill every worker, persist what can be persisted, exit 130.
+   * A `kill` control command escalates to this once the run's state has been stopped (§2.3); it is never
+   * inferred from two clicks.
+   */
+  forceKill(): void;
   /** Install process signal handlers; returns a disposer. */
   install(): () => void;
   readonly interrupted: boolean;
 }
 
 export function createInterruptController(opts: InterruptControllerOptions): InterruptController {
-  const { scheduler, processManager, logger } = opts;
+  const { controller, processManager, logger } = opts;
   let interrupts = 0;
   let hardTimer: NodeJS.Timeout | undefined;
 
   const forceExit = (): void => {
     processManager.killAllSync();
     try {
-      scheduler.persistInterruptedSync();
+      controller.persistInterruptedSync();
     } catch {
       /* ignore */
     }
@@ -45,7 +56,7 @@ export function createInterruptController(opts: InterruptControllerOptions): Int
     if (interrupts === 1) {
       logger.warn(`${source}: stopping workers (interrupt again to force)`);
       opts.onInterrupt?.();
-      scheduler.requestStop('cancel', 'signal');
+      void controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli')).catch(() => undefined);
       void processManager.shutdown('graceful');
       hardTimer = setTimeout(() => {
         logger.error('workers did not exit in time; forcing');
@@ -76,6 +87,7 @@ export function createInterruptController(opts: InterruptControllerOptions): Int
 
   return {
     interrupt,
+    forceKill: forceExit,
     install,
     get interrupted() {
       return interrupts > 0;

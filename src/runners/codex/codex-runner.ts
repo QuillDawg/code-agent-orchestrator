@@ -279,7 +279,11 @@ export class CodexRunner implements TaskRunner {
     // stopping at the last tool call; the log is closed once, after the outcome has been decided.
     const finish = (e: Extract<TranscriptEntryInput, { kind: 'result' | 'error' }>): void => transcript.finish({ ...e, ts: nowIso() } as TranscriptEntry);
     const outcome = await (async (): Promise<RunnerOutcome> => {
-      if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
+      if (input.signal.aborted) {
+        // As above: the transcript ends with the cancellation, not with the last tool call before it.
+        finish({ kind: 'error', text: 'cancelled by the orchestrator' });
+        return { kind: 'error', outcome: 'cancelled', message: 'cancelled by orchestrator', exitCode: exit.code, signal: exit.signal, usage: finalUsage };
+      }
       if (exit.timedOut) {
         finish({ kind: 'error', text: `timed out after ${input.timeoutMs}ms` });
         return { kind: 'error', outcome: 'timeout', message: `timed out after ${input.timeoutMs}ms`, exitCode: exit.code, signal: exit.signal, usage: finalUsage };

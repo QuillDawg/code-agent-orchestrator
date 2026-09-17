@@ -131,9 +131,12 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
         dashboard ? dashboard.requestInteraction(interaction, signal) : { kind: 'deny', message: 'No dashboard is attached; finish with status needs_input if you cannot continue' }
     : undefined;
   const runtime: Runtime = createRuntime({ run, environment: opts.environment, secrets: opts.secrets, logger, verbose: opts.verbose, isResume: opts.isResume, approvalHandler, interactionHandler, emit: emit.announcement });
-  const { scheduler, bus, processManager, store } = runtime;
+  const { scheduler, controller, bus, processManager, store } = runtime;
 
-  const interrupt = createInterruptController({ scheduler, processManager, logger });
+  const interrupt = createInterruptController({ controller, processManager, logger });
+  // The escalation a `kill` command asks for, wired here because the interrupt controller needs the run
+  // controller to exist first and the run controller needs somewhere to escalate to (§2.2).
+  controller.setKillHandler(() => interrupt.forceKill());
   const disposeSignals = interrupt.install();
   // A leftover request from the run that was stopped must not stop the one resuming it.
   await clearStopRequest(store.paths, run.runId);
@@ -187,7 +190,7 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
     dashboard = createDashboard({
       run,
       bus,
-      scheduler,
+      controller,
       onMinimise: () => {
         process.stdout.write(`\nDashboard minimised ${glyph('dash')} the run continues. Press D to reopen, Ctrl+C to stop.\n`);
         attachPlain();

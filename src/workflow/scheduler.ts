@@ -37,6 +37,11 @@ import {
   type InteractionAnswerSource,
   type InteractionRecord,
   type CapabilityToken,
+  type ControlAck,
+  type ControlAckStatus,
+  CONTROL_SEEN_LIMIT,
+  PROTOCOL_VERSION,
+  stamp,
 } from 'code-agent-orchestrator-protocol';
 import { entryForRun, readConfig, reap, writeEntry } from '../persistence/registry.js';
 import { NEEDS_INPUT_HINT, sanitizeText } from '../util/text.js';
@@ -62,8 +67,28 @@ import type { Logger } from '../logging/logger.js';
 import { silentLogger } from '../logging/logger.js';
 import type { WorkflowCompletionStore } from './completion-store.js';
 import { readJsonIfExists } from '../util/fs.js';
+import { commandTaskId, revisionCount, type ControlCommand, type ControlEnvelope } from './control/commands.js';
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
+
+/** Terminal states a manual restart returns to `pending`; the set the dashboard's `R` has always offered. */
+const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled']);
+
+/** Rejection text for anything asked of a run that has already been finalized (§2.2). */
+function runEndedReason(runId: string): string {
+  return `This run has ended, so its execution state cannot be changed. Start it again with "cao resume ${runId}".`;
+}
+
+function noSuchTaskReason(taskId: string, runId: string): string {
+  return `There is no task "${taskId}" in this run. Run "cao status ${runId}" to see the tasks it has.`;
+}
+
+/** What `decideControl` concluded: the ack to record, and the change to make once that ack is on disk. */
+interface ControlDecision {
+  status: ControlAckStatus;
+  reason?: string;
+  apply?: () => void | Promise<void>;
+}
 
 type Wake =
   | { kind: 'attempt_done'; taskId: string; attempt: number; outcome: RunnerOutcome }
@@ -71,7 +96,9 @@ type Wake =
   | { kind: 'approval'; taskId: string; decision: 'approved' | 'rejected'; note?: string }
   | { kind: 'retry_due' }
   | { kind: 'stop'; mode: 'wait' | 'cancel'; cause: StopCause }
-  | { kind: 'restart'; taskId: string };
+  | { kind: 'restart'; taskId: string }
+  /** §2.2 — a control command, applied in the loop so it is serialized with every other state change. */
+  | { kind: 'control'; command: ControlCommand; envelope: ControlEnvelope; settle: (ack: ControlAck) => void };
 
 export interface SchedulerDeps {
   run: WorkflowRun;
@@ -281,6 +308,12 @@ export class WorkflowScheduler {
   private readonly openInteractions = new Map<string, Map<string, InteractionRecord>>();
   /** The same requests, as callbacks that settle them from outside the handler (the operator stopped the run). */
   private readonly interactionSettlers = new Map<string, Map<string, (reason: string) => void>>();
+  /**
+   * Tasks an operator has asked to cancel (§2.2). Set when the abort goes out, and again when the cancel
+   * arrived too late to abort anything — a task already merging back finishes that first, and this is what
+   * remembers to end it as `cancelled` instead of retrying it once the `finalized` wake lands.
+   */
+  private readonly cancelRequests = new Set<string>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
   private retryTimer: unknown;
   private liveTimer: unknown;
@@ -329,13 +362,34 @@ export class WorkflowScheduler {
 
   // ------------------------------------------------------------------ public API
 
+  /**
+   * Ask the run to stop. Scheduler-internal and for the run's own policies (`onFailure`, a pause); anything
+   * outside `src/workflow/` goes through the run controller instead, which is the only way in (§2.2).
+   */
   requestStop(mode: 'wait' | 'cancel', cause: StopCause = 'signal'): void {
     this.wake.push({ kind: 'stop', mode, cause });
   }
 
-  /** Dashboard-only manual retry for terminal tasks while the workflow remains active. */
+  /** Manual retry for a terminal task while the workflow remains active; the controller's `restart`. */
   requestRestart(taskId: string): void {
     this.wake.push({ kind: 'restart', taskId });
+  }
+
+  /** Whether `finalize()` has run. The run controller outlives it; this scheduler is never reused (§2.2). */
+  get ended(): boolean {
+    return this.finished;
+  }
+
+  /**
+   * Apply one control command and answer it (§2.2).
+   *
+   * The command enters the same `AsyncQueue<Wake>` as `attempt_done`, `finalized`, `approval`, `retry_due`,
+   * `stop` and `restart`, so it is applied between two of those and never inside one: two commands submitted
+   * in the same tick apply in the order they were submitted, and the second sees what the first did.
+   */
+  submitControl(command: ControlCommand, envelope: ControlEnvelope): Promise<ControlAck> {
+    if (this.finished) return Promise.resolve(this.buildAck(envelope, 'rejected', runEndedReason(this.run.runId)));
+    return new Promise<ControlAck>((settle) => this.wake.push({ kind: 'control', command, envelope, settle }));
   }
 
   /** Recent transcript entries of a task (in-process; other terminals read the attempt's events.jsonl). */
@@ -1024,9 +1078,18 @@ export class WorkflowScheduler {
 
   /** Deny every request still waiting for a human, in every task. Safe to call twice: settling is idempotent. */
   private settleOpenInteractions(reason: string): void {
-    for (const settlers of [...this.interactionSettlers.values()]) {
-      for (const settle of [...settlers.values()]) settle(reason);
-    }
+    for (const taskId of [...this.interactionSettlers.keys()]) this.settleTaskInteractions(taskId, reason);
+  }
+
+  /**
+   * The same, for one task. `cancelTask` needs it: cancelling one attempt must not answer the prompt another
+   * task has on the operator's screen. `reason` reaches the worker as the deny message, so it goes through
+   * the same `denyMessage` wrapping and carries the "finish with status needs_input" hint with it.
+   */
+  private settleTaskInteractions(taskId: string, reason: string): void {
+    const settlers = this.interactionSettlers.get(taskId);
+    if (!settlers) return;
+    for (const settle of [...settlers.values()]) settle(reason);
   }
 
   private hookEnv(task: ResolvedTask, ws?: WorkspaceInfo): Record<string, string> {
@@ -1051,26 +1114,186 @@ export class WorkflowScheduler {
       case 'retry_due':
         break;
       case 'stop':
-        if (!this.stop || (this.stop.mode === 'wait' && w.mode === 'cancel') || w.cause === 'signal') {
-          this.stop = { mode: w.mode, cause: w.cause };
-        }
-        if (w.mode === 'cancel') for (const e of this.inflight.values()) e.abort.abort();
-        // Whatever the stop mode, nothing may still be asking the operator who just stopped the run: with
-        // `wait` the worker is left to finish its turn, and a denial is what lets it.
-        this.settleOpenInteractions(w.cause === 'signal' ? 'The run was interrupted' : 'The run is stopping');
+        this.applyStop(w.mode, w.cause);
         break;
-      case 'restart': {
-        if (this.stop || this.inflight.has(w.taskId)) break;
-        const state = this.run.tasks[w.taskId];
-        if (!state || !TERMINAL_TASK_STATES.has(state.state) || state.state === 'success') break;
-        this.setState(state, 'pending', undefined, 'manually restarted from dashboard');
-        state.blockedBy = undefined;
-        state.retryWindowStart = (state.attempts[state.attempts.length - 1]?.number ?? 0) + 1;
-        this.bus.emit({ type: 'workflow.warning', code: 'restart', taskId: w.taskId, message: 'task manually restarted from dashboard' });
-        await this.persist();
+      case 'restart':
+        await this.applyRestart(w.taskId);
         break;
-      }
+      case 'control':
+        await this.handleControl(w);
+        break;
     }
+  }
+
+  private applyStop(mode: 'wait' | 'cancel', cause: StopCause): void {
+    if (!this.stop || (this.stop.mode === 'wait' && mode === 'cancel') || cause === 'signal') {
+      this.stop = { mode, cause };
+    }
+    if (mode === 'cancel') for (const e of this.inflight.values()) e.abort.abort();
+    // Whatever the stop mode, nothing may still be asking the operator who just stopped the run: with
+    // `wait` the worker is left to finish its turn, and a denial is what lets it.
+    this.settleOpenInteractions(cause === 'signal' ? 'The run was interrupted' : 'The run is stopping');
+  }
+
+  private async applyRestart(taskId: string): Promise<void> {
+    if (this.stop || this.inflight.has(taskId)) return;
+    const state = this.run.tasks[taskId];
+    if (!state || !RESTARTABLE_STATES.has(state.state)) return;
+    this.setState(state, 'pending', undefined, 'manually restarted from dashboard');
+    state.blockedBy = undefined;
+    state.retryWindowStart = (state.attempts[state.attempts.length - 1]?.number ?? 0) + 1;
+    this.bus.emit({ type: 'workflow.warning', code: 'restart', taskId, message: 'task manually restarted from dashboard' });
+    await this.persist();
+  }
+
+  // ------------------------------------------------------------------ control commands (§2.2)
+
+  private buildAck(envelope: ControlEnvelope, status: ControlAckStatus, reason?: string): ControlAck {
+    return stamp<ControlAck>({ protocol: PROTOCOL_VERSION, id: envelope.id, status, ...(reason ? { reason } : {}), at: nowIso() });
+  }
+
+  private async handleControl(w: Extract<Wake, { kind: 'control' }>): Promise<void> {
+    const { command, envelope } = w;
+    const prior = this.run.controls?.seen.find((a) => a.id === envelope.id);
+    if (prior) {
+      // A resend after an ack was lost on the way back. The first answer, verbatim, and nothing applied twice.
+      w.settle(prior);
+      return;
+    }
+    const decision = this.decideControl(command, envelope);
+    const ack = this.recordControl(envelope, decision.status, decision.reason);
+    // Persist-before-act, as everywhere else in this loop: the command is answered on disk before it changes
+    // anything, so a crash in the middle leaves a run that knows what it was told rather than one that did it
+    // twice.
+    await this.persist();
+    try {
+      await decision.apply?.();
+    } catch (err) {
+      this.logger.error(`control ${command.kind} was recorded but could not be applied: ${(err as Error).message}`);
+    }
+    w.settle(ack);
+  }
+
+  private recordControl(envelope: ControlEnvelope, status: ControlAckStatus, reason?: string): ControlAck {
+    const ack = this.buildAck(envelope, status, reason);
+    const controls = (this.run.controls ??= { seen: [] });
+    controls.seen.push(ack);
+    if (controls.seen.length > CONTROL_SEEN_LIMIT) controls.seen.splice(0, controls.seen.length - CONTROL_SEEN_LIMIT);
+    return ack;
+  }
+
+  /**
+   * What one command does to this run, decided against the state as it is right now - which is why this runs
+   * inside the loop and not at the point of submission.
+   */
+  private decideControl(command: ControlCommand, envelope: ControlEnvelope): ControlDecision {
+    const stale = this.staleness(command, envelope);
+    if (stale) return { status: 'rejected', reason: stale };
+    switch (command.kind) {
+      case 'stop':
+        return {
+          status: 'applied',
+          reason: command.mode === 'cancel' ? 'Stopping the run and aborting its workers.' : 'Stopping the run once its workers finish their turn.',
+          apply: () => this.applyStop(command.mode, 'signal'),
+        };
+      case 'kill':
+        // The state change is a cancel-mode stop; killing the worker processes belongs to the caller that owns
+        // them, because this scheduler owns run state and never a process table.
+        return { status: 'applied', reason: 'Stopping the run and killing its workers now.', apply: () => this.applyStop('cancel', 'signal') };
+      case 'restart':
+        return this.decideRestart(command.taskId);
+      case 'cancelTask':
+        return this.decideCancelTask(command.taskId);
+      case 'edit':
+        return { status: 'rejected', reason: `Editing a task is not available until stage 2 of the v2 beta. Stop the run, change "${command.taskId}" in the workflow file, and start a new run.` };
+      case 'prompt':
+        return { status: 'rejected', reason: `Prompting a task is not available until stage 2 of the v2 beta. Answer "${command.taskId}" in the terminal that owns this run.` };
+      case 'approve':
+      case 'reject':
+        return { status: 'rejected', reason: `Approval decisions are not taken by the run controller yet. Approve or reject "${command.taskId}" in the terminal that owns this run.` };
+      case 'answer':
+        return { status: 'rejected', reason: `Open requests are not answered through the run controller yet. Answer "${command.taskId}" in the terminal that owns this run.` };
+    }
+  }
+
+  /**
+   * Whether the sender built this command on a view of the task that has since moved on (§2.2). Only a command
+   * that names a task can be stale; a run-level stop means the same thing whenever it arrives.
+   */
+  private staleness(command: ControlCommand, envelope: ControlEnvelope): string | undefined {
+    const expected = envelope.expected;
+    const taskId = commandTaskId(command);
+    if (!expected || !taskId) return undefined;
+    const state = this.run.tasks[taskId];
+    if (!state) return undefined; // the command's own rejection says it better than a staleness message would
+    if (expected.attempt !== undefined) {
+      const attempt = state.attempts[state.attempts.length - 1]?.number ?? 0;
+      if (attempt !== expected.attempt) return `Task "${taskId}" is on attempt ${attempt}, request expected ${expected.attempt}.`;
+    }
+    if (expected.revision !== undefined) {
+      const revision = revisionCount(state);
+      if (revision !== expected.revision) return `Task "${taskId}" is at revision ${revision}, request expected ${expected.revision}.`;
+    }
+    return undefined;
+  }
+
+  private decideRestart(taskId: string): ControlDecision {
+    const state = this.run.tasks[taskId];
+    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    if (this.stop) return { status: 'rejected', reason: `The run is stopping, so "${taskId}" cannot be restarted. Start it again with "cao resume ${this.run.runId}" once the run has ended.` };
+    if (this.inflight.has(taskId) || ACTIVE_TASK_STATES.has(state.state)) return { status: 'rejected', reason: `Task "${taskId}" is still running. Cancel it first, then restart it.` };
+    if (!RESTARTABLE_STATES.has(state.state)) {
+      return { status: 'rejected', reason: `Only failed, blocked, or cancelled tasks can be restarted while this run is active; "${taskId}" is ${state.state}.` };
+    }
+    return { status: 'applied', reason: `Restarting "${taskId}".`, apply: () => this.applyRestart(taskId) };
+  }
+
+  /**
+   * `cancelTask` [D22]: abort the attempt that is running, settle whatever it was asking a human first, and
+   * let the existing `cancelled` outcome carry it to a `cancelled` task - the state `restart` already takes.
+   *
+   * A task whose attempt has already ended is past the point where aborting achieves anything: its workspace
+   * is merging back, and the command waits for that `finalized` wake rather than racing it.
+   */
+  private decideCancelTask(taskId: string): ControlDecision {
+    const state = this.run.tasks[taskId];
+    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    if (this.pendingMerges.has(taskId)) {
+      return {
+        status: 'accepted',
+        reason: `Task "${taskId}" is waiting for the shared tree to merge back; it is cancelled as soon as that finishes.`,
+        apply: () => void this.cancelRequests.add(taskId),
+      };
+    }
+    const entry = this.inflight.get(taskId);
+    if (entry) {
+      const attempt = state.attempts.find((a) => a.number === entry.attempt);
+      if (attempt?.endedAt) {
+        return {
+          status: 'accepted',
+          reason: `Attempt ${entry.attempt} of "${taskId}" has ended and is merging back; the task is cancelled as soon as that finishes.`,
+          apply: () => void this.cancelRequests.add(taskId),
+        };
+      }
+      return {
+        status: 'applied',
+        reason: `Attempt ${entry.attempt} of "${taskId}" was cancelled.`,
+        apply: () => {
+          this.cancelRequests.add(taskId);
+          // Deny first, then abort [D22]. A worker blocked on a permission prompt is not reading its abort
+          // signal; denying is what returns it to its own loop, and it leaves the operator's screen clear.
+          this.settleTaskInteractions(taskId, 'The task was cancelled');
+          entry.abort.abort(new Error(`task "${taskId}" was cancelled`));
+        },
+      };
+    }
+    if (state.state === 'pending' || state.state === 'ready') {
+      return { status: 'rejected', reason: `Task "${taskId}" has not started, so there is nothing to cancel. Stop the run instead if it should not run at all.` };
+    }
+    if (TERMINAL_TASK_STATES.has(state.state)) {
+      return { status: 'rejected', reason: `Task "${taskId}" already finished as ${state.state}, so there is nothing to cancel.` };
+    }
+    return { status: 'rejected', reason: `Task "${taskId}" is ${state.state} and has no attempt running, so there is nothing to cancel.` };
   }
 
   private async handleApproval(taskId: string, decision: 'approved' | 'rejected', note?: string): Promise<void> {
@@ -1302,6 +1525,27 @@ export class WorkflowScheduler {
   }
 
   private async applyAttemptOutcome(task: ResolvedTask, state: TaskRunState, attempt: TaskAttempt, result: TaskResult | undefined, fin?: FinalizeResult): Promise<void> {
+    await this.applyOutcome(task, state, attempt, result, fin);
+    await this.applyPendingCancel(task, state, attempt);
+  }
+
+  /**
+   * A `cancelTask` that arrived while the task was finishing its attempt or merging back (§2.2). The attempt's
+   * own outcome is recorded first and truthfully - the work it did is what it did - and the cancel only stops
+   * what would have happened next, which is the retry.
+   */
+  private async applyPendingCancel(task: ResolvedTask, state: TaskRunState, attempt: TaskAttempt): Promise<void> {
+    if (!this.cancelRequests.delete(task.id)) return;
+    if (TERMINAL_TASK_STATES.has(state.state)) return;
+    state.endedAt = nowIso();
+    state.retryNotBefore = undefined;
+    state.resumeSessionId = undefined;
+    this.setState(state, 'cancelled', 'user_interrupt', 'cancelled by the operator');
+    this.bus.emit({ type: 'task.cancelled', taskId: task.id, attempt: attempt.number, reason: 'user_interrupt' });
+    await this.persist();
+  }
+
+  private async applyOutcome(task: ResolvedTask, state: TaskRunState, attempt: TaskAttempt, result: TaskResult | undefined, fin?: FinalizeResult): Promise<void> {
     const outcome = attempt.outcome ?? 'crash';
     const mergeFailed = fin?.merge?.status === 'conflict';
     state.currentAttempt = undefined;
@@ -1361,9 +1605,12 @@ export class WorkflowScheduler {
     }
 
     if (outcome === 'cancelled' || outcome === 'interrupted') {
-      const reason: TaskReason = this.stop?.cause === 'signal' ? 'user_interrupt' : 'stop_requested';
+      // An operator who cancelled this one task interrupted it as surely as a Ctrl+C did, and the run around
+      // it is not stopping: `stop_requested` would say the opposite of what happened.
+      const requested = this.cancelRequests.delete(task.id);
+      const reason: TaskReason = requested || this.stop?.cause === 'signal' ? 'user_interrupt' : 'stop_requested';
       state.endedAt = nowIso();
-      this.setState(state, 'cancelled', reason, attempt.error);
+      this.setState(state, 'cancelled', reason, requested ? 'cancelled by the operator' : attempt.error);
       this.bus.emit({ type: 'task.cancelled', taskId: task.id, attempt: attempt.number, reason });
       return;
     }
@@ -1469,6 +1716,11 @@ export class WorkflowScheduler {
 
   private async finalize(): Promise<SchedulerResult> {
     this.finished = true;
+    // Whatever is still queued can no longer be applied. A control command waiting here is answered rather
+    // than left on a promise nothing will ever settle: the controller outlives this scheduler (§2.2).
+    for (const queued of this.wake.drain()) {
+      if (queued.kind === 'control') queued.settle(this.buildAck(queued.envelope, 'rejected', runEndedReason(this.run.runId)));
+    }
     if (this.retryTimer !== undefined) this.clock.clearTimeout(this.retryTimer);
     for (const id of this.topo) {
       const st = this.run.tasks[id]!;

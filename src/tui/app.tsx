@@ -16,7 +16,8 @@ import {
   type TranscriptEntry,
 } from 'code-agent-orchestrator-protocol';
 import type { EventBus } from '../events/event-bus.js';
-import type { WorkflowScheduler } from '../workflow/scheduler.js';
+import type { RunController } from '../workflow/control/controller.js';
+import { controlEnvelope } from '../workflow/control/commands.js';
 import { stateGlyph, STATE_LABEL, STATE_COLOR, summarize } from '../workflow/states.js';
 import { formatDuration, formatDurationShort, formatClock } from '../util/duration.js';
 import { renderTranscript } from './transcript.js';
@@ -36,7 +37,11 @@ import type { View } from './store.js';
 export interface DashboardOptions {
   run: WorkflowRun;
   bus: EventBus;
-  scheduler: WorkflowScheduler;
+  /**
+   * Everything the dashboard reads from the run, and the only way it changes anything (spec §2.2). It never
+   * holds the scheduler: a key press is a command like any other, submitted and answered.
+   */
+  controller: RunController;
   /** Q pressed: the controller unmounts; the caller switches to line output until reopen. */
   onMinimise: () => void;
   onInterrupt: () => void;
@@ -82,7 +87,7 @@ export interface AppProps extends DashboardOptions {
 
 /** The dashboard component; exported for rendering in tests. */
 export function DashboardApp(props: AppProps): React.JSX.Element {
-  const { run, bus, scheduler, onMinimise, onInterrupt } = props;
+  const { run, bus, controller, onMinimise, onInterrupt } = props;
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [, setTick] = useState(0);
@@ -96,7 +101,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const entriesCache = useRef<{ taskId: string; value: TranscriptEntry[] } | undefined>(undefined);
   const tasks = useMemo(() => run.workflow.tasks, [run]);
   // Stable, so the review view's own cache is not thrown away on every spinner frame.
-  const loadDiff = useMemo(() => (taskId: string) => scheduler.capturedDiff(taskId), [scheduler]);
+  const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
   const rows = stdout?.rows ?? 30;
   const columns = stdout?.columns ?? 100;
   const color = true;
@@ -157,14 +162,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     const done = (entries: TranscriptEntry[]): void => {
       if (!cancelled) setPastAttempt({ taskId: pastTaskId, attempt: pastAttemptNumber, entries });
     };
-    void scheduler
+    void controller
       .attemptTranscript(pastTaskId, pastAttemptNumber)
       .then(done)
       .catch(() => done([]));
     return () => {
       cancelled = true;
     };
-  }, [pastTaskId, pastAttemptNumber, scheduler]);
+  }, [pastTaskId, pastAttemptNumber, controller]);
 
   const dashboardKeys = view.kind === 'dashboard' && !pending;
   // The review view owns its own keys (Esc leaves the hunk pane before it leaves the view), so it is not here.
@@ -202,11 +207,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       else if (input === '?' || lower === 'h') setView({ kind: 'help' });
       else if (lower === 'r') {
         const selected = tasks[cursor]!;
-        const state = run.tasks[selected.id]?.state;
-        if (state && ['failed', 'blocked', 'cancelled'].includes(state)) {
-          scheduler.requestRestart(selected.id);
-          setNotice(`Restarting ${selected.id}…`);
-        } else setNotice('Only failed, blocked, or cancelled tasks can be restarted while this run is active.');
+        // The controller decides, not the screen: it holds the run state this frame is only a picture of, and
+        // its rejection is already a sentence written for this notice.
+        const attempts = run.tasks[selected.id]?.attempts;
+        const expected = attempts?.[attempts.length - 1]?.number;
+        void controller
+          .submit({ kind: 'restart', taskId: selected.id }, controlEnvelope('tui', expected ? { attempt: expected } : undefined))
+          .then((ack) => setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${selected.id}" cannot be restarted.`) : `Restarting ${selected.id}…`))
+          .catch((err: unknown) => setNotice(`Could not restart ${selected.id}: ${(err as Error).message}`));
       } else if (lower === 'q') {
         onMinimise();
         exit();
@@ -316,7 +324,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
    * array while the buffer has not grown or been replaced.
    */
   const followEntries = (taskId: string): TranscriptEntry[] => {
-    const next = scheduler.transcript(taskId);
+    const next = controller.transcript(taskId);
     const cached = entriesCache.current;
     if (cached && cached.taskId === taskId && cached.value.length === next.length && cached.value[next.length - 1] === next[next.length - 1]) return cached.value;
     entriesCache.current = { taskId, value: next };
@@ -351,8 +359,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           followAttempt === undefined
             ? undefined
             : view.attempt === undefined
-              ? (oldest) => scheduler.olderTaskTranscript(view.taskId, followAttempt, oldest)
-              : (oldest) => scheduler.olderTranscript(view.taskId, followAttempt, oldest)
+              ? (oldest) => controller.olderTaskTranscript(view.taskId, followAttempt, oldest)
+              : (oldest) => controller.olderTranscript(view.taskId, followAttempt, oldest)
         }
         onExit={() => setView({ kind: 'dashboard' })}
         footerHint="Q/Esc dashboard"
@@ -466,7 +474,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       (shownHistory.length ? 2 + shownHistory.reduce((n, r) => n + 1 + r.notes.length, 0) + (history.length > shownHistory.length ? 1 : 0) : 0) +
       (shownInteractions.length ? 3 + shownInteractions.length + (interactions.length > shownInteractions.length ? 1 : 0) : 0) +
       (notes.length ? 2 + notes.reduce((n, g) => n + 1 + g.items.length, 0) : 0);
-    const entries = scheduler.peek(task.id, 8);
+    const entries = controller.peek(task.id, 8);
     const lines = renderTranscript(entries, { color, width: Math.max(20, columns - 4), timestamps: columns >= 100 ? true : 'short' }).slice(-Math.max(3, Math.min(10, rows - 18 - blockLines)));
     const ratio = contextRatio(u);
     return (
@@ -601,7 +609,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         const activity = activityCell({
           task: t,
           state: st,
-          entries: scheduler.peek(t.id, ACTIVITY_LOOKBACK),
+          entries: controller.peek(t.id, ACTIVITY_LOOKBACK),
           startedAt: a?.startedAt,
           pendingDeps: st.state === 'pending' ? t.dependsOn.filter((d) => !['success', 'skipped'].includes(run.tasks[d]?.state ?? '')) : [],
           now,

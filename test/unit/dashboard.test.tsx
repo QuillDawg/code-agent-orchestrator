@@ -572,7 +572,7 @@ describe('createDashboard controller', () => {
         clear: () => undefined,
       };
     }) as unknown as DashboardOptions['mount'];
-    const controller = createDashboard({ run: {} as never, bus: {} as never, scheduler: {} as never, onMinimise: () => undefined, onInterrupt: () => undefined, mount });
+    const controller = createDashboard({ run: {} as never, bus: {} as never, controller: {} as never, onMinimise: () => undefined, onInterrupt: () => undefined, mount });
     return { controller, shared: () => mounted[mounted.length - 1]!, mounts: () => mounted.length, unmounts: () => unmounts };
   }
 
@@ -988,7 +988,7 @@ describe('DashboardApp', () => {
     };
     const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
     const { lastFrame, stdin, unmount } = render(
-      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
     );
     await wait();
     expect(stripAnsi(lastFrame() ?? '')).toContain('implement-102');
@@ -1037,7 +1037,7 @@ describe('DashboardApp', () => {
     };
     let minimised = 0;
     const { lastFrame, stdin, unmount } = render(
-      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={scheduler as never} shared={shared} finished={false} onMinimise={() => minimised++} onInterrupt={() => undefined} />,
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => minimised++} onInterrupt={() => undefined} />,
     );
     await wait();
     stdin.write('c');
@@ -1094,7 +1094,7 @@ describe('DashboardApp', () => {
     queue.push({ kind: 'interaction', id: 'i1', interaction: interaction({ id: 'r1', title: 'Bash: first' }), resolve: () => undefined });
     queue.push({ kind: 'interaction', id: 'i2', interaction: interaction({ id: 'r2', toolName: 'Write', title: 'Write src/new.ts', input: { file_path: 'src/new.ts', content: 'x' } }), resolve: () => undefined });
     const { lastFrame, stdin, unmount } = render(
-      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={{ peek: () => [], transcript: () => [] } as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={{ peek: () => [], transcript: () => [] } as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
     );
     await wait();
     expect(stripAnsi(lastFrame() ?? '')).toContain('Bash: first');
@@ -1124,7 +1124,7 @@ describe('DashboardApp', () => {
   const mount = (run: unknown, scheduler: Record<string, unknown>) => {
     const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
     return render(
-      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} scheduler={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
     );
   };
 
