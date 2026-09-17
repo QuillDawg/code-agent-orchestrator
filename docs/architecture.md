@@ -124,11 +124,16 @@ commands sent in the same tick apply in the order they were sent, and the second
   for a human, because it is the text the TUI shows as a notice and the CLI prints. `applied` means the run
   already reflects the command; `accepted` means something has to finish first.
 - **`cancelTask`** denies whatever the attempt was asking a human, aborts it, and lets the ordinary
-  `cancelled` outcome carry the task to `cancelled` — the state `restart` already accepts. An attempt that
-  has already ended and is merging back cannot be aborted, so the command is `accepted` and applied when
-  that finalization lands, ending the task instead of retrying it.
-- **After `finalize()`** the controller stays alive: the read-only accessors keep answering and every
-  command is refused with "This run has ended". A finalized scheduler is never reused.
+  `cancelled` outcome carry the task to `cancelled` — the state `restart` already accepts. The abort is
+  delivered synchronously but the worker takes a moment to die, so the acknowledgment says the attempt is
+  *being* aborted, and a `restart` asked for in that window is refused with "it is being cancelled and has
+  not stopped yet" rather than with "cancel it first". An attempt that has already ended and is merging
+  back cannot be aborted, so the command is `accepted` and applied when that finalization lands, ending the
+  task instead of retrying it.
+- **After `finalize()`** the controller stays alive: the read-only accessors keep answering and a command
+  the run has not seen before is refused with "This run has ended". Identity is checked first, so a resend
+  of an id the run already answered still gets that first ack — a stop that was applied must not be
+  reported as refused because the run has since ended.
 
 Worktree selection is static: a task uses the `parallel` workspace when it sits in a plan layer with more than one task and `maxConcurrency > 1`; two tasks alone in their layers can never overlap, so this is safe and visible in `--dry-run`.
 

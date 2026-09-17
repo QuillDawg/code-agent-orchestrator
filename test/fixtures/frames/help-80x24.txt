@@ -2,24 +2,17 @@ Keys
 
   ↑↓        select a task            Enter     task details
   F / L     follow a task's transcript
-              ←→/Tab or #-# switch task   P task picker   [ ] earlier/later
-attempt
-              ↑↓ PgUp/PgDn scroll   g oldest line   G newest line and follow
-again
-              t expand tool output and subagent entries   T show thinking
-              / search   n/N next/previous match   k cycle the kind filter
-              scrolling past the top pages older entries in from disk   Esc/Q
-back
-  U         usage: tokens, context, cost, time in tools per task    (S sort by
-cost)
+  U         usage per task (S sorts by cost)
   C         review what each task changed
-              list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks
-  O $VISUAL/$EDITOR   Esc back
-              hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file
- O editor   Esc back to the list
   R         restart a failed, blocked or cancelled task
   Q         minimise the dashboard (the run continues; D reopens it)
   Ctrl+C    stop the run (twice to force)
+
+  In a transcript: ←→/Tab or #-# task   P picker   [ ] attempt
+      ↑↓ PgUp/PgDn scroll   g oldest   G newest   / search   n/N match
+      t tool output   T thinking   k kind filter   Esc/Q back
+  In the review: ↑↓ select   Enter hunks   N/P hunk   ←→ file
+      O opens $VISUAL/$EDITOR   Esc back
 
   When a worker needs you, a prompt appears here automatically:
   Y allow   A allow for the rest of the task   N deny   R deny with a reason

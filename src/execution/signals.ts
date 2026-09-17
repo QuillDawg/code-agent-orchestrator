@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { RunController } from '../workflow/control/controller.js';
-import { commandForRequest, controlEnvelope, envelopeForRequest } from '../workflow/control/commands.js';
+import { commandForRequest, controlEnvelope, envelopeForRequest, runEndedReason } from '../workflow/control/commands.js';
 import type { ProcessManager } from './process-manager.js';
 import type { Logger } from '../logging/logger.js';
 import type { CapabilityToken, ControlRequest, RunPaths } from 'code-agent-orchestrator-protocol';
@@ -147,21 +147,24 @@ export async function clearStopRequest(paths: RunPaths, runId: string): Promise<
 }
 
 /**
- * Answer and remove whatever was left in the inbox before this orchestrator took the run.
+ * Answer and remove whatever is left in the inbox, at both ends of a run.
  *
- * The sibling of `clearStopRequest`, and for the same reason: a request nobody got to apply must not be
- * applied by the run that resumes afterwards, which would stop or kill it the moment it started. They are
- * **answered** rather than dropped, so a `cao stop` still waiting on an ack in another terminal learns that
- * the process it was talking to is gone instead of timing out.
+ * At startup it is the sibling of `clearStopRequest`: a request nobody got to apply must not be applied by
+ * the run that resumes afterwards, which would stop or kill it the moment it started. At shutdown it is the
+ * last thing the owner does, because the watcher stops on a tick boundary and a request that lands in the
+ * half second after it would otherwise sit in `requests/` with no answer while its sender waits out the
+ * whole of `--wait`.
+ *
+ * Either way they are **answered** rather than dropped, so the terminal still holding the other end learns
+ * that the process it was talking to is gone instead of timing out.
  */
-export async function clearPendingRequests(paths: RunPaths, runId: string): Promise<void> {
+export async function clearPendingRequests(paths: RunPaths, runId: string, when: 'startup' | 'shutdown' = 'startup'): Promise<void> {
+  const reason =
+    when === 'shutdown'
+      ? runEndedReason(runId)
+      : `The orchestrator this was sent to is no longer running, so it was never applied. Send it again to the process that owns run ${runId} now.`;
   for (const pending of await readPendingRequests(paths, runId)) {
-    const ack = controlAck(
-      pending.request.id,
-      'rejected',
-      `The orchestrator this was sent to is no longer running, so it was never applied. Send it again to the process that owns run ${runId} now.`,
-    );
-    await writeAck(paths, runId, ack).catch(() => undefined);
+    await writeAck(paths, runId, controlAck(pending.request.id, 'rejected', reason)).catch(() => undefined);
     await deleteRequest(pending.file);
   }
 }

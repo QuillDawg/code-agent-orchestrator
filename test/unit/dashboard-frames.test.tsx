@@ -11,17 +11,23 @@
  * timezone to timezone. Digits are one column wide, so alignment, wrapping, padding and truncation — the
  * things a renderer upgrade actually breaks — survive the substitution intact.
  *
- * The Ink 5 -> Ink 7 move changed exactly one of the eight: at 80 columns the summary line is too long for
- * the terminal, and Ink 7 picks a different word to break it at (`… Concurrency 0/2   Cost` / ` $0.42 …`
- * where Ink 5 gave `… Concurrency 0/2` / `Cost $0.42 …`). That is upstream word wrapping, not a layout
- * change here, and the goldens record it. Everything else is byte for byte what it was.
+ * Every frame is also measured against the terminal it was laid out for. §2.5 makes "nothing taller than
+ * `rows`" the condition under which Ink 7 neither wipes scrollback nor tears on Windows, and that is a
+ * property of the tree, not of one captured moment: a golden that matched a 28-line help screen in a
+ * 24-row terminal was recording the bug rather than catching it.
+ *
+ * Four goldens were re-captured when the dashboard was made to fit the terminal it is drawn in: the three
+ * 80x24 ones, where the summary line is now truncated rather than wrapped and shortened below 100 columns
+ * and the help and usage screens have a narrow layout, and the 120x40 usage view, whose 133-column legend
+ * wrapped even there and is now two lines. The other four are byte for byte what the pre-upgrade stack
+ * produced.
  */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import React from 'react';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
-import { renderTree } from '../helpers/ink-harness.js';
+import { frameHeight, renderTree } from '../helpers/ink-harness.js';
 import type { TranscriptEntry } from 'code-agent-orchestrator-protocol';
 
 const FIXTURE_DIR = path.join(process.cwd(), 'test', 'fixtures', 'frames');
@@ -141,6 +147,11 @@ async function capture(name: string, size: { columns: number; rows: number }, ma
     // captured as "the dashboard renders fine", four times over.
     await tree.waitFor((frame) => frame.includes(marker));
     const actual = normalise(tree.lastText());
+    // The invariant, checked before the golden: a frame taller than the terminal scrolls the screen away,
+    // and one wider than it wraps into the next row and costs another (§2.5).
+    expect(frameHeight(tree.lastFrame()), `${name} is taller than its terminal`).toBeLessThanOrEqual(size.rows);
+    const widest = Math.max(...actual.split('\n').map((line) => [...line].length));
+    expect(widest, `${name} is wider than its terminal`).toBeLessThanOrEqual(size.columns);
     const file = path.join(FIXTURE_DIR, `${name}.txt`);
     if (UPDATE) {
       await fs.mkdir(FIXTURE_DIR, { recursive: true });
@@ -175,7 +186,8 @@ describe('dashboard frames', () => {
     });
 
     it(`renders the usage view unchanged at ${size.name}`, async () => {
-      await capture(`usage-${size.name}`, size, 'Cache r/w', 'u');
+      // The footer, not a column heading: below 100 columns the usage table drops the detail columns.
+      await capture(`usage-${size.name}`, size, 'S sort by cost   Esc/Q back', 'u');
     });
 
     it(`renders the help view unchanged at ${size.name}`, async () => {

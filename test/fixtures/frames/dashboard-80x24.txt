@@ -1,6 +1,5 @@
 stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ  ·  /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost
- $#.##   ##.#k in / #.#k out
+[██████░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost $#.##
 
 ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
   ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit…

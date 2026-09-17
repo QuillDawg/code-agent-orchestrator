@@ -235,6 +235,10 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
         else if (input && !key.ctrl && !key.meta) setTyping((t) => `${t ?? ''}${input}`);
         return;
       }
+      // Ctrl+A is this view's one deliberate chord; everything below matches on the letter alone, so any
+      // other modifier press would act as that letter (Ctrl+Q would leave, Ctrl+P open the picker).
+      if (key.ctrl && input === 'a') return scrollUp(maxOffset);
+      if (key.ctrl || key.meta) return;
       if (picker) {
         if (key.escape || lower === 'q' || lower === 'p') setPicker(false);
         else if (key.upArrow) setPickerCursor((c) => Math.max(0, c - 1));
@@ -273,7 +277,7 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
       else if (key.pageDown) setOffset(() => Math.max(0, clamped - bodyHeight));
       // vim/less convention: g jumps to the oldest line, Shift+G returns to the end and resumes auto-follow.
       else if (lower === 'g' && key.shift) setOffset(0);
-      else if (input === 'g' || (key.ctrl && input === 'a')) scrollUp(maxOffset);
+      else if (input === 'g') scrollUp(maxOffset);
       else if (input === '[' && props.onSelectAttempt && task) {
         const i = task.attempts.indexOf(props.attempt ?? task.attempts[task.attempts.length - 1]!);
         if (i > 0) props.onSelectAttempt(task.attempts[i - 1]!);

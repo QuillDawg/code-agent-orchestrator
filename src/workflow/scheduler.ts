@@ -67,17 +67,12 @@ import type { Logger } from '../logging/logger.js';
 import { silentLogger } from '../logging/logger.js';
 import type { WorkflowCompletionStore } from './completion-store.js';
 import { readJsonIfExists } from '../util/fs.js';
-import { commandTaskId, revisionCount, type ControlCommand, type ControlEnvelope } from './control/commands.js';
+import { commandTaskId, revisionCount, runEndedReason, type ControlCommand, type ControlEnvelope } from './control/commands.js';
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
 
 /** Terminal states a manual restart returns to `pending`; the set the dashboard's `R` has always offered. */
 const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled']);
-
-/** Rejection text for anything asked of a run that has already been finalized (§2.2). */
-function runEndedReason(runId: string): string {
-  return `This run has ended, so its execution state cannot be changed. Start it again with "cao resume ${runId}".`;
-}
 
 function noSuchTaskReason(taskId: string, runId: string): string {
   return `There is no task "${taskId}" in this run. Run "cao status ${runId}" to see the tasks it has.`;
@@ -388,8 +383,18 @@ export class WorkflowScheduler {
    * in the same tick apply in the order they were submitted, and the second sees what the first did.
    */
   submitControl(command: ControlCommand, envelope: ControlEnvelope): Promise<ControlAck> {
+    // Identity before liveness. A sender that resends after losing an ack gets the first answer back even
+    // when the run has ended in between - otherwise a stop that *was* applied is reported as refused, and
+    // the ack already on disk is overwritten with that refusal.
+    const prior = this.priorAck(envelope.id);
+    if (prior) return Promise.resolve(prior);
     if (this.finished) return Promise.resolve(this.buildAck(envelope, 'rejected', runEndedReason(this.run.runId)));
     return new Promise<ControlAck>((settle) => this.wake.push({ kind: 'control', command, envelope, settle }));
+  }
+
+  /** The answer this run already gave to `id`, if it gave one (§2.2: a duplicate returns the first ack). */
+  private priorAck(id: string): ControlAck | undefined {
+    return this.run.controls?.seen.find((a) => a.id === id);
   }
 
   /** Recent transcript entries of a task (in-process; other terminals read the attempt's events.jsonl). */
@@ -1154,7 +1159,7 @@ export class WorkflowScheduler {
 
   private async handleControl(w: Extract<Wake, { kind: 'control' }>): Promise<void> {
     const { command, envelope } = w;
-    const prior = this.run.controls?.seen.find((a) => a.id === envelope.id);
+    const prior = this.priorAck(envelope.id);
     if (prior) {
       // A resend after an ack was lost on the way back. The first answer, verbatim, and nothing applied twice.
       w.settle(prior);
@@ -1241,6 +1246,11 @@ export class WorkflowScheduler {
     const state = this.run.tasks[taskId];
     if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
     if (this.stop) return { status: 'rejected', reason: `The run is stopping, so "${taskId}" cannot be restarted. Start it again with "cao resume ${this.run.runId}" once the run has ended.` };
+    // A cancel already asked for is seconds away from ending this task, and telling the operator to "cancel
+    // it first" is telling them to do again what they just did. Name the wait instead.
+    if (this.cancelRequests.has(taskId)) {
+      return { status: 'rejected', reason: `Task "${taskId}" is being cancelled and has not stopped yet. Restart it once it is showing as cancelled.` };
+    }
     if (this.inflight.has(taskId) || ACTIVE_TASK_STATES.has(state.state)) return { status: 'rejected', reason: `Task "${taskId}" is still running. Cancel it first, then restart it.` };
     if (!RESTARTABLE_STATES.has(state.state)) {
       return { status: 'rejected', reason: `Only failed, blocked, or cancelled tasks can be restarted while this run is active; "${taskId}" is ${state.state}.` };
@@ -1277,7 +1287,10 @@ export class WorkflowScheduler {
       }
       return {
         status: 'applied',
-        reason: `Attempt ${entry.attempt} of "${taskId}" was cancelled.`,
+        // Not "was cancelled": the abort has been delivered, but the worker takes a moment to die and the
+        // task stays `running` until it does. An operator told the task is already cancelled reaches for
+        // restart, and gets refused.
+        reason: `Attempt ${entry.attempt} of "${taskId}" is being aborted; the task ends as cancelled once its worker has stopped.`,
         apply: () => {
           this.cancelRequests.add(taskId);
           // Deny first, then abort [D22]. A worker blocked on a permission prompt is not reading its abort
@@ -1719,7 +1732,7 @@ export class WorkflowScheduler {
     // Whatever is still queued can no longer be applied. A control command waiting here is answered rather
     // than left on a promise nothing will ever settle: the controller outlives this scheduler (§2.2).
     for (const queued of this.wake.drain()) {
-      if (queued.kind === 'control') queued.settle(this.buildAck(queued.envelope, 'rejected', runEndedReason(this.run.runId)));
+      if (queued.kind === 'control') queued.settle(this.priorAck(queued.envelope.id) ?? this.buildAck(queued.envelope, 'rejected', runEndedReason(this.run.runId)));
     }
     if (this.retryTimer !== undefined) this.clock.clearTimeout(this.retryTimer);
     for (const id of this.topo) {

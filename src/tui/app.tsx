@@ -67,6 +67,73 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 /** Attempts and interactions shown in the detail view; the rest are one `cao task` away. */
 const MAX_HISTORY_ROWS = 6;
 
+/**
+ * The help screen, in two widths.
+ *
+ * `HELP_WIDE` is the text as it has always read. `HELP_NARROW` says the same things in lines that fit 80
+ * columns and in few enough of them to fit 24 rows, because an 80x24 terminal is where a wrapped help
+ * screen does the most damage: it is taller than the terminal, so opening it scrolls the dashboard away.
+ */
+const HELP_WIDE: ReadonlyArray<{ text: string; dim?: boolean }> = [
+  { text: 'Keys' },
+  { text: ' ' },
+  { text: '  ↑↓        select a task            Enter     task details' },
+  { text: "  F / L     follow a task's transcript" },
+  { text: '              ←→/Tab or 1-9 switch task   P task picker   [ ] earlier/later attempt', dim: true },
+  { text: '              ↑↓ PgUp/PgDn scroll   g oldest line   G newest line and follow again', dim: true },
+  { text: '              t expand tool output and subagent entries   T show thinking', dim: true },
+  { text: '              / search   n/N next/previous match   k cycle the kind filter', dim: true },
+  { text: '              scrolling past the top pages older entries in from disk   Esc/Q back', dim: true },
+  { text: '  U         usage: tokens, context, cost, time in tools per task    (S sort by cost)' },
+  { text: '  C         review what each task changed' },
+  { text: '              list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks   O $VISUAL/$EDITOR   Esc back', dim: true },
+  { text: '              hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file   O editor   Esc back to the list', dim: true },
+  { text: '  R         restart a failed, blocked or cancelled task' },
+  { text: '  Q         minimise the dashboard (the run continues; D reopens it)' },
+  { text: '  Ctrl+C    stop the run (twice to force)' },
+  { text: ' ' },
+  { text: '  When a worker needs you, a prompt appears here automatically:' },
+  { text: '  Y allow   A allow for the rest of the task   N deny   R deny with a reason' },
+  { text: '  1-9 / ↑↓ Enter choose an answer   T type an answer   N decline' },
+  { text: ' ' },
+  { text: 'Esc/Q back', dim: true },
+];
+
+const HELP_NARROW: ReadonlyArray<{ text: string; dim?: boolean }> = [
+  { text: 'Keys' },
+  { text: ' ' },
+  { text: '  ↑↓        select a task            Enter     task details' },
+  { text: "  F / L     follow a task's transcript" },
+  { text: '  U         usage per task (S sorts by cost)' },
+  { text: '  C         review what each task changed' },
+  { text: '  R         restart a failed, blocked or cancelled task' },
+  { text: '  Q         minimise the dashboard (the run continues; D reopens it)' },
+  { text: '  Ctrl+C    stop the run (twice to force)' },
+  { text: ' ' },
+  { text: '  In a transcript: ←→/Tab or 1-9 task   P picker   [ ] attempt', dim: true },
+  { text: '      ↑↓ PgUp/PgDn scroll   g oldest   G newest   / search   n/N match', dim: true },
+  { text: '      t tool output   T thinking   k kind filter   Esc/Q back', dim: true },
+  { text: '  In the review: ↑↓ select   Enter hunks   N/P hunk   ←→ file', dim: true },
+  { text: '      O opens $VISUAL/$EDITOR   Esc back', dim: true },
+  { text: ' ' },
+  { text: '  When a worker needs you, a prompt appears here automatically:' },
+  { text: '  Y allow   A allow for the rest of the task   N deny   R deny with a reason' },
+  { text: '  1-9 / ↑↓ Enter choose an answer   T type an answer   N decline' },
+  { text: ' ' },
+  { text: 'Esc/Q back', dim: true },
+];
+
+/**
+ * Whether a key press carries a modifier that makes it a chord rather than the letter it reports.
+ *
+ * Ink hands Ctrl+C to `useInput` as `input: 'c'` with `key.ctrl`, so a view that switches on the letter
+ * alone acts on every Ctrl chord an operator uses out of terminal habit. Screens match on `input`, so they
+ * ask this first; the one handler that wants a chord tests `key.ctrl` itself.
+ */
+function isChord(key: { ctrl: boolean; meta: boolean }): boolean {
+  return key.ctrl || key.meta;
+}
+
 function taskUsage(st: TaskRunState) {
   return addUsage(...st.attempts.map((a) => a.usage));
 }
@@ -104,6 +171,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
   const rows = stdout?.rows ?? 30;
   const columns = stdout?.columns ?? 100;
+  // The width the transcript viewer already calls narrow, so one terminal is compact everywhere or nowhere.
+  const narrow = columns < 100;
   const color = true;
   const anyRunning = tasks.some((t) => ACTIVE_TASK_STATES.has(run.tasks[t.id]?.state ?? 'pending'));
 
@@ -184,6 +253,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   useInput(
     (input, key) => {
+      if (isChord(key)) return;
       const lower = input.toLowerCase();
       if (key.escape || lower === 'q' || key.backspace) setView({ kind: 'dashboard' });
       else if (view.kind === 'detail' && (lower === 'f' || lower === 'l' || key.return)) setView({ kind: 'follow', taskId: view.taskId });
@@ -194,6 +264,10 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   useInput(
     (input, key) => {
+      // Ctrl+C is handled above and every other chord belongs to the terminal, not to this screen. Without
+      // this line Ctrl+C also arrives here as a plain `c` and opens the review view over the frame that was
+      // about to say the run is stopping; Ctrl+L, Ctrl+R and Ctrl+U are the same story.
+      if (isChord(key)) return;
       const lower = input.toLowerCase();
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       else if (key.downArrow) setCursor((c) => Math.min(tasks.length - 1, c + 1));
@@ -236,7 +310,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const taskCell = (id: string): string => truncateVisible(id, idWidth).padEnd(idWidth);
 
   const progressBar = (): string => {
-    const width = 20;
+    const width = narrow ? 10 : 20;
     const seg = (n: number): number => Math.round((n / Math.max(1, summary.total)) * width);
     let s = paint('█'.repeat(seg(summary.success)), 'green');
     s += paint('█'.repeat(seg(summary.failed + summary.blocked + summary.cancelled)), 'red');
@@ -248,17 +322,22 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   const header = (
     <Box flexDirection="column">
-      <Text>
+      <Text wrap="truncate-end">
         <Text bold>{run.workflowName}</Text>
         <Text dimColor>
           {'  '}run {run.runId}  ·  {run.repositoryRoot}
         </Text>
       </Text>
-      <Text>
+      {/* Truncated, never wrapped: a summary that spills onto a second line pushes the task list down and
+          starts that line with the stray space between two of its columns. Below 100 columns the line is
+          also shortened rather than cut - the bar loses half its width, the token counts go (the usage view
+          has them), and a finished run drops a concurrency that can only read 0/n. */}
+      <Text wrap="truncate-end">
         [{progressBar()}] {done}/{summary.total}   {paint(`✓${summary.success}`, 'green')} {paint(`✗${summary.failed + summary.blocked}`, summary.failed + summary.blocked ? 'red' : 'gray')} {paint(`▶${running}`, 'cyan')}
-        {waitingTasks.length ? ` ${paint(`?${waitingTasks.length}`, ['yellow', 'bold'])}` : ''}   Elapsed {elapsed}   Concurrency {running}/{run.workflow.execution.maxConcurrency}
+        {waitingTasks.length ? ` ${paint(`?${waitingTasks.length}`, ['yellow', 'bold'])}` : ''}   Elapsed {elapsed}
+        {narrow && props.finished ? '' : `   Concurrency ${running}/${run.workflow.execution.maxConcurrency}`}
         {totalUsage.costUsd !== undefined ? `   Cost ${formatCost(totalUsage.costUsd)}` : ''}
-        {totalUsage.inputTokens ? paint(`   ${formatTokens(totalUsage.inputTokens)} in / ${formatTokens(totalUsage.outputTokens ?? 0)} out`, 'dim') : ''}
+        {!narrow && totalUsage.inputTokens ? paint(`   ${formatTokens(totalUsage.inputTokens)} in / ${formatTokens(totalUsage.outputTokens ?? 0)} out`, 'dim') : ''}
         {props.finished ? `   State: ${run.state}` : ''}
       </Text>
       {waitingTasks.length > 0 && (
@@ -369,30 +448,17 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   }
 
   if (view.kind === 'help') {
+    // Written out rather than laid out: the help screen is the one frame an operator opens *because* they
+    // are lost, so it has to fit the terminal they are lost in. At 80 columns the wide text wraps to 28
+    // lines in a 24-row terminal, which scrolls the frame and is exactly what §2.5 forbids.
+    const lines = narrow ? HELP_NARROW : HELP_WIDE;
     return (
       <Box flexDirection="column">
-        <Text bold>Keys</Text>
-        <Text> </Text>
-        <Text>  ↑↓        select a task            Enter     task details</Text>
-        <Text>  F / L     follow a task's transcript</Text>
-        <Text dimColor>              ←→/Tab or 1-9 switch task   P task picker   [ ] earlier/later attempt</Text>
-        <Text dimColor>              ↑↓ PgUp/PgDn scroll   g oldest line   G newest line and follow again</Text>
-        <Text dimColor>              t expand tool output and subagent entries   T show thinking</Text>
-        <Text dimColor>              / search   n/N next/previous match   k cycle the kind filter</Text>
-        <Text dimColor>              scrolling past the top pages older entries in from disk   Esc/Q back</Text>
-        <Text>  U         usage: tokens, context, cost, time in tools per task    (S sort by cost)</Text>
-        <Text>  C         review what each task changed</Text>
-        <Text dimColor>              list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks   O $VISUAL/$EDITOR   Esc back</Text>
-        <Text dimColor>              hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file   O editor   Esc back to the list</Text>
-        <Text>  R         restart a failed, blocked or cancelled task</Text>
-        <Text>  Q         minimise the dashboard (the run continues; D reopens it)</Text>
-        <Text>  Ctrl+C    stop the run (twice to force)</Text>
-        <Text> </Text>
-        <Text>  When a worker needs you, a prompt appears here automatically:</Text>
-        <Text>  Y allow   A allow for the rest of the task   N deny   R deny with a reason</Text>
-        <Text>  1-9 / ↑↓ Enter choose an answer   T type an answer   N decline</Text>
-        <Text> </Text>
-        <Text dimColor>Esc/Q back</Text>
+        {lines.slice(0, Math.max(1, rows)).map((line, i) => (
+          <Text key={i} bold={i === 0} dimColor={line.dim} wrap="truncate-end">
+            {line.text}
+          </Text>
+        ))}
       </Box>
     );
   }
@@ -404,9 +470,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       <Box flexDirection="column">
         {header}
         <Text> </Text>
-        <Text bold>
+        {/* Below 100 columns the four detail columns do not fit beside the task name, and a header that
+            wraps takes its continuation from the middle of a column heading. They are dropped instead;
+            what is left is the four numbers an operator opens this view for, plus the context bar. */}
+        <Text bold wrap="truncate-end">
           {'  '}
-          {'Task'.padEnd(idWidth)}  {'State'.padEnd(11)} {'Cost'.padStart(7)} {'In'.padStart(7)} {'Out'.padStart(7)} {'Cache r/w'.padStart(11)} {'Turns'.padStart(5)} {'Time'.padStart(6)} {'Tools'.padStart(6)}  Context
+          {'Task'.padEnd(idWidth)}  {'State'.padEnd(11)} {'Cost'.padStart(7)} {'In'.padStart(7)} {'Out'.padStart(7)}
+          {narrow ? '' : ` ${'Cache r/w'.padStart(11)} ${'Turns'.padStart(5)} ${'Time'.padStart(6)} ${'Tools'.padStart(6)}`}
+          {'  '}Context
         </Text>
         {list.map(({ t, st, u }) => {
           const ratio = contextRatio(u);
@@ -419,21 +490,31 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             <Text key={t.id} wrap="truncate-end">
               {'  '}
               {taskCell(t.id)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
-              {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)} {cache.padStart(11)} {String(u.numTurns ?? '').padStart(5)} {(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} {paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'cyan')}  {ratio !== undefined ? paint(`[${bar(ratio, 8)}] `, ctxStyle as 'red') : ''}
+              {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)}
+              {narrow ? '' : ` ${cache.padStart(11)} ${String(u.numTurns ?? '').padStart(5)} ${(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} `}
+              {narrow ? '' : paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'cyan')}
+              {'  '}
+              {ratio !== undefined ? paint(`[${bar(ratio, narrow ? 5 : 8)}] `, ctxStyle as 'red') : ''}
               {paint(ctx, ctxStyle as 'red')}
               {u.compactions ? paint(`  ${u.compactions} compaction${u.compactions === 1 ? '' : 's'}`, 'dim') : ''}
             </Text>
           );
         })}
         <Text> </Text>
-        <Text>
+        <Text wrap="truncate-end">
           Total: {formatCost(totalUsage.costUsd ?? 0)}   {formatTokens(totalUsage.inputTokens ?? 0)} in / {formatTokens(totalUsage.outputTokens ?? 0)} out
-          {totalUsage.cacheCreationTokens ? `   ${formatTokens(totalUsage.cacheCreationTokens)} cache write` : ''}
+          {!narrow && totalUsage.cacheCreationTokens ? `   ${formatTokens(totalUsage.cacheCreationTokens)} cache write` : ''}
           {totalUsage.durationMs !== undefined ? `   ${formatDuration(totalUsage.durationMs)} of agent time` : ''}
-          {totalUsage.toolMs !== undefined ? `   ${formatDuration(totalUsage.toolMs)} in tools` : ''}
+          {!narrow && totalUsage.toolMs !== undefined ? `   ${formatDuration(totalUsage.toolMs)} in tools` : ''}
         </Text>
-        <Text dimColor>Cache r/w = tokens read from / written to the prompt cache   Time = duration the agent reported   Tools = time spent inside tool calls</Text>
-        <Text dimColor>S sort by {usageSort === 'order' ? 'cost' : 'workflow order'}   Esc/Q back</Text>
+        {/* Two lines rather than one: the single legend is 133 columns and wrapped even on a wide
+            terminal, which put "Tools = time spent inside tool calls" halfway through a sentence. */}
+        {(narrow ? ['Context = tokens in the session window'] : ['Cache r/w = tokens read from / written to the prompt cache', 'Time = duration the agent reported   Tools = time spent inside tool calls']).map((line) => (
+          <Text key={line} dimColor wrap="truncate-end">
+            {line}
+          </Text>
+        ))}
+        <Text dimColor wrap="truncate-end">S sort by {usageSort === 'order' ? 'cost' : 'workflow order'}   Esc/Q back</Text>
       </Box>
     );
   }

@@ -223,6 +223,9 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
     disposeSignals();
     disposeStopWatcher();
     await clearStopRequest(store.paths, run.runId);
+    // The watcher stops on a tick boundary, so a request written in the half second after it would be left
+    // in `requests/` with nobody to answer it and its sender would wait out the whole of `--wait` (§2.3).
+    await clearPendingRequests(store.paths, run.runId, 'shutdown');
     stopMinimisedKeys();
     if (dashboard) {
       await dashboard.finish();

@@ -43,6 +43,16 @@ export type ControlCommand =
 export type ControlCommandKind = ControlCommand['kind'];
 
 /**
+ * What a run that has already ended says to anything still asking it to do something (§2.2).
+ *
+ * One sentence, because a sender sees it from two places: the controller refuses a command with it, and the
+ * inbox answers with it whatever was still waiting in `requests/` when the orchestrator left.
+ */
+export function runEndedReason(runId: string): string {
+  return `This run has ended, so its execution state cannot be changed. Start it again with "cao resume ${runId}".`;
+}
+
+/**
  * Who sent a command, when, and what state they believed the run was in.
  *
  * `id` is the deduplication key for the life of the run: the same id submitted twice is answered with the

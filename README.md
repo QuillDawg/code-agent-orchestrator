@@ -589,6 +589,11 @@ time in tools; `S` sorts by cost) · `C` review what each task changed · `R` re
 cancelled task · `?`/`H` help · `Esc` back · `Q` minimise (the run continues; `D` reopens it) ·
 `Ctrl+C` stop (twice to force).
 
+`Ctrl+C` is the only chord the dashboard reads; every other `Ctrl`+key is left to the terminal. Below 100
+columns the summary line, the help screen and the usage table use a compact layout so that no frame is
+wider or taller than the terminal it is drawn in. The usage table drops its cache, turns, time and tools
+columns there; `cao task <id>` still reports all of them.
+
 </details>
 
 <details>

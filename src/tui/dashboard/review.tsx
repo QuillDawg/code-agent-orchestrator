@@ -226,6 +226,9 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
 
   useInput(
     (input, key) => {
+      // A chord is the terminal's business, not this view's: without this, Ctrl+O hands a file to $EDITOR
+      // and Ctrl+Q leaves the review (see `isChord` in app.tsx).
+      if (key.ctrl || key.meta) return;
       const lower = input.toLowerCase();
       if (lower === 'o') return openSelected();
       if (mode === 'pane') {

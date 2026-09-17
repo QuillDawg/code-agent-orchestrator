@@ -136,6 +136,13 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **The dashboard fits an 80-column terminal.** The summary line is truncated rather than wrapped, and
+  below 100 columns it drops the token counts (the usage view has them) and halves the progress bar; the
+  usage table drops its cache, turns, time and tools columns and shortens its legend; and the help screen
+  has a narrow layout. `?` used to draw 28 lines into a 24-row terminal, which scrolled the dashboard out
+  of the screen to read it, and the summary line wrapped onto a second line that began with the stray
+  space between two of its columns. Nothing changes at 100 columns or wider except the usage legend, which
+  was 133 columns and wrapped even there and is now two lines.
 - **An announced run now advertises what it accepts.** A registry entry's `capabilities` was always `[]`,
   because nothing polled for requests; a run started by this release writes
   `["requests", "stop", "kill", "restart"]`, which is exactly what its inbox acts on. `edit` and `prompt`
@@ -214,6 +221,28 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **Ctrl+C in the dashboard no longer opens the review view on its way out.** Ink reports Ctrl+C as the
+  letter `c` with a modifier flag, and the dashboard matched on the letter alone: the last frame before the
+  run stopped was a diff review, and the "Interrupting: stopping workers… (Ctrl+C again to force)" notice
+  was drawn on a screen that was no longer up. Ctrl+R no longer restarts the selected task, Ctrl+U no
+  longer leaves the task list, Ctrl+L no longer opens a transcript, and Ctrl+O in the review view no longer
+  hands a file to `$VISUAL`. Ctrl+C is the one chord the dashboard reads; Ctrl+A still jumps to the oldest
+  line in the transcript viewer.
+- **A control command resent after the run has ended gets the answer it got the first time.** A sender that
+  loses an acknowledgment and asks again — `cao stop`, or anything writing to the request inbox — was told
+  "this run has ended" for a stop that had in fact been applied, and on the inbox path that answer
+  overwrote the acknowledgment already on disk. The id is now looked up before the run's liveness is, which
+  is what §2.2 always said: a duplicate returns the first ack.
+- **A request that lands in the inbox as the run is ending is answered instead of left there.** The owner
+  polls `requests/` on a 500 ms tick, so a request written in the half second after the last tick had
+  nobody to answer it: the file stayed in `requests/` and its sender waited out the whole of its `--wait`
+  for an acknowledgment that was never coming. `cao run` and `cao resume` now answer whatever is left on
+  their way out, with the same sentence the run controller uses for a command that arrives too late.
+- **Cancelling a task no longer tells the operator to cancel it again.** `cancelTask` answered "attempt N
+  was cancelled" while the task went on showing as `Running` until its worker died, and `R` in that window
+  was refused with "cancel it first, then restart it" — the very thing that had just been done. The
+  acknowledgment now says the attempt is being aborted and that the task ends as cancelled once the worker
+  has stopped, and a restart asked for in the meantime is told to wait for it.
 - A transcript event type this build does not know is now **rendered rather than dropped**.
   `parseTranscriptLine` returned `null` for any unrecognised `kind`, which put an unknown event in the same
   bucket as a corrupt line: gone from `cao logs`, `cao peek`, the viewer and any surface reading the same

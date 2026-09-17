@@ -164,7 +164,9 @@ describe('run controller: cancelTask', () => {
 
     const ack = await h.controller.submit({ kind: 'cancelTask', taskId: 'a' }, tui());
     expect(ack.status).toBe('applied');
-    expect(ack.reason).toBe('Attempt 1 of "a" was cancelled.');
+    // Not "was cancelled": the abort has been delivered but the task is still running until its worker dies.
+    expect(ack.reason).toBe('Attempt 1 of "a" is being aborted; the task ends as cancelled once its worker has stopped.');
+    expect(h.run.tasks.a!.state).toBe('running');
 
     const result = await execution;
     expect(h.run.tasks.a!.state).toBe('cancelled');
@@ -224,6 +226,28 @@ describe('run controller: cancelTask', () => {
     expect(h.run.tasks.a!.reason).toBe('user_interrupt');
     expect(h.run.tasks.a!.message).toBe('cancelled by the operator');
     expect(result.summary.cancelled).toBe(1);
+  });
+
+  it('tells an operator to wait rather than to cancel again, while the cancel they asked for lands', async () => {
+    const runner = new MockRunner().when('a', { kind: 'hang' }).when('b', { kind: 'hang' });
+    const h = harness(await wf(PAIR), runner);
+    const execution = h.scheduler.execute();
+    await waitFor(() => h.run.tasks.a!.state === 'running' && h.run.tasks.b!.state === 'running');
+
+    await h.controller.submit({ kind: 'cancelTask', taskId: 'a' }, tui());
+    // The window this covers: the abort is in flight, the task still reads `running`, and the operator
+    // reaches for restart because the ack said the task was being cancelled. "Cancel it first" would be
+    // telling them to do again what they just did.
+    const tooSoon = await h.controller.submit({ kind: 'restart', taskId: 'a' }, tui());
+    expect(tooSoon.status).toBe('rejected');
+    expect(tooSoon.reason).toBe('Task "a" is being cancelled and has not stopped yet. Restart it once it is showing as cancelled.');
+
+    await waitFor(() => h.run.tasks.a!.state === 'cancelled');
+    const now = await h.controller.submit({ kind: 'restart', taskId: 'a' }, tui());
+    expect(now.status).toBe('applied');
+
+    await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
+    await execution;
   });
 
   it('refuses to cancel a task that has not started and one that has already finished', async () => {
@@ -323,6 +347,30 @@ describe('run controller: after the run has ended', () => {
     expect(h.controller.run.tasks.a!.state).toBe('success');
     expect(h.controller.peek('a')).toEqual(h.scheduler.peek('a'));
     expect(await h.controller.capturedDiff('a')).toBeNull();
+  });
+
+  it('answers a resend that crosses the end of the run with the first ack, not with "the run has ended"', async () => {
+    const runner = new MockRunner().when('a', { kind: 'hang' }).when('b', { kind: 'hang' });
+    const h = harness(await wf(PAIR), runner);
+    const execution = h.scheduler.execute();
+    await waitFor(() => h.run.tasks.a!.state === 'running');
+
+    const envelope = tui();
+    const first = await h.controller.submit({ kind: 'stop', mode: 'cancel' }, envelope);
+    expect(first.status).toBe('applied');
+    await execution;
+
+    // A sender whose ack was lost resends the same id. It is the same request, and it was applied: telling
+    // it the run has ended says the opposite of what happened, and on the inbox path that answer overwrites
+    // the ack already on disk.
+    const again = await h.controller.submit({ kind: 'stop', mode: 'cancel' }, envelope);
+    expect(again).toEqual(first);
+    expect(h.run.controls!.seen.filter((ack) => ack.id === envelope.id)).toHaveLength(1);
+
+    // Something the run never saw still gets the sentence that says the run is over.
+    const fresh = await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
+    expect(fresh.status).toBe('rejected');
+    expect(fresh.reason).toContain('This run has ended');
   });
 
   it('answers a command still queued when the loop ends rather than leaving its caller waiting', async () => {

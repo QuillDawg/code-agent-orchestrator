@@ -19,6 +19,7 @@ import type {
   ResolvedTask,
 } from 'code-agent-orchestrator-protocol';
 import { stripAnsi } from '../../src/cli/color.js';
+import { frameHeight, renderTree } from '../helpers/ink-harness.js';
 
 const NL = String.fromCharCode(10);
 const ts = '2026-09-03T10:11:12.000Z';
@@ -1212,6 +1213,73 @@ describe('DashboardApp', () => {
     expect(columns).toHaveLength(2);
     expect(columns[0]).toBe(columns[1]);
     unmount();
+  });
+
+  it('does not act on a Ctrl chord as if it were the letter it reports', async () => {
+    const run = liveRun({ tasks: { 'implement-102': { id: 'implement-102', state: 'running', retryWindowStart: 1, attempts: [attemptAt(1)] }, review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] } } });
+    const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
+    const restarts: string[] = [];
+    let interrupts = 0;
+    const scheduler = {
+      peek: () => [],
+      transcript: () => [],
+      submit: (command: { kind: string; taskId?: string }) => {
+        restarts.push(`${command.kind}:${command.taskId ?? ''}`);
+        return Promise.resolve({ protocol: 1, id: 'x', status: 'rejected' as const, reason: 'no', at: ts });
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => (interrupts += 1)} />,
+    );
+    await wait();
+    // Ink reports Ctrl+C as `input: 'c'` with `key.ctrl`. Matching on the letter alone opened the review
+    // view over the frame that was about to say the run is stopping, and the notice was never seen.
+    stdin.write(String.fromCharCode(3));
+    await wait();
+    expect(interrupts).toBe(1);
+    let frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).toContain('Interrupting: stopping workers');
+    expect(frame).toContain('R restart');
+    expect(frame).not.toContain('Enter hunks');
+    // The same for the other chords a terminal habit produces: Ctrl+R must not restart, Ctrl+U must not
+    // leave the list, Ctrl+L must not open a transcript.
+    for (const letter of ['r', 'u', 'l']) stdin.write(String.fromCharCode(letter.toUpperCase().charCodeAt(0) - 64));
+    await wait();
+    frame = stripAnsi(lastFrame() ?? '');
+    expect(restarts).toEqual([]);
+    expect(frame).toContain('R restart');
+    unmount();
+  });
+
+  it('fits the help and usage screens into a terminal too narrow for the wide text', async () => {
+    const run = liveRun({ tasks: { 'implement-102': { id: 'implement-102', state: 'running', retryWindowStart: 1, attempts: [attemptAt(1)] }, review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] } } });
+    const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
+    const tree = renderTree(
+      <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={{ peek: () => [], transcript: () => [] } as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      { columns: 80, rows: 24 },
+    );
+    try {
+      await wait();
+      tree.write('?');
+      const help = await tree.waitFor((frame) => frame.includes('Esc/Q back'));
+      // The wide help is 23 lines before it wraps and 28 after: opening it scrolled a 24-row terminal.
+      expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
+      for (const line of help.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
+      expect(help).toContain('Ctrl+C    stop the run (twice to force)');
+      expect(help).toContain('In a transcript:');
+
+      tree.write(String.fromCharCode(27));
+      await tree.waitFor((frame) => frame.includes('R restart'));
+      tree.write('u');
+      const usage = await tree.waitFor((frame) => frame.includes('S sort by cost'));
+      expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
+      for (const line of usage.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
+      // The detail columns are what does not fit; the four numbers the view exists for stay.
+      expect(usage).toContain('Context');
+      expect(usage).not.toContain('Cache r/w');
+    } finally {
+      tree.unmount();
+    }
   });
 
   it('lists the transcript viewer keys in the help panel', async () => {

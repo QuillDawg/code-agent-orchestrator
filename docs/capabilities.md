@@ -287,9 +287,11 @@ the workers are killed immediately, exactly like pressing Ctrl+C twice. Resume i
 interrupted run.
 
 Underneath, that stop is now one of a general set of **control requests** the run accepts from any other
-process. The owner polls `requests/` in its run directory on the same one-second tick, applies each request
+process. The owner polls `requests/` in its run directory on the same 500 ms tick, applies each request
 inside its own scheduler loop — so a request can never land halfway through a task finishing — and writes
-the answer to `requests/acks/<id>.json` before it deletes the request that asked. `stop.json` is translated
+the answer to `requests/acks/<id>.json` before it deletes the request that asked. Every request gets an
+answer: one that arrives after the run has ended is told so, and one that lands in the half second after
+the last poll is answered by the orchestrator on its way out rather than left in the directory. `stop.json` is translated
 into one of these on arrival, which is why `cao stop` keeps working unchanged and a second one is still the
 kill. A request that cannot be read, or that was written by a newer `cao` than this one, is moved to
 `requests/rejected/` with a `.reason.txt` beside it rather than being guessed at or thrown away. Permission
@@ -486,7 +488,7 @@ viewer shows a table instead of mojibake. That is also the default guess on a Wi
 identify itself as UTF-8 capable; `CAO_UNICODE=1` forces the glyphs back on. Every ASCII status mark is one
 column wide, so the columns line up either way.
 
-The dashboard is live by default (`--no-tui` for line output). Running rows spin, the header shows a progress bar with total cost and tokens, each row shows the agent and the model it actually reported at session start (`claude|opus-5`), the worker's current context size against that model's window (`ctx 42k/1.0M`), cost and changed-file count, and `F` opens the same transcript viewer as `cao logs --follow`: agent prose rendered as markdown, commands in yellow, tool calls in cyan, tool output collapsed (`t` expands). Each call also carries how long its tool took (`▸ Grep: TODO in src · 0.4s`) once the result comes back, or `· no result` when the attempt ended with that tool still open — which is where a crashed or timed-out worker stopped. `U` lists usage per task, `C` opens the review view below. Leaving it with `Q` minimises it — the orchestrator keeps going, line output takes over, and `D` (or anything that needs you) brings it back.
+The dashboard is live by default (`--no-tui` for line output). Running rows spin, the header shows a progress bar with total cost and tokens, each row shows the agent and the model it actually reported at session start (`claude|opus-5`), the worker's current context size against that model's window (`ctx 42k/1.0M`), cost and changed-file count, and `F` opens the same transcript viewer as `cao logs --follow`: agent prose rendered as markdown, commands in yellow, tool calls in cyan, tool output collapsed (`t` expands). Each call also carries how long its tool took (`▸ Grep: TODO in src · 0.4s`) once the result comes back, or `· no result` when the attempt ended with that tool still open — which is where a crashed or timed-out worker stopped. `U` lists usage per task, `C` opens the review view below. Leaving it with `Q` minimises it — the orchestrator keeps going, line output takes over, and `D` (or anything that needs you) brings it back. `Ctrl+C` stops the run and is the only chord the dashboard reads; every other `Ctrl`+key is left to the terminal, so `Ctrl+L` or `Ctrl+R` out of habit does not change what is on screen. Below 100 columns the header drops the token counts and halves its progress bar, the usage table drops its cache, turns, time and tools columns, and `?` shows a compact key list — so that no frame is ever wider or taller than the terminal it is drawn in, which is what keeps it from scrolling the screen away.
 
 The last cell of a row is what the worker is doing: its last *action* — the tool, the command or the line of prose it is on, never the tool output that came back and would otherwise mask it. Nothing for 30 seconds and the cell gains `… 2m idle`, which is how you tell a thinking worker from a hung tool or a stalled API call. A task waiting out a retry says which one it is spending: `api retry 2/5 in 12s` while a transient API error backs off (`retry.transientAttempts`), `retry 1/2 in 30s` for an ordinary one (`retry.attempts`). `?` shows every key, including the viewer's.
 

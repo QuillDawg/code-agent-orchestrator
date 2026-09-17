@@ -381,6 +381,30 @@ describe('the request inbox, from another process', () => {
     }
   });
 
+  it('leaves nothing in the inbox unanswered when the orchestrator goes, whenever the request landed', async () => {
+    const repo = await tmpGitRepo('cao-inbox-late-');
+    const configPath = await writeWorkflow(repo, ['name: late', 'tasks:', '  - id: implement-api', '    prompt: p'].join(NL) + NL);
+    const paths = createNativeRunPaths(repo);
+    const store = new FileRunStore(repo);
+
+    // The guarantee §2.3 makes is that a request is always answered, and there are two ways to keep it: the
+    // watcher drains it on a tick, or `executeRun` answers what is left on its way out. Which one wins here
+    // depends on where the run ends inside the 500 ms tick, so this pins the guarantee rather than one of
+    // the paths; the shutdown sentence itself is checked in test/unit/requests.test.ts.
+    const late = controlRequest('prompt', { taskId: 'implement-api', text: 'carry on' });
+    const writer = (async () => {
+      await until(async () => (await store.listRuns().catch(() => []))[0] !== undefined, 30_000);
+      const runId = (await store.listRuns())[0]!.runId;
+      await writeControlRequest(paths, runId, late);
+      return runId;
+    })();
+    const [, runId] = await Promise.all([captureCli(() => runCommand(configPath, { repository: repo, claudeCommand: FAKE_CLAUDE, tui: false })), writer]);
+
+    const ack = await readAck(paths, runId, late.id);
+    expect(ack).toMatchObject({ protocol: 1, id: late.id, status: 'rejected' });
+    expect(await fs.readdir(paths.requestsDir(runId))).not.toContain(`${late.id}-prompt.json`);
+  }, 120_000);
+
   it('answers a request from a second cao, stops the run when one arrives, and advertises what it wired', async () => {
     const repo = await tmpGitRepo('cao-inbox-proc-');
     const home = path.join(await tmpDir('cao-inbox-home-'), '.cao');

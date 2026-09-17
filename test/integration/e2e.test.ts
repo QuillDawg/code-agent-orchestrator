@@ -599,7 +599,7 @@ tasks:
     }
 
     const ack = await runtime.controller.submit({ kind: 'cancelTask', taskId: 'drop' }, controlEnvelope('cli'));
-    expect(ack).toMatchObject({ protocol: 1, status: 'applied', reason: 'Attempt 1 of "drop" was cancelled.' });
+    expect(ack).toMatchObject({ protocol: 1, status: 'applied', reason: 'Attempt 1 of "drop" is being aborted; the task ends as cancelled once its worker has stopped.' });
 
     const result = await execution;
     await waitFor(() => !isProcessAlive(pid), 10_000);

@@ -1,15 +1,11 @@
 stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ  ·  /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost
- $#.##   ##.#k in / #.#k out
+[██████░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost $#.##
 
-  Task                State          Cost      In     Out   Cache r/w Turns
-Time  Tools  Context
-  implement-parser    Completed     $#.##   ##.#k    #.#k   #.#k/#.#k     #    …
-  implement-renderer  Failed        $#.##    #.#k     ###                 #    …
-  review-and-merge    Waiting                                                  …
+  Task                State          Cost      In     Out  Context
+  implement-parser    Completed     $#.##   ##.#k    #.#k  [█░░░░] ##.#k/###k
+  implement-renderer  Failed        $#.##    #.#k     ###  [████░] ###k/###k
+  review-and-merge    Waiting
 
-Total: $#.##   ##.#k in / #.#k out   #.#k cache write   ##m ##s of agent time
-##m ##s in tools
-Cache r/w = tokens read from / written to the prompt cache   Time = duration the
- agent reported   Tools = time spent inside tool calls
+Total: $#.##   ##.#k in / #.#k out   ##m ##s of agent time
+Context = tokens in the session window
 S sort by cost   Esc/Q back

@@ -15,7 +15,7 @@ import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { createRunController, type RunController } from '../../src/workflow/control/controller.js';
 import { createNativeRunPaths } from '../../src/persistence/paths.js';
-import { watchStopRequests, type StopRequest } from '../../src/execution/signals.js';
+import { clearPendingRequests, watchStopRequests, type StopRequest } from '../../src/execution/signals.js';
 import {
   controlRequest,
   readAck,
@@ -293,6 +293,35 @@ describe('the owner draining the inbox', () => {
   }, 20_000);
 });
 
+describe('clearing the inbox at both ends of a run', () => {
+  it('answers what is left behind rather than dropping it, and says which end it is', async () => {
+    const paths = await inbox();
+    const stale = controlRequest('stop');
+    await writeControlRequest(paths, RUN_ID, stale);
+
+    // Startup: something asked the orchestrator that used to own this run. Applying it now would stop the
+    // run that is only just resuming, so it is refused - and the sender is told where to send it instead.
+    await clearPendingRequests(paths, RUN_ID);
+    const atStartup = await readAck(paths, RUN_ID, stale.id);
+    expect(atStartup).toMatchObject({ id: stale.id, status: 'rejected' });
+    expect(atStartup!.reason).toContain('no longer running');
+    expect(atStartup!.reason).toContain(RUN_ID);
+    expect(await pathExists(path.join(paths.requestsDir(RUN_ID), requestFileName(stale)))).toBe(false);
+
+    // Shutdown: the watcher stops on a tick boundary, so a request written in the half second after it has
+    // nobody left to apply it. Left alone it would sit there while its sender waited out the whole of
+    // `--wait`; answered, the sender learns at once - with the sentence the controller uses for the same
+    // thing, because it is the same thing.
+    const late = controlRequest('restart', { taskId: 'implement-api' });
+    await writeControlRequest(paths, RUN_ID, late);
+    await clearPendingRequests(paths, RUN_ID, 'shutdown');
+    const atShutdown = await readAck(paths, RUN_ID, late.id);
+    expect(atShutdown).toMatchObject({ id: late.id, status: 'rejected' });
+    expect(atShutdown!.reason).toBe(`This run has ended, so its execution state cannot be changed. Start it again with "cao resume ${RUN_ID}".`);
+    expect(await pathExists(path.join(paths.requestsDir(RUN_ID), requestFileName(late)))).toBe(false);
+  });
+});
+
 describe('the legacy stop.json escalation', () => {
   /** A controller that records what it was asked and agrees, so the translation can be read on its own. */
   function recorder(): { controller: RunController; kinds: string[] } {
@@ -315,9 +344,10 @@ describe('the legacy stop.json escalation', () => {
     try {
       const stopFile = path.join(paths.runDir(RUN_ID), 'stop.json');
       await fs.writeFile(stopFile, JSON.stringify({ requestedAt: new Date().toISOString(), pid: 1, source: 'cao stop' }));
-      await waitFor(() => kinds.length === 1);
+      // On `stops`, not on `kinds`: the watcher calls `onStop` only after the ack has been written, so a
+      // wait on the submission alone races the two filesystem writes between them and fails under load.
+      await waitFor(() => stops.length === 1);
       expect(kinds).toEqual(['stop']);
-      expect(stops).toHaveLength(1);
 
       await fs.writeFile(stopFile, JSON.stringify({ requestedAt: new Date().toISOString(), pid: 2, source: 'cao stop again' }));
       await waitFor(() => kinds.length === 2);
