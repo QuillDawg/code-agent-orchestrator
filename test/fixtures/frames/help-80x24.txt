@@ -4,7 +4,7 @@ Keys
   F / L     follow a task's transcript
   U         usage per task (S sorts by cost)
   C         review what each task changed
-  R         restart a failed, blocked or cancelled task
+  R         restart a failed, blocked, cancelled or skipped task
   Q         minimise the dashboard (the run continues; D reopens it)
   Ctrl+C    stop the run (twice to force)
 

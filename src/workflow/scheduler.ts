@@ -71,8 +71,13 @@ import { commandTaskId, revisionCount, runEndedReason, type ControlCommand, type
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
 
-/** Terminal states a manual restart returns to `pending`; the set the dashboard's `R` has always offered. */
-const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled']);
+/**
+ * Terminal states a manual restart returns to `pending`: every task that has finished without succeeding
+ * (§2.2, "terminal non-success"). `skipped` is one of them - a task skipped because a dependency failed is
+ * exactly the task an operator restarts after fixing that dependency - and leaving it out silently turned
+ * `requestRestart('some-skipped-task')`, which is on the exported library surface, into a no-op.
+ */
+const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([...TERMINAL_TASK_STATES].filter((s) => s !== 'success'));
 
 function noSuchTaskReason(taskId: string, runId: string): string {
   return `There is no task "${taskId}" in this run. Run "cao status ${runId}" to see the tasks it has.`;
@@ -1253,7 +1258,7 @@ export class WorkflowScheduler {
     }
     if (this.inflight.has(taskId) || ACTIVE_TASK_STATES.has(state.state)) return { status: 'rejected', reason: `Task "${taskId}" is still running. Cancel it first, then restart it.` };
     if (!RESTARTABLE_STATES.has(state.state)) {
-      return { status: 'rejected', reason: `Only failed, blocked, or cancelled tasks can be restarted while this run is active; "${taskId}" is ${state.state}.` };
+      return { status: 'rejected', reason: `Only a task that has finished without succeeding can be restarted while this run is active; "${taskId}" is ${state.state}.` };
     }
     return { status: 'applied', reason: `Restarting "${taskId}".`, apply: () => this.applyRestart(taskId) };
   }

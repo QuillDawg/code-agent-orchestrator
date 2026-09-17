@@ -153,6 +153,42 @@ describe('run controller: identity and staleness', () => {
     await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
     await execution;
   });
+
+  /**
+   * §2.2 defines `restart` as "terminal non-success → pending", which is every state a task can finish in
+   * except `success` - `skipped` included. A task skipped because its condition was false, or because the
+   * dependency it was waiting on failed, is exactly the task an operator restarts once that is dealt with,
+   * and `scheduler.requestRestart` has accepted it since before the controller existed.
+   */
+  it('restarts a skipped task, not only a failed, blocked or cancelled one', async () => {
+    const runner = new MockRunner().when('b', { kind: 'hang' });
+    const h = harness(
+      await wf(`
+name: t
+execution:
+  maxConcurrency: 2
+tasks:
+  - id: a
+    parallelGroup: g
+    when:
+      expr: 1 > 2
+    prompt: p
+  - id: b
+    parallelGroup: g
+    prompt: p
+`),
+      runner,
+    );
+    const execution = h.scheduler.execute();
+    await waitFor(() => h.run.tasks.a!.state === 'skipped');
+
+    const ack = await h.controller.submit({ kind: 'restart', taskId: 'a' }, tui());
+    expect(ack.status).toBe('applied');
+    expect(h.run.tasks.a!.state).not.toBe('skipped');
+
+    await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
+    await execution;
+  });
 });
 
 describe('run controller: cancelTask', () => {

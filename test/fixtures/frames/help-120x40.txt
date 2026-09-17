@@ -11,7 +11,7 @@ Keys
   C         review what each task changed
               list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks   O $VISUAL/$EDITOR   Esc back
               hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file   O editor   Esc back to the list
-  R         restart a failed, blocked or cancelled task
+  R         restart a failed, blocked, cancelled or skipped task
   Q         minimise the dashboard (the run continues; D reopens it)
   Ctrl+C    stop the run (twice to force)
 

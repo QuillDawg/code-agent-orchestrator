@@ -174,6 +174,12 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   which is the option the upgrade was argued for: a ticking spinner no longer rewrites the whole frame.
   Kitty keyboard detection is set to `auto` at the same time - a terminal is asked once whether it speaks
   the protocol, and one that does not answer is left exactly as it was.
+- **The dashboard's `R` restarts a skipped task.** `R` refused anything that was not failed, blocked or
+  cancelled, and said so; a task skipped because its condition was false, or because the dependency it was
+  waiting on failed, is exactly the task an operator restarts once that is dealt with. Every task that
+  finished without succeeding can now be restarted while the run is active, which is what
+  `WorkflowScheduler.requestRestart` has always accepted from an embedder. The help screen and the README
+  key list say so.
 - **An agent CLI that refuses what CAO sent it is now a configuration error, not a crash, and is never
   retried.** `error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'`,
   `error: unknown option '--x'`, an `invalid_json_schema` from the model API, a JSON-RPC `-32602`, and an

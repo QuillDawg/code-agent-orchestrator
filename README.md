@@ -585,9 +585,9 @@ to be notified elsewhere.
 <summary><strong>Dashboard keys</strong></summary>
 
 `↑↓` select · `Enter` details · `F`/`L` follow a worker's transcript · `U` usage (tokens, context, cost,
-time in tools; `S` sorts by cost) · `C` review what each task changed · `R` restart a failed, blocked or
-cancelled task · `?`/`H` help · `Esc` back · `Q` minimise (the run continues; `D` reopens it) ·
-`Ctrl+C` stop (twice to force).
+time in tools; `S` sorts by cost) · `C` review what each task changed · `R` restart a failed,
+blocked, cancelled or skipped task · `?`/`H` help · `Esc` back · `Q` minimise (the run continues;
+`D` reopens it) · `Ctrl+C` stop (twice to force).
 
 `Ctrl+C` is the only chord the dashboard reads; every other `Ctrl`+key is left to the terminal. Below 100
 columns the summary line, the help screen and the usage table use a compact layout so that no frame is
