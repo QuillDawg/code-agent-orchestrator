@@ -10,7 +10,7 @@
  * `test/integration/lifecycle.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
-import { createWorkspaceSession, resumeRequestOptions, runWorkspaceSession, type ExecutionHandle } from '../../src/cli/workspace-session.js';
+import { createWorkspaceSession, resumeExecuteOptions, resumeRequestOptions, runWorkspaceSession, type ExecutionHandle } from '../../src/cli/workspace-session.js';
 import { RunLockedError } from '../../src/cli/app.js';
 import type { DashboardController, DashboardOptions } from '../../src/tui/app.js';
 import type { ObservedRun, RunObserver } from '../../src/workflow/control/observer.js';
@@ -390,5 +390,26 @@ describe('an ended-state action as cao resume arguments [D36]', () => {
     expect(resumeRequestOptions({ kind: 'answer', taskId: 'a', text: 'postgres' })).toEqual({ task: ['a'], input: 'postgres' });
     expect(resumeRequestOptions({ kind: 'approve', taskId: 'a' })).toEqual({ approve: ['a'] });
     expect(resumeRequestOptions({ kind: 'reject', taskId: 'a' })).toEqual({ reject: ['a'] });
+  });
+});
+
+describe('the execution an ended-state action becomes', () => {
+  const started = { run: run(), environment: { A: '1' }, secrets: ['s'] };
+
+  /**
+   * `executeOnce` resolves `emit` from scratch on every execution, so a flag the workspace does not hand
+   * back is not inherited - it is re-decided from `CAO_EMIT` and `~/.cao/config.json`. A run started
+   * `cao run --no-emit` would announce itself the moment it was resumed from inside the workspace.
+   */
+  it('carries the emit flags of the execution the session was entered by', () => {
+    const first = { run: started.run, environment: {}, secrets: [], isResume: false, emit: false, emitFeed: true, repository: '/repo' };
+    expect(resumeExecuteOptions(started, { first, execute: async () => result('completed', 0) })).toMatchObject({ emit: false, emitFeed: true, repository: '/repo', isResume: true, tui: true });
+  });
+
+  it('leaves them undecided for a session that never had a flag to carry', () => {
+    const next = resumeExecuteOptions(started, { execute: async () => result('completed', 0), repository: '/elsewhere', theme: 'mono', verbose: true });
+    expect(next.emit).toBeUndefined();
+    expect(next.emitFeed).toBeUndefined();
+    expect(next).toMatchObject({ repository: '/elsewhere', theme: 'mono', verbose: true });
   });
 });

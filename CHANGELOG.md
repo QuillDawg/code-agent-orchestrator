@@ -351,6 +351,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **`--emit` and `--no-emit` survive a resume from inside the workspace.** Only the first execution carried
+  the flag: `S`, `R`, `>` and the rest built the next execution without it, so the decision fell back to
+  `CAO_EMIT` and `~/.cao/config.json` and a run started `cao run --no-emit` by someone who had run
+  `cao emit enable` announced itself the moment it was resumed. `--emit-feed` was dropped the same way.
 - **The header's progress bar shows progress on a big run.** Each segment was rounded from its share of the
   width, so a two-hundred-task run with three done and one failed drew twenty empty cells — the two facts the
   bar exists to show. A count that is not zero is worth at least one cell now, and the largest segment gives

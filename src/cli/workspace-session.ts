@@ -493,9 +493,8 @@ async function prepareResume(session: WorkspaceSession & { readonly runId: strin
     session.notify('There is no run to resume here.');
     return undefined;
   }
-  const repository = opts.first?.repository ?? opts.repository;
   const started = await startRuntime(runId, {
-    repository,
+    repository: opts.first?.repository ?? opts.repository,
     verbose: opts.verbose,
     ...resumeRequestOptions(request),
     onNote: (note) => session.notify(note),
@@ -505,6 +504,19 @@ async function prepareResume(session: WorkspaceSession & { readonly runId: strin
     return undefined;
   }
   session.notify(`${resumeRequestLabel(request)}…`);
+  return resumeExecuteOptions(started, opts);
+}
+
+/**
+ * What the resume produced, under the flags the session was entered with.
+ *
+ * Every choice the first execution was given that outlives it belongs here, because `executeOnce` resolves
+ * each one again from scratch: an option this misses is not inherited, it is re-decided from the
+ * environment and `~/.cao/config.json`. `emit` was missing, so a run started `cao run --no-emit` by someone
+ * who had run `cao emit enable` announced itself the moment it was resumed from inside the workspace —
+ * inverting the precedence the flag is documented to have.
+ */
+export function resumeExecuteOptions(started: Pick<ExecuteOptions, 'run' | 'environment' | 'secrets'>, opts: WorkspaceSessionOptions): ExecuteOptions {
   return {
     run: started.run,
     environment: started.environment,
@@ -514,7 +526,9 @@ async function prepareResume(session: WorkspaceSession & { readonly runId: strin
     activity: opts.activity,
     altScreen: opts.altScreen,
     theme: opts.theme,
-    repository,
+    emit: opts.first?.emit,
+    emitFeed: opts.first?.emitFeed,
+    repository: opts.first?.repository ?? opts.repository,
     tui: true,
   };
 }
