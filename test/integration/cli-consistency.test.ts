@@ -5,7 +5,9 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { execa } from 'execa';
+import { execa, type Options } from 'execa';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { prepareWorkflow, createRuntime, requireValid } from '../../src/cli/app.js';
 import { createRun } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
@@ -354,25 +356,16 @@ describe('CLI consistency', () => {
  */
 describe('the request inbox, from another process', () => {
   const root = process.cwd();
-  const bin = path.join(root, 'dist', 'bin.js');
+  /**
+   * The child is `node --import tsx src/bin.ts`, not `dist/bin.js`: the property under test is the process
+   * boundary, and running the sources keeps `npm test` from depending on a build - which would mean writing
+   * into `dist/` from a test run, and a first `npm test` on a fresh checkout paying for one.
+   */
+  // Resolved here rather than passed as `--import tsx`: the child runs with the temporary repository as its
+  // cwd, where the bare specifier does not resolve.
+  const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
+  const cao = (args: string[], options: Options) => execa(process.execPath, ['--import', tsxLoader, path.join(root, 'src', 'bin.ts'), ...args], options);
   const saved = { CAO_HOME: process.env.CAO_HOME, CAO_EMIT: process.env.CAO_EMIT };
-
-  /** Newest mtime under a directory, so a stale `dist/` is rebuilt rather than silently tested. */
-  async function newestUnder(dir: string): Promise<number> {
-    let newest = 0;
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
-      const full = path.join(dir, entry.name);
-      newest = Math.max(newest, entry.isDirectory() ? await newestUnder(full) : (await fs.stat(full)).mtimeMs);
-    }
-    return newest;
-  }
-
-  beforeAll(async () => {
-    const built = await fs.stat(bin).then((s) => s.mtimeMs, () => 0);
-    const sources = Math.max(await newestUnder(path.join(root, 'src')), await newestUnder(path.join(root, 'packages', 'protocol', 'src')));
-    if (built <= sources) await execa('npm', ['run', 'build'], { cwd: root, shell: true });
-  }, 300_000);
 
   afterEach(() => {
     for (const [key, value] of Object.entries(saved)) {
@@ -412,7 +405,7 @@ describe('the request inbox, from another process', () => {
     const env = { CAO_HOME: home, CAO_EMIT: '1', CAO_CLAUDE_COMMAND: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_DELAY_MS: '1500' };
     await writeWorkflow(repo, ['name: inbox', 'tasks:', '  - id: implement-api', '    prompt: p'].join(NL) + NL);
 
-    const orchestrator = execa(process.execPath, [bin, 'run', 'workflow.yaml', '--no-tui'], { cwd: repo, env, reject: false });
+    const orchestrator = cao(['run', 'workflow.yaml', '--no-tui'], { cwd: repo, env, reject: false });
     try {
       const store = new FileRunStore(repo);
       const paths = createNativeRunPaths(repo);
@@ -434,7 +427,7 @@ describe('the request inbox, from another process', () => {
 
       // And `cao stop` in a second terminal, which still writes `stop.json` in this beta (§2.7): the owner
       // turns it into a stop request with an id of its own and answers that too.
-      const stopped = await execa(process.execPath, [bin, 'stop', runId], { cwd: repo, env, reject: false });
+      const stopped = await cao(['stop', runId], { cwd: repo, env, reject: false });
       expect(stopped.exitCode).toBe(0);
       const finished = await orchestrator;
       expect(finished.exitCode).not.toBe(0);
