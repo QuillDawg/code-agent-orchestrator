@@ -30,6 +30,8 @@ import { truncateVisible } from '../cli/util.js';
 import { BELL } from '../util/misc.js';
 import { agentLabel, bar, contextRatio, formatCost, formatTokens } from './format.js';
 import { attemptRows, currentAttempt, elapsedCell, elapsedParts, interactionRows, resultNotes, totalWaitedMs } from './history.js';
+// One definition of "which screen is up", shared with the presentation store stage 1 moves this tree onto.
+import type { View } from './store.js';
 
 export interface DashboardOptions {
   run: WorkflowRun;
@@ -54,7 +56,6 @@ export interface DashboardController {
   finish(): Promise<void>;
 }
 
-type View = { kind: 'dashboard' } | { kind: 'detail'; taskId: string } | { kind: 'follow'; taskId: string; attempt?: number } | { kind: 'usage' } | { kind: 'review' } | { kind: 'help' };
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 

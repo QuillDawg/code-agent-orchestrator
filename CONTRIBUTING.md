@@ -131,7 +131,16 @@ The layout:
   spawning and tree-kill. `agent-surface.test.ts` is the exception: it needs the real CLIs and runs under
   `npm run test:agents`, not `npm test`.
 - **`test/helpers/index.ts`** — temporary repositories, workflow builders and the assertions shared by both.
+- **`test/helpers/ink-harness.ts`** — `renderTree(element, { columns, rows })` for a whole screen.
+  `ink-testing-library` fakes a stdout of 100 columns with no `rows` at all, so it cannot answer "does this
+  fit the terminal"; the harness does, and adds `write(keys)` (see its `KEYS` table for the raw escapes),
+  `waitFor(predicate)`, `resize(columns, rows)` and `frameHeight()`. Use it for anything that sizes itself
+  to the terminal, and `ink-testing-library` for a single component.
 - **`test/fixtures/`** — the fake Claude/Codex agents and the expected report document.
+- **`test/fixtures/frames/`** — the dashboard's frames, captured through the harness and compared by
+  `test/unit/dashboard-frames.test.tsx`. They are colour-stripped and every digit is flattened to `#`, so
+  what they pin is the layout, not a clock reading. Re-capture with `CAO_UPDATE_FRAMES=1 npx vitest run
+  test/unit/dashboard-frames.test.tsx`, and only when the change to the dashboard was the point.
 
 New behaviour needs a test. Prefer the unit suites; reach for an integration suite when the thing being
 proved is the interaction with git, the filesystem or a child process. Assert on what a user sees — the

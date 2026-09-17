@@ -131,6 +131,43 @@ describe('GitHub templates', () => {
   });
 });
 
+/**
+ * The UI stack has two floors that are not obvious from the version numbers, so they are asserted rather
+ * than remembered: Ink 7.0.0-7.0.5 rendered garbled output on every Windows terminal (ink#969, fixed by
+ * #971 in 7.0.6), and Ink 7 needs React 19.2 or newer to run at all.
+ */
+describe('UI stack', () => {
+  const order = (version: string): number[] => version.split('-')[0]!.split('.').map(Number);
+  const atLeast = (version: string, floor: string): boolean => {
+    const [a, b] = [order(version), order(floor)];
+    for (let i = 0; i < 3; i += 1) {
+      if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+    }
+    return true;
+  };
+  /** The lowest version a caret or tilde range can install — what a fresh `npm install` could pick. */
+  const lowest = (range: string): string => range.replace(/^[\^~>=]+/, '').trim();
+  const resolved = async (name: string): Promise<string> => (JSON.parse(await read('node_modules', name, 'package.json')) as { version: string }).version;
+
+  it('resolves ink at or above the Windows rendering fix in 7.0.6', async () => {
+    expect(atLeast(await resolved('ink'), '7.0.6')).toBe(true);
+    expect(atLeast(lowest((pkg as unknown as { dependencies: Record<string, string> }).dependencies['ink']!), '7.0.6')).toBe(true);
+  });
+
+  it('resolves react at or above the 19.2 ink 7 requires', async () => {
+    expect(atLeast(await resolved('react'), '19.2.0')).toBe(true);
+    expect(atLeast(lowest((pkg as unknown as { dependencies: Record<string, string> }).dependencies['react']!), '19.2.0')).toBe(true);
+  });
+
+  it('installs one copy of react and one of ink, so hooks and the reconciler agree', async () => {
+    // A second copy anywhere under node_modules means two React instances and "invalid hook call" at runtime.
+    for (const name of ['react', 'ink']) {
+      const nested = await fs.readdir(path.join(root, 'node_modules'), { withFileTypes: true, recursive: true }).then((entries) => entries.filter((e) => e.isDirectory() && e.name === name && /node_modules$/.test(e.parentPath)).map((e) => path.join(e.parentPath, e.name)));
+      expect(nested).toEqual([path.join(root, 'node_modules', name)]);
+    }
+  });
+});
+
 describe('.gitignore', () => {
   it('does not ignore the tracked skills or their installer', async () => {
     const ignore = await read('.gitignore');

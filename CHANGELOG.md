@@ -85,6 +85,15 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **The terminal UI runs on Ink 7 and React 19.** `ink` moves from 5.2 to `^7.1.1`, `react` and
+  `@types/react` to 19, and `commander` to 15; `zustand`, `fuzzysort` and `ink-link` join them. Node 22
+  stays the floor and no screen, key or exit code changes: `--help` and `--version` still exit 0, a usage
+  error still exits 2, and the dashboard, usage, help and detail views render the same frames they did
+  before (`test/fixtures/frames/`). Two things are different in the terminal. Ink 7 renamed the Backspace
+  key: it arrives as `key.backspace` where it used to arrive as `key.delete`, so **Delete no longer erases
+  the character behind the cursor** when typing a denial reason or a `/` search — Backspace does, as it
+  always did. And Ink 7 wraps an over-long line at a different word boundary, so on a terminal narrower
+  than about 100 columns the dashboard's summary line now breaks before `$0.00` rather than before `Cost`.
 - **An agent CLI that refuses what CAO sent it is now a configuration error, not a crash, and is never
   retried.** `error: the argument '--approve-for-me' cannot be used with '--sandbox <SANDBOX_MODE>'`,
   `error: unknown option '--x'`, an `invalid_json_schema` from the model API, a JSON-RPC `-32602`, and an

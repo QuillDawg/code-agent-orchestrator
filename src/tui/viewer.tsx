@@ -230,7 +230,8 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
           setQuery(typing);
           setTyping(null);
           setMatchCursor(0);
-        } else if (key.backspace || key.delete) setTyping((t) => (t ?? '').slice(0, -1));
+          // Ink 7 reports Backspace as `key.backspace`; `key.delete` is the forward-delete key (see modal.tsx).
+        } else if (key.backspace) setTyping((t) => (t ?? '').slice(0, -1));
         else if (input && !key.ctrl && !key.meta) setTyping((t) => `${t ?? ''}${input}`);
         return;
       }

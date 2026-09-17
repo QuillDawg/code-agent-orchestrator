@@ -46,7 +46,8 @@ src/
                               `C` review view; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
                               by `cao task` and the detail view), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
                               surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
-                              package), logs.tsx, follow.ts (file tailer)
+                              package), logs.tsx, follow.ts (file tailer), store.ts (zustand store for presentation state — view,
+                              focus, cursor, notice and a coalesced run snapshot; not wired into app.tsx yet)
   util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
                               instruction the scheduler appends to deny messages, and the helpers that take it back off for an
                               operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,

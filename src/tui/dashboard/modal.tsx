@@ -94,7 +94,9 @@ function useTextInput(active: boolean, onSubmit: (text: string) => void, onCance
     (input, key) => {
       if (key.return) onSubmit(value);
       else if (key.escape) onCancel();
-      else if (key.backspace || key.delete) setValue((v) => v.slice(0, -1));
+      // Ink 7 reports Backspace as `key.backspace`; before 7.0.0 it arrived as `key.delete`, which is why
+      // both were accepted here. `key.delete` is now the forward-delete key and must not erase backwards.
+      else if (key.backspace) setValue((v) => v.slice(0, -1));
       else if (input && !key.ctrl && !key.meta) setValue((v) => v + input);
     },
     { isActive: active },

@@ -1,0 +1,20 @@
+implement-parser
+────────────────────────────────────────────────────────────
+Status:       Completed
+Attempt:      # / #
+Agent:        claude  Model: claude-opus-#  Effort: CLI default
+Started:      ##:##:##   Elapsed: ##m ##s
+PID:          ####   Session: sess-abc###
+Working Dir:  /repo/.orchestrator/worktrees/implement-parser
+Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##%
+##.#k/###k
+Files:        ±#  src/parser.ts
+
+Attempts
+  ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.…
+
+Latest activity
+  ##:## › Reading the parser
+  ##:## $ npm test
+
+F/Enter follow live transcript   Esc/Q back

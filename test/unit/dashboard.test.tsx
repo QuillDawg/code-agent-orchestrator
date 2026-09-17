@@ -22,7 +22,18 @@ import { stripAnsi } from '../../src/cli/color.js';
 
 const NL = String.fromCharCode(10);
 const ts = '2026-09-03T10:11:12.000Z';
-const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+// React 19 has no legacy mode: a state change pushed from outside React (the pending-prompt queue, the event
+// bus) is rendered on a scheduler task and its passive effects — which is where Ink subscribes and
+// unsubscribes `useInput` — are flushed on a later one. A bare sleep therefore lets a keystroke reach the
+// handler of a view that is already off screen, when the machine is loaded enough. `act` drains that queue,
+// so each step here finishes settling before the next key is written.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const wait = async (ms = 30): Promise<void> => {
+  await React.act(async () => {
+    await new Promise((r) => setTimeout(r, ms));
+  });
+};
 
 const tasks: ViewerTask[] = [
   { id: 'implement-101', state: 'success', attempts: [1], elapsed: '00m 05s', usage: { costUsd: 0.5 } },
@@ -119,9 +130,18 @@ describe('TranscriptViewer', () => {
     stdin.write('/');
     await wait();
     expect(stripAnsi(lastFrame() ?? '')).toContain('Enter search');
-    stdin.write('plan');
+    stdin.write('planx');
     await wait();
-    expect(stripAnsi(lastFrame() ?? '')).toContain('/plan');
+    expect(stripAnsi(lastFrame() ?? '')).toContain('/planx');
+    // Forward-delete leaves the query alone; Backspace takes the last character off it (Ink 7 key names).
+    stdin.write(`${String.fromCharCode(27)}[3~`);
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('/planx');
+    stdin.write(String.fromCharCode(127));
+    await wait();
+    const typed = stripAnsi(lastFrame() ?? '');
+    expect(typed).toContain('/plan');
+    expect(typed).not.toContain('/planx');
     stdin.write('\r');
     await wait();
     // Two lines match; the counter says which one you are on.
@@ -350,6 +370,33 @@ describe('Modal', () => {
       await wait();
       expect(answer).toEqual(expected);
     }
+  });
+
+  it('erases a typed reason with Backspace and leaves it alone on Delete', async () => {
+    // Ink 7 swapped the two: Backspace is `key.backspace` (it used to arrive as `key.delete`) and
+    // `key.delete` is now the forward-delete key, which must not eat the character behind the cursor.
+    const ESC = String.fromCharCode(27);
+    const BACKSPACE = String.fromCharCode(127);
+    const DELETE = `${ESC}[3~`;
+    let answer: InteractionAnswer | undefined;
+    const { lastFrame, stdin } = show({ kind: 'interaction', id: 'i', interaction: interaction(), resolve: (a) => (answer = a) });
+    await wait();
+    stdin.write('r');
+    await wait();
+    stdin.write('nope');
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('nope');
+    stdin.write(DELETE);
+    await wait();
+    expect(stripAnsi(lastFrame() ?? '')).toContain('nope');
+    stdin.write(BACKSPACE);
+    await wait();
+    const frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).toContain('nop');
+    expect(frame).not.toContain('nope');
+    stdin.write('\r');
+    await wait();
+    expect(answer).toEqual({ kind: 'deny', message: 'nop' });
   });
 
   it('offers "allow for the rest of this task" only when the runner supplied a rule to reuse', async () => {

@@ -1,0 +1,9 @@
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ  ·  /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost
+ $#.##   ##.#k in / #.#k out
+
+▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
+  ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit…
+  ○ review-and-merge    Waiting                claude  │ waiting for: implement…
+
+↑↓ select  Enter details  F follow  U usage  C files  R restart  ? help  Q mini…
