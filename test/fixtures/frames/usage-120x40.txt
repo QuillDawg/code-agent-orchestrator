@@ -1,5 +1,5 @@
-stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ  ·  /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   Elapsed ##m ##s   Concurrency #/#   Cost $#.##   ##.#k in / #.#k out
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
 
   Task                State          Cost      In     Out   Cache r/w Turns   Time  Tools  Context
   implement-parser    Completed     $#.##   ##.#k    #.#k   #.#k/#.#k     #     #m     #m  [██░░░░░░] ##.#k/###k

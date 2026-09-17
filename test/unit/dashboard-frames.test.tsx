@@ -16,11 +16,10 @@
  * property of the tree, not of one captured moment: a golden that matched a 28-line help screen in a
  * 24-row terminal was recording the bug rather than catching it.
  *
- * Four goldens were re-captured when the dashboard was made to fit the terminal it is drawn in: the three
- * 80x24 ones, where the summary line is now truncated rather than wrapped and shortened below 100 columns
- * and the help and usage screens have a narrow layout, and the 120x40 usage view, whose 133-column legend
- * wrapped even there and is now two lines. The other four are byte for byte what the pre-upgrade stack
- * produced.
+ * Every golden was re-captured in stage 1, when the dashboard became the workspace shell: the same
+ * information, in a header, a sidebar, a tabbed main panel and a footer rather than in four separate
+ * screens. What the goldens are for has not changed - they are still the check that a frame is laid out the
+ * same way today as it was yesterday, and still measured against the terminal it was laid out for.
  */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -28,6 +27,8 @@ import React from 'react';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
 import { frameHeight, renderTree } from '../helpers/ink-harness.js';
+
+const ESC = String.fromCharCode(27);
 import type { TranscriptEntry } from 'code-agent-orchestrator-protocol';
 
 const FIXTURE_DIR = path.join(process.cwd(), 'test', 'fixtures', 'frames');
@@ -109,6 +110,7 @@ const scheduler = {
   transcript: () => entries,
   capturedDiff: async () => undefined,
   attemptTranscript: async () => [],
+  readReport: async () => null,
 };
 
 const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
@@ -140,12 +142,14 @@ async function golden(name: string): Promise<string> {
   return (await fs.readFile(path.join(FIXTURE_DIR, `${name}.txt`), 'utf8')).replace(/\r\n/g, '\n').replace(/\n+$/, '');
 }
 
-async function capture(name: string, size: { columns: number; rows: number }, marker: string, keys?: string): Promise<void> {
+async function capture(name: string, size: { columns: number; rows: number }, marker: string, keys: string[] = []): Promise<void> {
   const tree = renderTree(element, size);
   try {
     await wait();
-    if (keys) {
-      tree.write(keys);
+    // One key at a time: a terminal sends each keystroke as its own read, and a parser handed two escape
+    // sequences in one chunk recognises neither.
+    for (const key of keys) {
+      tree.write(key);
       await wait();
     }
     // The view is only worth comparing once it is the one on screen; a dropped key would otherwise be
@@ -192,15 +196,25 @@ describe('dashboard frames', () => {
 
     it(`renders the usage view unchanged at ${size.name}`, async () => {
       // The footer, not a column heading: below 100 columns the usage table drops the detail columns.
-      await capture(`usage-${size.name}`, size, 'S sort by cost   Esc/Q back', 'u');
+      await capture(`usage-${size.name}`, size, 'S sort by cost   Esc/Q back', ['u']);
     });
 
     it(`renders the help view unchanged at ${size.name}`, async () => {
-      await capture(`help-${size.name}`, size, 'minimise the dashboard', '?');
+      await capture(`help-${size.name}`, size, 'the panel with the keys', ['?']);
     });
 
     it(`renders the task detail unchanged at ${size.name}`, async () => {
-      await capture(`detail-${size.name}`, size, 'Latest activity', '\r');
+      // Enter moves the focus into the panel; the detail of the selected task is already in it.
+      await capture(`detail-${size.name}`, size, 'Latest activity', ['\r']);
+    });
+
+    it(`renders the Changes tab unchanged at ${size.name}`, async () => {
+      await capture(`changes-${size.name}`, size, '[Changes]', ['c']);
+    });
+
+    it(`renders a placeholder tab unchanged at ${size.name}`, async () => {
+      // Tab to the tab bar, then right twice: Overview -> Session -> Logs.
+      await capture(`logs-tab-${size.name}`, size, 'arrives in stage 3', ['\t', `${ESC}[C`, `${ESC}[C`]);
     });
   }
 

@@ -554,7 +554,17 @@ describe('Modal', () => {
  * the queue can be exercised without a TTY; the Ink tree itself is covered by the Modal tests above.
  */
 describe('createDashboard controller', () => {
-  function harness() {
+  /** The run the workspace's store snapshots; the controller is what it reads it from. */
+  const emptyRun = {
+    runId: 'run-1',
+    workflowName: 'beta',
+    repositoryRoot: '/repo',
+    state: 'running',
+    workflow: { execution: { maxConcurrency: 1 }, tasks: [] },
+    tasks: {},
+  };
+
+  function harness(over: Partial<DashboardOptions> = {}) {
     const mounted: DashboardShared[] = [];
     const options: Array<Record<string, unknown>> = [];
     let unmounts = 0;
@@ -575,7 +585,18 @@ describe('createDashboard controller', () => {
         clear: () => undefined,
       };
     }) as unknown as DashboardOptions['mount'];
-    const controller = createDashboard({ run: {} as never, bus: {} as never, controller: {} as never, onMinimise: () => undefined, onInterrupt: () => undefined, mount });
+    const controller = createDashboard({
+      run: emptyRun as never,
+      bus: { seq: 0, onAny: () => () => undefined } as never,
+      controller: { run: emptyRun } as never,
+      onMinimise: () => undefined,
+      onInterrupt: () => undefined,
+      mount,
+      // Pinned, so the assertion below is about what the code passes rather than about whether the machine
+      // running the test happens to have a `~/.cao/config.json`.
+      altScreen: false,
+      ...over,
+    });
     return { controller, shared: () => mounted[mounted.length - 1]!, options: () => options[options.length - 1]!, mounts: () => mounted.length, unmounts: () => unmounts };
   }
 
@@ -584,13 +605,22 @@ describe('createDashboard controller', () => {
    * argued for - only changed lines are rewritten, so a ticking spinner does not redraw the screen - and
    * `kittyKeyboard: {mode: 'auto'}` is what Shift+Enter needs in the terminals that speak the protocol [D15].
    * Both default to off in Ink 7, so leaving them out is indistinguishable from not having upgraded.
-   * `alternateScreen` is deliberately absent: [D4] puts it under `--no-alt-screen` and `CAO_ALT_SCREEN`,
-   * which stage 1 owns.
+   * `alternateScreen` is the one a user chooses [D4]: on by default, off with `--no-alt-screen`, which
+   * reaches `createDashboard` as `altScreen: false`.
    */
   it('mounts Ink with the render options the spec names', () => {
     const h = harness();
     h.controller.open();
-    expect(h.options()).toEqual({ incrementalRendering: true, exitOnCtrlC: false, patchConsole: false, kittyKeyboard: { mode: 'auto' } });
+    expect(h.options()).toEqual({ incrementalRendering: true, exitOnCtrlC: false, patchConsole: false, kittyKeyboard: { mode: 'auto' }, alternateScreen: false });
+  });
+
+  it('mounts into the alternate screen unless something turned it off', () => {
+    const on = harness({ altScreen: undefined });
+    on.controller.open();
+    expect(on.options().alternateScreen).toBe(true);
+    const off = harness({ altScreen: false });
+    off.controller.open();
+    expect(off.options().alternateScreen).toBe(false);
   });
 
   it('opens on the first request and queues the rest', async () => {
@@ -1013,7 +1043,7 @@ describe('DashboardApp', () => {
     await wait();
     const frame = stripAnsi(lastFrame() ?? '');
     expect(asked).toEqual(['implement-102']);
-    expect(frame).toContain('Review');
+    expect(frame).toContain('[Changes]');
     expect(frame).toContain('attempt 2  2 files changed, +5 -3');
     expect(hasRow(frame, 'M src/a.ts', '+3 -3')).toBe(true);
     unmount();
@@ -1059,7 +1089,7 @@ describe('DashboardApp', () => {
     await wait();
     stdin.write('c');
     await wait();
-    expect(stripAnsi(lastFrame() ?? '')).toContain('Review');
+    expect(stripAnsi(lastFrame() ?? '')).toContain('[Changes]');
 
     // The worker asks while the review view has the screen: the prompt has to win, or it is answered by
     // whatever the operator was about to press in the other view.
@@ -1076,11 +1106,11 @@ describe('DashboardApp', () => {
     expect(answer).toBeUndefined();
     expect(stripAnsi(lastFrame() ?? '')).toContain('implement-102 wants to use Bash');
 
-    // Answering puts the view that was open back, rather than dropping the operator on the task list.
+    // Answering puts the tab that was open back, rather than dropping the operator on the task list.
     stdin.write('y');
     await wait();
     expect(answer).toEqual({ kind: 'allow', scope: 'once' });
-    expect(stripAnsi(lastFrame() ?? '')).toContain('Review');
+    expect(stripAnsi(lastFrame() ?? '')).toContain('[Changes]');
     unmount();
   });
 
@@ -1138,12 +1168,33 @@ describe('DashboardApp', () => {
     workflow: { execution: { maxConcurrency: 2 }, tasks: [workflowTask('implement-102'), workflowTask('review')] },
     ...over,
   });
-  const mount = (run: unknown, scheduler: Record<string, unknown>) => {
+  /**
+   * The workspace is a full-screen tree: it sizes every panel from `useWindowSize()` and gives each one a
+   * row budget, so it can only be driven through the harness, which is the thing that can report `rows`.
+   * `ink-testing-library` reports none at all, which would lay the whole workspace out for a terminal 24
+   * rows tall whatever the test meant.
+   */
+  const mount = (run: unknown, scheduler: Record<string, unknown>, size: { columns?: number; rows?: number } = {}) => {
     const shared: DashboardShared = { queue: [], listeners: new Set(), notify: () => undefined, remove: () => false };
-    return render(
+    const tree = renderTree(
       <DashboardApp run={run as never} bus={{ onAny: () => () => undefined } as never} controller={scheduler as never} shared={shared} finished={false} onMinimise={() => undefined} onInterrupt={() => undefined} />,
+      { columns: size.columns ?? 120, rows: size.rows ?? 40 },
     );
+    return {
+      lastFrame: () => tree.lastFrame(),
+      stdin: { write: (keys: string) => tree.write(keys) },
+      unmount: () => tree.unmount(),
+      tree,
+    };
   };
+
+  /**
+   * The Overview table's row for a task: the line that carries a state label beside the id, and not the
+   * one-line task strip the sidebar collapses to, which carries the same two things about the selected task.
+   */
+  const isTableRow = (line: string): boolean =>
+    /^[▶ ] \S/.test(line) && /(Running|Waiting|Completed|Failed|Blocked|Ready|Skipped|Cancelled)/.test(line);
+  const taskRow = (frame: string, id: string): string => frame.split(NL).find((line) => line.includes(id) && isTableRow(line)) ?? '';
 
   // A path is agent-chosen on the Claude Write path, so the detail view's file list goes through fileLabel
   // like every other list in the dashboard.
@@ -1194,7 +1245,9 @@ describe('DashboardApp', () => {
     await wait();
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('Grep pattern in src  … 2m idle');
-    expect(frame).not.toContain('masking-output');
+    // The row shows the last action; the tool result that masked it belongs to the transcript below, which
+    // is a different block and says so.
+    expect(taskRow(frame, 'implement-102')).not.toContain('masking-output');
     expect(frame).toContain('api retry 1/5 in 1m');
     unmount();
   });
@@ -1208,15 +1261,19 @@ describe('DashboardApp', () => {
         review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] },
       },
     });
-    const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] });
+    // Narrow enough that the sidebar collapses: with it open every line carries a sidebar cell as well as a
+    // table cell, and "which column does this row's state start in" stops being a question about the table.
+    const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] }, { columns: 90 });
     await wait();
+    // The table rows only: the strip and the detail block name the same task and the same state.
     const stateColumn = (frame: string): number[] =>
       frame
         .split(NL)
-        .filter((line) => /Running|Waiting/.test(line))
+        .filter((line) => isTableRow(line))
         .map((line) => line.search(/Running|Waiting/));
     let frame = stripAnsi(lastFrame() ?? '');
-    expect(frame).not.toContain(long);
+    expect(stateColumn(frame).length).toBeGreaterThan(0);
+    for (const line of frame.split(NL).filter(isTableRow)) expect(line).not.toContain(long);
     expect(frame).toContain('research-charter-requests-a…');
     let columns = stateColumn(frame);
     expect(columns).toHaveLength(2);
@@ -1277,16 +1334,23 @@ describe('DashboardApp', () => {
     try {
       await wait();
       tree.write('?');
-      const help = await tree.waitFor((frame) => frame.includes('Esc/Q back'));
-      // The wide help is 23 lines before it wraps and 28 after: opening it scrolled a 24-row terminal.
+      // `act`, not just `waitFor`: React 19 commits a keystroke's state change on a scheduler task and
+      // flushes the effects after it, and a poll loop that never drains that queue can time out waiting for
+      // a frame the tree has not been given the chance to draw.
+      await wait();
+      const help = await tree.waitFor((frame) => frame.includes('the panel with the keys'));
+      // The help is windowed like every other list: it scrolls inside the panel instead of pushing the
+      // footer off a 24-row terminal, which is what the wide text used to do.
       expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
       for (const line of help.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
-      expect(help).toContain('Ctrl+C    stop the run (twice to force)');
-      expect(help).toContain('In a transcript:');
+      expect(help).toContain('stop the run (twice to force)');
+      expect(help).toContain('Transcript viewer (F)');
 
       tree.write(String.fromCharCode(27));
+      await wait();
       await tree.waitFor((frame) => frame.includes('R restart'));
       tree.write('u');
+      await wait();
       const usage = await tree.waitFor((frame) => frame.includes('S sort by cost'));
       expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
       for (const line of usage.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
@@ -1307,8 +1371,8 @@ describe('DashboardApp', () => {
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('[ ] earlier/later attempt');
     expect(frame).toContain('P task picker');
-    expect(frame).toContain('T show thinking');
-    expect(frame).toContain('/ search   n/N next/previous match   k cycle the kind filter');
+    expect(frame).toContain('tool output, thinking, kind filter');
+    expect(frame).toContain('search and step through matches');
     expect(frame).toContain('g oldest line');
     expect(frame).toContain('G newest line and follow again');
     unmount();
@@ -1340,7 +1404,9 @@ describe('DashboardApp', () => {
         review: { id: 'review', state: 'pending', retryWindowStart: 1, attempts: [] },
       },
     });
-    const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] });
+    // Wider than the default: the attempt history lines are the longest thing the detail block draws, and
+    // this test is about what they say rather than about how they are cut.
+    const { lastFrame, stdin, unmount } = mount(run, { peek: () => [], transcript: () => [] }, { columns: 160 });
     await wait();
     // the table row carries the total across both attempts, with the running one in parentheses
     expect(stripAnsi(lastFrame() ?? '')).toContain('03m 00s (02m 00s)');
@@ -1382,11 +1448,11 @@ describe('DashboardApp', () => {
         review: { id: 'review', state: 'running', retryWindowStart: 1, currentAttempt: 1, attempts: [attemptAt(1)] },
       },
     });
-    const { lastFrame, unmount } = mount(run, { peek: () => [], transcript: () => [] });
+    const { lastFrame, unmount } = mount(run, { peek: () => [], transcript: () => [] }, { columns: 90 });
     await wait();
-    const lines = stripAnsi(lastFrame() ?? '').split(NL);
-    const retried = lines.find((l) => l.includes('implement-102'))!;
-    const plain = lines.find((l) => l.includes('review') && l.includes('Running'))!;
+    const frame = stripAnsi(lastFrame() ?? '');
+    const retried = taskRow(frame, 'implement-102');
+    const plain = taskRow(frame, 'review');
     expect(retried).toContain('03m 00s (02m 00s)');
     // the agent cell is the first thing after the duration column, and it starts in the same place on both
     expect(retried.indexOf('claude')).toBe(plain.indexOf('claude'));

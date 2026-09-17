@@ -1,19 +1,40 @@
-implement-parser
-────────────────────────────────────────────────────────────
-Status:       Completed
-Attempt:      # / #
-Agent:        claude  Model: claude-opus-#  Effort: CLI default
-Started:      ##:##:##   Elapsed: ##m ##s
-PID:          ####   Session: sess-abc###
-Working Dir:  /repo/.orchestrator/worktrees/implement-parser
-Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##% ##.#k/###k
-Files:        ±#  src/parser.ts
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+Tasks #/#                            ✗ implement-renderer failed  after # attempt
+▶ ✓ implement-pars… claude|opus-# █    exit code #
+  ✗ implement-rend… codex|gpt-#-…!█    R re-run    F open logs    C open diff
+  ○ review-and-mer… claude        █
+                                     ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
+                                       ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit co…
+                                       ○ review-and-merge    Waiting                claude  │ waiting for: implement-re…
 
-Attempts
-  ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.##
+                                     implement-parser
+                                     Status:       ✓ Completed
+                                     Attempt:      # / #
+                                     Agent:        claude  Model: claude-opus-#  Effort: CLI default
+                                     Started:      ##:##:##   Elapsed: ##m ##s
+                                     PID:          ####   Session: sess-abc###
+                                     Working Dir:  /repo/.orchestrator/worktrees/implement-parser
+                                     Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##% ##.#…
+                                     Files:        ±#  src/parser.ts
 
-Latest activity
-  ##:##:## › Reading the parser
-  ##:##:## $ npm test
+                                     Attempts
+                                       ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.##
 
-F/Enter follow live transcript   Esc/Q back
+                                     Latest activity
+                                       ##:## › Reading the parser
+                                       ##:## $ npm test
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ select   F / L follow   R restart   U usage   C changes   Ctrl+P palette   ? help   …  quota: stage #  updated #s ago

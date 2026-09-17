@@ -1,22 +1,40 @@
-Keys
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+Tasks #/#                            Tasks — the panel with the keys
+▶ ✓ implement-pars… claude|opus-# █    ↑↓               move through the tasks
+  ✗ implement-rend… codex|gpt-#-…!█    Enter            open the selected task in the panel
+  ○ review-and-mer… claude        █    F / L            follow the task's live transcript
+                                       R                restart a failed, blocked, cancelled or skipped task
+                                       /                search the task list
 
-  ↑↓        select a task            Enter     task details
-  F / L     follow a task's transcript
-              ←→/Tab or #-# switch task   P task picker   [ ] earlier/later attempt
-              ↑↓ PgUp/PgDn scroll   g oldest line   G newest line and follow again
-              t expand tool output and subagent entries   T show thinking
-              / search   n/N next/previous match   k cycle the kind filter
-              scrolling past the top pages older entries in from disk   Esc/Q back
-  U         usage: tokens, context, cost, time in tools per task    (S sort by cost)
-  C         review what each task changed
-              list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks   O $VISUAL/$EDITOR   Esc back
-              hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file   O editor   Esc back to the list
-  R         restart a failed, blocked, cancelled or skipped task
-  Q         minimise the dashboard (the run continues; D reopens it)
-  Ctrl+C    stop the run (twice to force)
+                                     Anywhere
+                                       Tab / Shift+Tab  move between the task list, the tabs and the panel
+                                       Ctrl+P           command palette: every action and every task id
+                                       ?                the keys of whatever has focus
+                                       Q                minimise the workspace (the run continues; D reopens it)
+                                       Ctrl+C           stop the run (twice to force)
 
-  When a worker needs you, a prompt appears here automatically:
-  Y allow   A allow for the rest of the task   N deny   R deny with a reason
-  #-# / ↑↓ Enter choose an answer   T type an answer   N decline
+                                     Transcript viewer (F)
+                                       ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt
+                                       ↑↓ PgUp/PgDn     scroll    g oldest line    G newest line and follow again
+                                       t / T / k        tool output, thinking, kind filter
+                                       / n N            search and step through matches
+                                       Esc / Q          back to the workspace
 
-Esc/Q back
+                                     When a worker needs you
+                                       Y / A / N / R    allow, allow for the rest of the task, deny, deny with a reason
+                                       #-# / ↑↓ Enter   choose an answer    T type one    N decline
+                                     ↑↓ scroll   Esc close
+
+
+
+
+
+
+
+
+
+
+
+Esc close   ↑↓ move   Enter choose  quota: stage #  updated #s ago

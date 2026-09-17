@@ -27,7 +27,15 @@ export type GlyphName =
   | 'error'
   | 'treeFirst'
   | 'treeMid'
-  | 'treeLast';
+  | 'treeLast'
+  | 'scrollUp'
+  | 'scrollDown'
+  | 'scrollTrack'
+  | 'scrollThumb'
+  | 'cursor'
+  | 'vrule'
+  | 'barFull'
+  | 'barEmpty';
 
 const UNICODE: Record<GlyphName, string> = {
   rule: '─',
@@ -50,6 +58,14 @@ const UNICODE: Record<GlyphName, string> = {
   treeFirst: '┌',
   treeMid: '├',
   treeLast: '└',
+  scrollUp: '▲',
+  scrollDown: '▼',
+  scrollTrack: '│',
+  scrollThumb: '█',
+  cursor: '▶',
+  vrule: '│',
+  barFull: '█',
+  barEmpty: '░',
 };
 
 const ASCII: Record<GlyphName, string> = {
@@ -73,6 +89,14 @@ const ASCII: Record<GlyphName, string> = {
   treeFirst: '+',
   treeMid: '|',
   treeLast: '+',
+  scrollUp: '^',
+  scrollDown: 'v',
+  scrollTrack: '|',
+  scrollThumb: '#',
+  cursor: '>',
+  vrule: '|',
+  barFull: '#',
+  barEmpty: '-',
 };
 
 const OFF = new Set(['', '0', 'false', 'no', 'off']);
@@ -102,6 +126,18 @@ export function useUnicode(): boolean {
 
 export function glyph(name: GlyphName): string {
   return (useUnicode() ? UNICODE : ASCII)[name];
+}
+
+/**
+ * The frames of the running spinner, in whichever alphabet this terminal can draw. Braille dots are the
+ * nicest animation a terminal has and mojibake in a console that cannot render them, where a task that is
+ * running is the row an operator is looking at.
+ */
+const SPINNER_UNICODE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_ASCII = ['|', '/', '-', '\\'];
+
+export function spinnerFrames(): readonly string[] {
+  return useUnicode() ? SPINNER_UNICODE : SPINNER_ASCII;
 }
 
 /** A horizontal rule `width` columns wide, in whichever character the terminal can draw. */

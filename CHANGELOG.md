@@ -10,6 +10,28 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **The dashboard is a workspace.** The interactive screen `cao run` and `cao resume` open is now a shell
+  rather than a stack of screens: a header (repository, run id, workflow, run state, elapsed, concurrency
+  and an owner badge), a sidebar with the task list, a tabbed main panel — **Overview · Session · Logs ·
+  Changes · Report · Diagnostics** — and a footer with the keys of whatever has focus. Nothing the old
+  dashboard showed is gone: the task table and the task detail are the Overview, which now leads with the
+  failed task, its failure category, the latest error line and what can be done about it; the review view
+  (`C`) is the Changes tab; `report.md` is the Report tab, rendered as markdown; and the transcript viewer
+  (`F`) and the usage table (`U`) still open over the whole terminal. Session, Logs and Diagnostics are
+  placeholders that say which stage fills them and what answers the same question today.
+- **Tab, `Ctrl+P`, `/` and `?`.** Tab and Shift+Tab move between the task list, the tabs and the panel
+  (including the `Esc O Z` form of Shift+Tab that some Windows terminals send); `Ctrl+P` opens a command
+  palette over every action and every task id, matched loosely; `/` narrows the focused list; `?` lists the
+  keys of the panel that has focus, plus the chords that work everywhere and the transcript viewer's own.
+  Arrows, PgUp/PgDn and Home/End move inside a panel, Enter opens and Esc backs out. Inside the palette or
+  a search field, a printable key is text.
+- **`--theme default|mono` and `CAO_THEME`.** Colour now comes from one token table (`src/tui/theme.ts`)
+  instead of literal colour names at each call site. `mono` paints nothing at all, which is the check that
+  every state is readable as a glyph plus a word rather than as a colour; `NO_COLOR` selects it too.
+  `CAO_REDUCED_MOTION=1`, a screen reader, or `TERM=dumb` stop the spinner and leave a running task marked
+  with its own glyph. `CAO_ASCII=1` now also covers the spinner, the progress bars, the cursor, the tab
+  separators and the header's counters, which were spelled out in Unicode whatever the terminal could draw.
+
 - **A run can be driven from another terminal: the request inbox.** A process that does not own a run now
   asks it for something by writing one file into the run's own directory —
   `requests/<ULID>-<kind>.json` with `stop`, `kill` or `restart` — and reads the answer back out of
@@ -136,6 +158,16 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **The workspace opens in the alternate screen.** `cao run` and `cao resume` used to draw the dashboard
+  into the terminal's normal buffer, which left the run's frames in the scrollback and scrolled whatever
+  was on screen before it away. The workspace now takes the alternate screen and gives the shell back
+  exactly as it was on quit, with the run summary printed into it. Turn it off with `--no-alt-screen`,
+  `CAO_ALT_SCREEN=0`, or `"altScreen": false` in `~/.cao/config.json` — which is read only if it already
+  exists, so a `cao` with emit off still never touches `~/.cao`. Nothing changes without a terminal:
+  `--no-tui`, a non-TTY, `CI` and `TERM=dumb` mount no workspace at all.
+- **At 80x24 the sidebar is a one-line task strip and the footer drops its freshness column.** The frame is
+  laid out from `useWindowSize()` on every render and each panel is given a row budget it slices itself to,
+  so no list is ever drawn past the bottom of the terminal however many tasks a `foreach` produced.
 - **The dashboard fits an 80-column terminal.** The summary line is truncated rather than wrapped, and
   below 100 columns it drops the token counts (the usage view has them) and halves the progress bar; the
   usage table drops its cache, turns, time and tools columns and shortens its legend; and the help screen

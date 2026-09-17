@@ -1782,6 +1782,15 @@ export class WorkflowScheduler {
   }
 
   /**
+   * `report.md` as the run directory holds it, for the Report panel of the workspace. Read rather than
+   * rebuilt: `cao report` and the panel must show the same document, and the one on disk is the one a
+   * reader is going to paste somewhere. Null until the run ends and writes it.
+   */
+  readReport(): Promise<string | null> {
+    return this.store.readReport(this.run.runId);
+  }
+
+  /**
    * The run's report of itself, written into the run directory whenever the run ends (including an
    * interrupted or paused one, where it is the only account of how far things got). A failure here is a
    * warning: the run is already finished, and everything the report is made of is on disk anyway.

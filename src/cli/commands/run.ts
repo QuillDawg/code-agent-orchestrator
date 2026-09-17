@@ -35,6 +35,10 @@ export interface RunCommandOptions {
   emit?: boolean;
   /** `--emit-feed`; reserved by §4.2.7's transport row and served by nothing yet. */
   emitFeed?: boolean;
+  /** `--no-alt-screen` gives `false`; undefined lets `CAO_ALT_SCREEN` and `~/.cao/config.json` decide [D4]. */
+  altScreen?: boolean;
+  /** `--theme <name>`; `CAO_THEME` and `NO_COLOR` are read when it is absent [D35]. */
+  theme?: string;
 }
 
 export async function runCommand(configPath: string | undefined, opts: RunCommandOptions): Promise<number> {
@@ -84,7 +88,7 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
   if (!lock.ok) throw new UsageError(`Run ${run.runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
   out(renderHeader({ workflow, runId: run.runId, runners, layers, verbose: opts.verbose }));
-  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed });
+  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme });
 }
 
 export interface ExecuteOptions {
@@ -97,6 +101,9 @@ export interface ExecuteOptions {
   isResume: boolean;
   emit?: boolean;
   emitFeed?: boolean;
+  /** Passed through to the workspace; both are ignored on the `--no-tui` path, which mounts nothing. */
+  altScreen?: boolean;
+  theme?: string;
 }
 
 /** Shared by `run` and `resume`: wires renderer, signal handling and executes the scheduler. */
@@ -203,6 +210,8 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
         startMinimisedKeys();
       },
       onInterrupt: () => interrupt.interrupt('Ctrl+C'),
+      altScreen: opts.altScreen,
+      theme: opts.theme,
     });
     // A request for a human reopens a minimised dashboard: switch the surfaces back.
     bus.onAny((ev) => {

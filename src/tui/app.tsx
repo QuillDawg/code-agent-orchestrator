@@ -1,14 +1,29 @@
 /**
- * Interactive dashboard (Ink). Subscribes to the event bus and reads the run state owned by the
- * scheduler; it never drives orchestration. Minimising the dashboard (Q) leaves the run going and it can
- * be reopened; anything that needs a human (approval gate, permission prompt, question) reopens it.
+ * The terminal workspace (spec §3.1, §3.2): the one screen a run is watched, read and driven from.
+ *
+ * It is a shell rather than a screen — header, sidebar, tabbed main panel, footer — and everything the old
+ * dashboard showed lives in it: the task table and the task detail are the Overview tab, the review view is
+ * the Changes tab, `report.md` is the Report tab, and Session, Logs and Diagnostics are the panels stages 2
+ * and 3 fill. The transcript viewer and the usage table still open over the whole terminal, because both are
+ * about one thing at a time and both are shared with a CLI command that has no shell around it.
+ *
+ * Three rules hold the whole file together:
+ *
+ * - **Every frame is sized to `useWindowSize()` and never taller than `rows`.** That is the condition under
+ *   which Ink 7 neither wipes the scrollback nor tears on Windows (§2.5, §7.3), so each panel is given a row
+ *   budget and slices itself to it rather than handing Ink a list and hoping.
+ * - **Presentation state lives in the zustand store** [D13], not in this component: which tab is open, what
+ *   has focus, where each cursor is, what is half-typed. The run itself is read from the store's coalesced
+ *   snapshot, which is fed from the event bus by `attachStore`.
+ * - **Nothing here changes the run.** A key press becomes a command submitted to the run controller (§2.2),
+ *   and the controller's answer becomes the notice.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { render, Box, Text, useInput, useApp, useWindowSize, type Instance } from 'ink';
+import { render, Box, Text, useInput, useApp, useFocus, useFocusManager, useIsScreenReaderEnabled, useWindowSize, type Instance } from 'ink';
+import { useStore } from 'zustand';
 import {
   type WorkflowRun,
   type TaskRunState,
-  ACTIVE_TASK_STATES,
   type ResolvedTask,
   type Interaction,
   type InteractionAnswer,
@@ -18,27 +33,50 @@ import {
 import type { EventBus } from '../events/event-bus.js';
 import type { RunController } from '../workflow/control/controller.js';
 import { controlEnvelope } from '../workflow/control/commands.js';
-import { stateGlyph, STATE_LABEL, STATE_COLOR, summarize } from '../workflow/states.js';
-import { formatDuration, formatDurationShort, formatClock } from '../util/duration.js';
-import { renderTranscript } from './transcript.js';
+import { STATE_LABEL, stateGlyph } from '../workflow/states.js';
+import { spinnerFrames } from '../util/glyphs.js';
+import { formatDuration, formatDurationShort } from '../util/duration.js';
 import { TranscriptViewer, type ViewerTask } from './viewer.js';
 import { Modal, type PendingItem } from './dashboard/modal.js';
 import { ReviewView, type ReviewTaskInput } from './dashboard/review.js';
-import { fileLabel, taskFiles } from './dashboard/files.js';
-import { activityCell, ACTIVITY_LOOKBACK } from './dashboard/activity.js';
-import { paint, sanitizeText } from '../cli/color.js';
+import { taskFiles } from './dashboard/files.js';
+import { sanitizeText } from '../cli/color.js';
 import { truncateVisible } from '../cli/util.js';
 import { BELL } from '../util/misc.js';
-import { agentLabel, bar, contextRatio, formatCost, formatTokens } from './format.js';
-import { attemptRows, currentAttempt, elapsedCell, elapsedParts, interactionRows, resultNotes, totalWaitedMs } from './history.js';
-// One definition of "which screen is up", shared with the presentation store stage 1 moves this tree onto.
-import type { View } from './store.js';
+import { bar, contextRatio, formatCost, formatTokens } from './format.js';
+import { currentAttempt, elapsedCell } from './history.js';
+import {
+  attachStore,
+  selectCursor,
+  selectDraft,
+  selectFocus,
+  selectListCursor,
+  selectNotice,
+  selectOverlay,
+  selectSnapshot,
+  selectTab,
+  selectView,
+  TAB_LABEL,
+  WORKSPACE_TABS,
+  type AttachedStore,
+  type FocusRegion,
+  type PresentationStore,
+  type WorkspaceTab,
+} from './store.js';
+import { reducedMotion, resolveTheme, type Theme } from './theme.js';
+import { windowOf } from './window.js';
+import { workspaceRenderOptions } from './render-options.js';
+import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
+import { workspaceLayout } from './workspace/layout.js';
+import { footerHints } from './workspace/keys.js';
+import { Overview } from './workspace/overview.js';
+import { filterPalette, HelpPanel, Palette, Placeholder, ReportPanel, type PaletteEntry } from './workspace/panels.js';
 
 export interface DashboardOptions {
   run: WorkflowRun;
   bus: EventBus;
   /**
-   * Everything the dashboard reads from the run, and the only way it changes anything (spec §2.2). It never
+   * Everything the workspace reads from the run, and the only way it changes anything (spec §2.2). It never
    * holds the scheduler: a key press is a command like any other, submitted and answered.
    */
   controller: RunController;
@@ -47,10 +85,16 @@ export interface DashboardOptions {
   onInterrupt: () => void;
   /** Mounts the Ink tree; defaults to ink's render. Injected by tests so the queue can be driven without a TTY. */
   mount?: typeof render;
+  /** `--no-alt-screen` gives `false`; undefined lets `CAO_ALT_SCREEN` and `~/.cao/config.json` decide [D4]. */
+  altScreen?: boolean;
+  /** `--theme <name>`; `CAO_THEME` and `NO_COLOR` are read when this is absent [D35]. */
+  theme?: string;
+  /** Whether this process holds the run or is watching one another process owns (§2.1). */
+  role?: WorkspaceRole;
 }
 
 export interface DashboardController {
-  /** Mount the dashboard (no-op when already open). */
+  /** Mount the workspace (no-op when already open). */
   open(): void;
   /** Unmount it, leaving the run going. */
   close(): void;
@@ -61,78 +105,12 @@ export interface DashboardController {
   finish(): Promise<void>;
 }
 
-
-const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-/** Attempts and interactions shown in the detail view; the rest are one `cao task` away. */
-const MAX_HISTORY_ROWS = 6;
-
 /**
- * The help screen, in two widths.
- *
- * `HELP_WIDE` is the text as it has always read. `HELP_NARROW` says the same things in lines that fit 80
- * columns and in few enough of them to fit 24 rows, because an 80x24 terminal is where a wrapped help
- * screen does the most damage: it is taller than the terminal, so opening it scrolls the dashboard away.
+ * The Shift+Tab some Windows terminals send. Ink parses `\x1b[Z` and moves focus itself; `\x1bOZ` reaches
+ * `useInput` with no name at all and its escape prefix stripped, which leaves exactly these two characters
+ * (§3.2, [D40]). No key produces them any other way — a typed `O` and `Z` arrive as two separate reads.
  */
-const HELP_WIDE: ReadonlyArray<{ text: string; dim?: boolean }> = [
-  { text: 'Keys' },
-  { text: ' ' },
-  { text: '  ↑↓        select a task            Enter     task details' },
-  { text: "  F / L     follow a task's transcript" },
-  { text: '              ←→/Tab or 1-9 switch task   P task picker   [ ] earlier/later attempt', dim: true },
-  { text: '              ↑↓ PgUp/PgDn scroll   g oldest line   G newest line and follow again', dim: true },
-  { text: '              t expand tool output and subagent entries   T show thinking', dim: true },
-  { text: '              / search   n/N next/previous match   k cycle the kind filter', dim: true },
-  { text: '              scrolling past the top pages older entries in from disk   Esc/Q back', dim: true },
-  { text: '  U         usage: tokens, context, cost, time in tools per task    (S sort by cost)' },
-  { text: '  C         review what each task changed' },
-  { text: '              list: ↑↓ PgUp/PgDn select   g/G first/last   Enter open the hunks   O $VISUAL/$EDITOR   Esc back', dim: true },
-  { text: '              hunks: ↑↓ PgUp/PgDn scroll   g/G top/bottom   N/P hunk   ←→ file   O editor   Esc back to the list', dim: true },
-  { text: '  R         restart a failed, blocked, cancelled or skipped task' },
-  { text: '  Q         minimise the dashboard (the run continues; D reopens it)' },
-  { text: '  Ctrl+C    stop the run (twice to force)' },
-  { text: ' ' },
-  { text: '  When a worker needs you, a prompt appears here automatically:' },
-  { text: '  Y allow   A allow for the rest of the task   N deny   R deny with a reason' },
-  { text: '  1-9 / ↑↓ Enter choose an answer   T type an answer   N decline' },
-  { text: ' ' },
-  { text: 'Esc/Q back', dim: true },
-];
-
-const HELP_NARROW: ReadonlyArray<{ text: string; dim?: boolean }> = [
-  { text: 'Keys' },
-  { text: ' ' },
-  { text: '  ↑↓        select a task            Enter     task details' },
-  { text: "  F / L     follow a task's transcript" },
-  { text: '  U         usage per task (S sorts by cost)' },
-  { text: '  C         review what each task changed' },
-  { text: '  R         restart a failed, blocked, cancelled or skipped task' },
-  { text: '  Q         minimise the dashboard (the run continues; D reopens it)' },
-  { text: '  Ctrl+C    stop the run (twice to force)' },
-  { text: ' ' },
-  { text: '  In a transcript: ←→/Tab or 1-9 task   P picker   [ ] attempt', dim: true },
-  { text: '      ↑↓ PgUp/PgDn scroll   g oldest   G newest   / search   n/N match', dim: true },
-  { text: '      t tool output   T thinking   k kind filter   Esc/Q back', dim: true },
-  { text: '  In the review: ↑↓ select   Enter hunks   N/P hunk   ←→ file', dim: true },
-  { text: '      O opens $VISUAL/$EDITOR   Esc back', dim: true },
-  { text: ' ' },
-  { text: '  When a worker needs you, a prompt appears here automatically:' },
-  { text: '  Y allow   A allow for the rest of the task   N deny   R deny with a reason' },
-  { text: '  1-9 / ↑↓ Enter choose an answer   T type an answer   N decline' },
-  { text: ' ' },
-  { text: 'Esc/Q back', dim: true },
-];
-
-/**
- * Whether a key press carries a modifier that makes it a chord rather than the letter it reports.
- *
- * Ink hands Ctrl+C to `useInput` as `input: 'c'` with `key.ctrl`, so a view that switches on the letter
- * alone acts on every Ctrl chord an operator uses out of terminal habit. Screens match on `input`, so they
- * ask this first; the one handler that wants a chord tests `key.ctrl` itself.
- */
-function isChord(key: { ctrl: boolean; meta: boolean }): boolean {
-  return key.ctrl || key.meta;
-}
+const SHIFT_TAB_SS3 = 'OZ';
 
 function taskUsage(st: TaskRunState) {
   return addUsage(...st.attempts.map((a) => a.usage));
@@ -150,61 +128,105 @@ type Shared = DashboardShared;
 export interface AppProps extends DashboardOptions {
   shared: Shared;
   finished: boolean;
+  /** The store the tree reads. `createDashboard` attaches one to the bus; a test may mount without it. */
+  store?: PresentationStore;
 }
 
-/** The dashboard component; exported for rendering in tests. */
+/** The workspace component; exported for rendering in tests. */
 export function DashboardApp(props: AppProps): React.JSX.Element {
-  const { run, bus, controller, onMinimise, onInterrupt } = props;
+  const { bus, controller, onMinimise, onInterrupt } = props;
   const { exit } = useApp();
   // `useWindowSize()`, not `useStdout()`: it subscribes to the terminal's `resize` and re-renders on it.
-  // Reading `stdout.columns` during render only picks a new size up when something else happens to re-render,
-  // which is the spinner tick - so the layout, `narrow` and every row budget below stayed a second behind a
-  // resize (§2.5).
+  // Reading `stdout.columns` during render only picks a new size up when something else happens to
+  // re-render, which is the spinner tick — so the layout and every row budget below stayed a second behind
+  // a resize (§2.5).
   const { rows, columns } = useWindowSize();
+  const screenReader = useIsScreenReaderEnabled();
+  const theme = useMemo(() => resolveTheme({ theme: props.theme }), [props.theme]);
+  const motion = useMemo(() => !reducedMotion() && !screenReader, [screenReader]);
+
+  // The run object the scheduler mutates is stable, so a ref keeps the snapshot source honest without
+  // re-attaching the store on every render.
+  const runRef = useRef(props.run);
+  runRef.current = props.run;
+  const [attached] = useState<AttachedStore>(() =>
+    props.store ? { store: props.store, detach: () => undefined } : attachStore(bus, { get run() { return runRef.current; } }),
+  );
+  const store = attached.store;
+  useEffect(() => () => attached.detach(), [attached]);
+
+  const snapshot = useStore(store, selectSnapshot);
+  const view = useStore(store, selectView);
+  const tab = useStore(store, selectTab);
+  const storedFocus = useStore(store, selectFocus);
+  const cursor = useStore(store, selectCursor);
+  const notice = useStore(store, selectNotice);
+  const overlay = useStore(store, selectOverlay);
+  const paletteQuery = useStore(store, selectDraft('palette'));
+  const search = useStore(store, selectDraft('search'));
+  const paletteCursor = useStore(store, selectListCursor('palette'));
+  const reportCursor = useStore(store, selectListCursor('report'));
+  const helpCursor = useStore(store, selectListCursor('help'));
+
   const [, setTick] = useState(0);
-  const [view, setView] = useState<View>({ kind: 'dashboard' });
-  const [cursor, setCursor] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingItem | null>(props.shared.queue[0] ?? null);
   const [usageSort, setUsageSort] = useState<'order' | 'cost'>('order');
   const [pastAttempt, setPastAttempt] = useState<{ taskId: string; attempt: number; entries: TranscriptEntry[] } | null>(null);
+  const [report, setReport] = useState<string | null | undefined>(undefined);
   const frame = useRef(0);
   const entriesCache = useRef<{ taskId: string; value: TranscriptEntry[] } | undefined>(undefined);
-  const tasks = useMemo(() => run.workflow.tasks, [run]);
-  // Stable, so the review view's own cache is not thrown away on every spinner frame.
-  const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
-  // The width the transcript viewer already calls narrow, so one terminal is compact everywhere or nowhere.
-  const narrow = columns < 100;
-  const color = true;
-  const anyRunning = tasks.some((t) => ACTIVE_TASK_STATES.has(run.tasks[t.id]?.state ?? 'pending'));
 
+  const run = snapshot?.run ?? props.run;
+  const tasks = run.workflow.tasks;
+  const searching = overlay.kind === 'search' || search !== '';
+  // The list every task cursor indexes: `/` narrows it, so the cursor is reset when the query changes.
+  const visible = useMemo(() => (searching && search ? filterTasks(tasks, search) : tasks), [tasks, search, searching]);
+  const selected = visible[Math.min(cursor, Math.max(0, visible.length - 1))];
+  const now = Date.now();
+  const active = anyActive(run);
+
+  // ------------------------------------------------------------------ focus (Tab / Shift+Tab)
+  useFocus({ id: 'tasks', autoFocus: true });
+  useFocus({ id: 'tabs' });
+  useFocus({ id: 'main' });
+  const { activeId, focus: focusPanel, focusPrevious, enableFocus, disableFocus } = useFocusManager();
+  const focus: FocusRegion = activeId === 'tabs' ? 'tabs' : activeId === 'main' ? 'main' : 'tasks';
+  const overlayOpen = overlay.kind !== 'none';
+  // Ink's focus manager answers Tab itself, including inside a text field; while one is open the panels are
+  // taken out of the cycle so a Tab in the palette cannot silently move the focus behind it.
   useEffect(() => {
-    let scheduled = false;
-    const off = bus.onAny(() => {
-      if (scheduled) return;
-      scheduled = true;
-      setTimeout(() => {
-        scheduled = false;
-        setTick((t) => t + 1);
-      }, 80);
-    });
+    if (overlayOpen) disableFocus();
+    else enableFocus();
+  }, [overlayOpen, enableFocus, disableFocus]);
+  const lastPanel = useRef<string>('tasks');
+  useEffect(() => {
+    if (overlayOpen) return;
+    if (activeId) lastPanel.current = activeId;
+    if (storedFocus !== focus) store.getState().setFocus(focus);
+  }, [activeId, focus, overlayOpen, storedFocus, store]);
+  useEffect(() => {
+    if (!overlayOpen) focusPanel(lastPanel.current);
+  }, [overlayOpen, focusPanel]);
+
+  // ------------------------------------------------------------------ effects
+  useEffect(() => {
     const onQueue = (): void => setPending(props.shared.queue[0] ?? null);
     props.shared.listeners.add(onQueue);
     onQueue();
     return () => {
-      off();
       props.shared.listeners.delete(onQueue);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bus]);
 
+  // One timer, whether or not it animates: the elapsed columns and the freshness chip still have to move.
   useEffect(() => {
     const timer = setInterval(() => {
-      frame.current = (frame.current + 1) % SPINNER.length;
+      if (motion) frame.current += 1;
       setTick((t) => t + 1);
-    }, anyRunning ? 120 : 1000);
+    }, motion && active ? 120 : 1000);
     return () => clearInterval(timer);
-  }, [anyRunning]);
+  }, [active, motion]);
 
   useEffect(() => {
     if (props.finished) {
@@ -213,12 +235,6 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     }
     return undefined;
   }, [props.finished, exit]);
-
-  useEffect(() => {
-    if (!notice) return undefined;
-    const t = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(t);
-  }, [notice]);
 
   // An earlier attempt selected with [ / ] in the follow view: its transcript only exists on disk, because
   // the live buffer is bounded and shared by every attempt of the task. Undefined means "follow the worker".
@@ -242,9 +258,87 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     };
   }, [pastTaskId, pastAttemptNumber, controller]);
 
-  const dashboardKeys = view.kind === 'dashboard' && !pending;
+  // `report.md` exists once the run has ended; re-read when it does, so the tab is not stuck on "not yet".
+  useEffect(() => {
+    if (tab !== 'report') return undefined;
+    let cancelled = false;
+    setReport(null);
+    void Promise.resolve(controller.readReport())
+      .then((markdown) => {
+        if (!cancelled) setReport(markdown ?? undefined);
+      })
+      .catch(() => {
+        if (!cancelled) setReport(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, controller, props.finished]);
+
+  // ------------------------------------------------------------------ actions
+  const setNotice = (text: string) => store.getState().setNotice(text);
+  // Stable, so the review view's own per-attempt cache is not thrown away on every spinner frame.
+  const loadDiff = useMemo(() => (taskId: string) => controller.capturedDiff(taskId), [controller]);
+  const restart = (task: ResolvedTask | undefined): void => {
+    if (!task) return;
+    // The controller decides, not the screen: it holds the run state this frame is only a picture of, and
+    // its rejection is already a sentence written for this notice.
+    const attempts = run.tasks[task.id]?.attempts;
+    const expected = attempts?.[attempts.length - 1]?.number;
+    void controller
+      .submit({ kind: 'restart', taskId: task.id }, controlEnvelope('tui', expected ? { attempt: expected } : undefined))
+      .then((ack) => setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${task.id}" cannot be restarted.`) : `Restarting ${task.id}…`))
+      .catch((err: unknown) => setNotice(`Could not restart ${task.id}: ${(err as Error).message}`));
+  };
+  const follow = (task: ResolvedTask | undefined): void => {
+    if (task) store.getState().setView({ kind: 'follow', taskId: task.id });
+  };
+  const openTab = (next: WorkspaceTab): void => {
+    store.getState().setTab(next);
+    focusPanel('main');
+  };
+  const minimise = (): void => {
+    onMinimise();
+    exit();
+  };
+  const closeOverlay = (): void => store.getState().setOverlay({ kind: 'none' });
+
+  const paletteEntries: PaletteEntry[] = useMemo(() => {
+    const entries: PaletteEntry[] = WORKSPACE_TABS.map((name) => ({
+      id: `tab:${name}`,
+      label: `Go to ${TAB_LABEL[name]}`,
+      hint: 'tab',
+      run: () => openTab(name),
+    }));
+    entries.push(
+      { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
+      { id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) },
+      { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
+      { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
+      { id: 'action:minimise', label: 'Minimise the workspace', hint: 'Q', run: minimise },
+    );
+    for (const task of tasks) {
+      entries.push({
+        id: task.id,
+        label: task.id,
+        hint: STATE_LABEL[run.tasks[task.id]?.state ?? 'pending'],
+        run: () => {
+          store.getState().setDraft('search', '');
+          store.getState().setCursor(tasks.indexOf(task));
+          store.getState().setTab('overview');
+          focusPanel('tasks');
+        },
+      });
+    }
+    return entries;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, run, selected, store]);
+  const paletteMatches = useMemo(() => filterPalette(paletteEntries, paletteQuery), [paletteEntries, paletteQuery]);
+
+  // ------------------------------------------------------------------ keys
+  const inWorkspace = view.kind === 'dashboard' && !pending;
   // The review view owns its own keys (Esc leaves the hunk pane before it leaves the view), so it is not here.
-  const detailKeys = (view.kind === 'detail' || view.kind === 'usage' || view.kind === 'help') && !pending;
+  const detailKeys = (view.kind === 'usage' || view.kind === 'detail') && !pending;
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
@@ -255,110 +349,154 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   useInput(
     (input, key) => {
-      if (isChord(key)) return;
+      if (key.ctrl && input === 'p') {
+        if (overlay.kind === 'palette') closeOverlay();
+        else {
+          store.getState().setDraft('palette', '');
+          store.getState().setListCursor('palette', 0, paletteEntries.length);
+          store.getState().setOverlay({ kind: 'palette' });
+        }
+      } else if (!overlayOpen && input === SHIFT_TAB_SS3 && !key.ctrl && !key.meta) focusPrevious();
+    },
+    { isActive: inWorkspace },
+  );
+
+  // Both of the handlers below are subscribed whenever the shell is up, and each decides from the current
+  // overlay whether the key is theirs. Gating them with `isActive` instead reads better but loses keys: Ink
+  // subscribes and unsubscribes in a passive effect, so a key that arrives between the press that opened an
+  // overlay and React flushing that effect reaches the handler that is on its way out - which is how Esc
+  // stopped closing the help panel.
+  useInput(
+    (input, key) => {
+      if (!overlayOpen) return;
+      const state = store.getState();
+      if (overlay.kind === 'help') {
+        if (key.upArrow) state.moveListCursor('help', -1, 200);
+        else if (key.downArrow) state.moveListCursor('help', 1, 200);
+        else if (key.pageUp) state.moveListCursor('help', -10, 200);
+        else if (key.pageDown) state.moveListCursor('help', 10, 200);
+        else if (key.escape || input === '?' || input.toLowerCase() === 'q') closeOverlay();
+        return;
+      }
+      const field = overlay.kind === 'palette' ? 'palette' : 'search';
+      const query = field === 'palette' ? paletteQuery : search;
+      if (key.escape) {
+        if (field === 'search') {
+          state.setDraft('search', '');
+          state.setCursor(0);
+        }
+        closeOverlay();
+      } else if (key.return) {
+        if (field === 'palette') {
+          const entry = paletteMatches[paletteCursor];
+          closeOverlay();
+          entry?.run();
+        } else closeOverlay();
+      } else if (key.backspace || key.delete) {
+        state.setDraft(field, query.slice(0, -1));
+        if (field === 'search') state.setCursor(0);
+        else state.setListCursor('palette', 0, paletteEntries.length);
+      } else if (field === 'palette' && (key.upArrow || key.downArrow)) {
+        state.moveListCursor('palette', key.upArrow ? -1 : 1, paletteMatches.length);
+      } else if (input && !key.ctrl && !key.meta && !key.tab) {
+        // [D15]: inside a text field a printable key is text, whatever it would mean outside it.
+        state.setDraft(field, query + input);
+        if (field === 'search') state.setCursor(0);
+        else state.setListCursor('palette', 0, paletteEntries.length);
+      }
+    },
+    { isActive: inWorkspace },
+  );
+
+  useInput(
+    (input, key) => {
+      if (overlayOpen) return;
+      const state = store.getState();
+      // Ctrl+C is handled above and every other chord belongs to the terminal, not to this screen. Without
+      // this line Ctrl+C also arrives here as a plain `c` and opens the Changes tab over the frame that was
+      // about to say the run is stopping; Ctrl+L, Ctrl+R and Ctrl+U are the same story.
+      if (key.ctrl || key.meta || key.tab) return;
       const lower = input.toLowerCase();
-      if (key.escape || lower === 'q' || key.backspace) setView({ kind: 'dashboard' });
-      else if (view.kind === 'detail' && (lower === 'f' || lower === 'l' || key.return)) setView({ kind: 'follow', taskId: view.taskId });
+      const list = focus === 'tabs' ? 'tabs' : focus === 'main' && tab === 'report' ? 'report' : 'tasks';
+      // Every move reads the cursor back out of the store rather than using the one this frame was drawn
+      // with: Ink hands the whole of a held-down key's burst to the handler before React re-renders, and a
+      // move computed from the rendered value would move by one however many arrived.
+      const step = (delta: number): void => {
+        if (list === 'tabs') state.moveTab(delta);
+        else if (list === 'report') state.moveListCursor('report', delta, 10_000);
+        else state.setCursor(Math.max(0, Math.min(store.getState().cursor + delta, visible.length - 1)));
+      };
+
+      if (input === '?') state.setOverlay({ kind: 'help' });
+      else if (input === '/') {
+        state.setDraft(list === 'report' ? 'report-search' : 'search', '');
+        state.setOverlay({ kind: 'search' });
+      } else if (key.upArrow) step(-1);
+      else if (key.downArrow) step(1);
+      else if (key.leftArrow) step(list === 'tasks' ? 0 : -1);
+      else if (key.rightArrow) step(list === 'tasks' ? 0 : 1);
+      else if (key.pageUp) step(-10);
+      else if (key.pageDown) step(10);
+      else if (key.home) {
+        if (list === 'tabs') state.setTab('overview');
+        else if (list === 'report') state.setListCursor('report', 0, 10_000);
+        else state.setCursor(0);
+      } else if (key.end) {
+        if (list === 'tabs') state.setTab('diagnostics');
+        else if (list === 'report') state.setListCursor('report', 10_000, 10_000);
+        else state.setCursor(visible.length - 1);
+      } else if (key.return) {
+        if (focus === 'tabs') focusPanel('main');
+        else {
+          const waiting = tasks.find((t) => run.tasks[t.id]?.state === 'waiting');
+          if (waiting && props.shared.queue.length) return; // the modal is about to show
+          state.setTab('overview');
+          focusPanel('main');
+        }
+      } else if (key.escape) {
+        if (search) {
+          state.setDraft('search', '');
+          state.setCursor(0);
+        } else if (focus !== 'tasks') focusPanel('tasks');
+      } else if (lower === 'l' || lower === 'f') follow(selected);
+      else if (lower === 'u') state.setView({ kind: 'usage' });
+      else if (lower === 'c') openTab('changes');
+      else if (lower === 'r') restart(selected);
+      else if (lower === 'h') state.setOverlay({ kind: 'help' });
+      else if (lower === 'q') minimise();
+    },
+    { isActive: inWorkspace && !(focus === 'main' && tab === 'changes') },
+  );
+
+  useInput(
+    (input, key) => {
+      if (key.ctrl || key.meta) return;
+      const lower = input.toLowerCase();
+      if (key.escape || lower === 'q' || key.backspace) store.getState().setView({ kind: 'dashboard' });
       else if (view.kind === 'usage' && lower === 's') setUsageSort((s) => (s === 'order' ? 'cost' : 'order'));
     },
     { isActive: detailKeys },
   );
 
-  useInput(
-    (input, key) => {
-      // Ctrl+C is handled above and every other chord belongs to the terminal, not to this screen. Without
-      // this line Ctrl+C also arrives here as a plain `c` and opens the review view over the frame that was
-      // about to say the run is stopping; Ctrl+L, Ctrl+R and Ctrl+U are the same story.
-      if (isChord(key)) return;
-      const lower = input.toLowerCase();
-      if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
-      else if (key.downArrow) setCursor((c) => Math.min(tasks.length - 1, c + 1));
-      else if (key.return) {
-        const waiting = tasks.find((t) => run.tasks[t.id]?.state === 'waiting');
-        if (waiting && props.shared.queue.length) return; // the modal is about to show
-        setView({ kind: 'detail', taskId: tasks[cursor]!.id });
-      } else if (lower === 'l' || lower === 'f') setView({ kind: 'follow', taskId: tasks[cursor]!.id });
-      else if (lower === 'u') setView({ kind: 'usage' });
-      else if (lower === 'c') setView({ kind: 'review' });
-      else if (input === '?' || lower === 'h') setView({ kind: 'help' });
-      else if (lower === 'r') {
-        const selected = tasks[cursor]!;
-        // The controller decides, not the screen: it holds the run state this frame is only a picture of, and
-        // its rejection is already a sentence written for this notice.
-        const attempts = run.tasks[selected.id]?.attempts;
-        const expected = attempts?.[attempts.length - 1]?.number;
-        void controller
-          .submit({ kind: 'restart', taskId: selected.id }, controlEnvelope('tui', expected ? { attempt: expected } : undefined))
-          .then((ack) => setNotice(ack.status === 'rejected' ? (ack.reason ?? `"${selected.id}" cannot be restarted.`) : `Restarting ${selected.id}…`))
-          .catch((err: unknown) => setNotice(`Could not restart ${selected.id}: ${(err as Error).message}`));
-      } else if (lower === 'q') {
-        onMinimise();
-        exit();
-      }
-    },
-    { isActive: dashboardKeys },
-  );
-
-  const now = Date.now();
-  const summary = summarize(run);
-  const running = tasks.filter((t) => run.tasks[t.id]?.state === 'running').length;
-  const waitingTasks = tasks.filter((t) => run.tasks[t.id]?.state === 'waiting' || run.tasks[t.id]?.state === 'awaiting_approval');
-  const done = summary.success + summary.skipped;
-  const elapsed = run.startedAt ? formatDuration(now - new Date(run.startedAt).getTime()) : '';
-  const totalUsage = addUsage(...tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
-  const idWidth = Math.min(28, Math.max(12, ...tasks.map((t) => t.id.length)));
-  // The task column is capped so a wordy id cannot claim half the terminal, and the cap only holds if the
-  // id itself is cut to it: padded but uncut, one long name shifts every cell after it on its row alone.
-  const taskCell = (id: string): string => truncateVisible(id, idWidth).padEnd(idWidth);
-
-  const progressBar = (): string => {
-    const width = narrow ? 10 : 20;
-    const seg = (n: number): number => Math.round((n / Math.max(1, summary.total)) * width);
-    let s = paint('█'.repeat(seg(summary.success)), 'green');
-    s += paint('█'.repeat(seg(summary.failed + summary.blocked + summary.cancelled)), 'red');
-    s += paint('█'.repeat(seg(running + waitingTasks.length)), 'cyan');
-    const used = seg(summary.success) + seg(summary.failed + summary.blocked + summary.cancelled) + seg(running + waitingTasks.length);
-    s += paint('░'.repeat(Math.max(0, width - used)), 'gray');
-    return s;
-  };
-
-  const header = (
-    <Box flexDirection="column">
-      <Text wrap="truncate-end">
-        <Text bold>{run.workflowName}</Text>
-        <Text dimColor>
-          {'  '}run {run.runId}  ·  {run.repositoryRoot}
-        </Text>
-      </Text>
-      {/* Truncated, never wrapped: a summary that spills onto a second line pushes the task list down and
-          starts that line with the stray space between two of its columns. Below 100 columns the line is
-          also shortened rather than cut - the bar loses half its width, the token counts go (the usage view
-          has them), and a finished run drops a concurrency that can only read 0/n. */}
-      <Text wrap="truncate-end">
-        [{progressBar()}] {done}/{summary.total}   {paint(`✓${summary.success}`, 'green')} {paint(`✗${summary.failed + summary.blocked}`, summary.failed + summary.blocked ? 'red' : 'gray')} {paint(`▶${running}`, 'cyan')}
-        {waitingTasks.length ? ` ${paint(`?${waitingTasks.length}`, ['yellow', 'bold'])}` : ''}   Elapsed {elapsed}
-        {narrow && props.finished ? '' : `   Concurrency ${running}/${run.workflow.execution.maxConcurrency}`}
-        {totalUsage.costUsd !== undefined ? `   Cost ${formatCost(totalUsage.costUsd)}` : ''}
-        {!narrow && totalUsage.inputTokens ? paint(`   ${formatTokens(totalUsage.inputTokens)} in / ${formatTokens(totalUsage.outputTokens ?? 0)} out`, 'dim') : ''}
-        {props.finished ? `   State: ${run.state}` : ''}
-      </Text>
-      {waitingTasks.length > 0 && (
-        <Text wrap="truncate-end">
-          {paint('? Needs you: ', ['yellow', 'bold'])}
-          {waitingTasks
-            .map((t) => {
-              const p = run.tasks[t.id]?.pendingInteraction;
-              return `${t.id}${p ? ` (${p.kind}: ${sanitizeText(p.title)})` : ' (approval)'}`;
-            })
-            .join('   ')}
-        </Text>
-      )}
-    </Box>
-  );
+  // ------------------------------------------------------------------ layout
+  const waiting = waitingTasks(run);
+  const attention = waiting.length
+    ? waiting
+        .map((t) => {
+          const p = run.tasks[t.id]?.pendingInteraction;
+          return `${t.id}${p ? ` (${p.kind}: ${sanitizeText(p.title)})` : ' (approval)'}`;
+        })
+        .join('   ')
+    : undefined;
+  const headerRows = headerRowsFor(run);
+  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) });
+  const spinner = spinnerFrames();
+  const runningGlyph = motion ? spinner[frame.current % spinner.length]! : stateGlyph('running');
+  const header = <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} attention={attention} />;
 
   if (pending) {
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
         {header}
         <Text> </Text>
         <Modal
@@ -366,7 +504,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           item={pending}
           queued={props.shared.queue.length - 1}
           width={columns}
-          height={rows}
+          height={Math.max(4, rows - headerRows - 1)}
           onDone={() => {
             // By id, not shift(): a request withdrawn while this one was on screen has already been spliced out.
             props.shared.remove(pending.id);
@@ -390,13 +528,6 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         filesChanged: taskFiles(st).length || undefined,
         pending: st.pendingInteraction && sanitizeText(st.pendingInteraction.title),
       };
-    });
-
-  /** What the review view starts from: the live tool-stream list, until it has read the attempt's own diff. */
-  const reviewTasks = (): ReviewTaskInput[] =>
-    tasks.map((t) => {
-      const st = run.tasks[t.id]!;
-      return { taskId: t.id, state: st.state, live: ACTIVE_TASK_STATES.has(st.state), attempts: st.attempts.length, files: taskFiles(st) };
     });
 
   /**
@@ -427,13 +558,13 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         entries={view.attempt === undefined ? followEntries(view.taskId) : (showing ?? [])}
         width={columns}
         height={rows}
-        color={color}
+        color={theme.color}
         onSelectTask={(id) => {
-          setView({ kind: 'follow', taskId: id });
-          setCursor(Math.max(0, tasks.findIndex((t) => t.id === id)));
+          store.getState().setView({ kind: 'follow', taskId: id });
+          store.getState().setCursor(Math.max(0, tasks.findIndex((t) => t.id === id)));
         }}
         // Choosing the newest attempt goes back to the live buffer, so the view keeps following the worker.
-        onSelectAttempt={(attempt) => setView({ kind: 'follow', taskId: view.taskId, attempt: attempt === live ? undefined : attempt })}
+        onSelectAttempt={(attempt) => store.getState().setView({ kind: 'follow', taskId: view.taskId, attempt: attempt === live ? undefined : attempt })}
         // The live view's buffer spans every attempt of the task, so its pager has to as well; a chosen past
         // attempt is scoped to that attempt's file, exactly as `cao logs -a N` is.
         loadOlder={
@@ -443,285 +574,229 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
               ? (oldest) => controller.olderTaskTranscript(view.taskId, followAttempt, oldest)
               : (oldest) => controller.olderTranscript(view.taskId, followAttempt, oldest)
         }
-        onExit={() => setView({ kind: 'dashboard' })}
-        footerHint="Q/Esc dashboard"
+        onExit={() => store.getState().setView({ kind: 'dashboard' })}
+        footerHint="Q/Esc workspace"
       />
     );
   }
 
-  if (view.kind === 'help') {
-    // Written out rather than laid out: the help screen is the one frame an operator opens *because* they
-    // are lost, so it has to fit the terminal they are lost in. At 80 columns the wide text wraps to 28
-    // lines in a 24-row terminal, which scrolls the frame and is exactly what §2.5 forbids.
-    const lines = narrow ? HELP_NARROW : HELP_WIDE;
-    return (
-      <Box flexDirection="column">
-        {lines.slice(0, Math.max(1, rows)).map((line, i) => (
-          <Text key={i} bold={i === 0} dimColor={line.dim} wrap="truncate-end">
-            {line.text}
-          </Text>
-        ))}
-      </Box>
-    );
-  }
-
   if (view.kind === 'usage') {
-    const list = [...tasks].map((t) => ({ t, st: run.tasks[t.id]!, u: taskUsage(run.tasks[t.id]!) }));
-    if (usageSort === 'cost') list.sort((a, b) => (b.u.costUsd ?? 0) - (a.u.costUsd ?? 0));
-    return (
-      <Box flexDirection="column">
-        {header}
-        <Text> </Text>
-        {/* Below 100 columns the four detail columns do not fit beside the task name, and a header that
-            wraps takes its continuation from the middle of a column heading. They are dropped instead;
-            what is left is the four numbers an operator opens this view for, plus the context bar. */}
-        <Text bold wrap="truncate-end">
-          {'  '}
-          {'Task'.padEnd(idWidth)}  {'State'.padEnd(11)} {'Cost'.padStart(7)} {'In'.padStart(7)} {'Out'.padStart(7)}
-          {narrow ? '' : ` ${'Cache r/w'.padStart(11)} ${'Turns'.padStart(5)} ${'Time'.padStart(6)} ${'Tools'.padStart(6)}`}
-          {'  '}Context
-        </Text>
-        {list.map(({ t, st, u }) => {
-          const ratio = contextRatio(u);
-          const ctx = u.contextTokens !== undefined ? `${formatTokens(u.contextTokens)}${u.contextWindow ? `/${formatTokens(u.contextWindow)}` : ''}` : '';
-          const ctxStyle = ratio === undefined ? 'dim' : ratio >= 0.9 ? 'red' : ratio >= 0.7 ? 'yellow' : 'green';
-          // Cache reads and cache writes share one cell: two more full columns would push the context bar off
-          // an 80-column terminal, and the pair is only ever read together.
-          const cache = u.cacheReadTokens !== undefined || u.cacheCreationTokens !== undefined ? `${formatTokens(u.cacheReadTokens ?? 0)}/${formatTokens(u.cacheCreationTokens ?? 0)}` : '';
-          return (
-            <Text key={t.id} wrap="truncate-end">
-              {'  '}
-              {taskCell(t.id)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
-              {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)}
-              {narrow ? '' : ` ${cache.padStart(11)} ${String(u.numTurns ?? '').padStart(5)} ${(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} `}
-              {narrow ? '' : paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'cyan')}
-              {'  '}
-              {ratio !== undefined ? paint(`[${bar(ratio, narrow ? 5 : 8)}] `, ctxStyle as 'red') : ''}
-              {paint(ctx, ctxStyle as 'red')}
-              {u.compactions ? paint(`  ${u.compactions} compaction${u.compactions === 1 ? '' : 's'}`, 'dim') : ''}
-            </Text>
-          );
-        })}
-        <Text> </Text>
-        <Text wrap="truncate-end">
-          Total: {formatCost(totalUsage.costUsd ?? 0)}   {formatTokens(totalUsage.inputTokens ?? 0)} in / {formatTokens(totalUsage.outputTokens ?? 0)} out
-          {!narrow && totalUsage.cacheCreationTokens ? `   ${formatTokens(totalUsage.cacheCreationTokens)} cache write` : ''}
-          {totalUsage.durationMs !== undefined ? `   ${formatDuration(totalUsage.durationMs)} of agent time` : ''}
-          {!narrow && totalUsage.toolMs !== undefined ? `   ${formatDuration(totalUsage.toolMs)} in tools` : ''}
-        </Text>
-        {/* Two lines rather than one: the single legend is 133 columns and wrapped even on a wide
-            terminal, which put "Tools = time spent inside tool calls" halfway through a sentence. */}
-        {(narrow ? ['Context = tokens in the session window'] : ['Cache r/w = tokens read from / written to the prompt cache', 'Time = duration the agent reported   Tools = time spent inside tool calls']).map((line) => (
-          <Text key={line} dimColor wrap="truncate-end">
-            {line}
-          </Text>
-        ))}
-        <Text dimColor wrap="truncate-end">S sort by {usageSort === 'order' ? 'cost' : 'workflow order'}   Esc/Q back</Text>
-      </Box>
-    );
+    return <UsageView run={run} theme={theme} columns={columns} rows={rows} sort={usageSort} header={header} headerRows={headerRows} />;
   }
 
-  if (view.kind === 'review') {
-    return (
-      <Box flexDirection="column">
-        {header}
-        <Text> </Text>
-        <Text bold>Review</Text>
-        <ReviewView
-          tasks={reviewTasks()}
-          width={columns}
-          height={Math.max(6, rows - 8)}
-          color={color}
-          root={run.repositoryRoot}
-          loadDiff={loadDiff}
-          isActive={!pending}
-          onExit={() => setView({ kind: 'dashboard' })}
-        />
-      </Box>
-    );
-  }
+  // ------------------------------------------------------------------ the shell
+  const mainPanel = (): React.JSX.Element => {
+    switch (tab) {
+      case 'overview':
+        return (
+          <Overview
+            run={run}
+            tasks={visible}
+            cursor={Math.min(cursor, Math.max(0, visible.length - 1))}
+            now={now}
+            columns={layout.mainWidth}
+            rows={layout.mainRows}
+            theme={theme}
+            focused={focus === 'main'}
+            runningGlyph={runningGlyph}
+            peek={(taskId, entries) => controller.peek(taskId, entries)}
+          />
+        );
+      case 'changes':
+        return (
+          <ReviewView
+            tasks={reviewTasks(run)}
+            width={layout.mainWidth}
+            height={layout.mainRows}
+            color={theme.color}
+            root={run.repositoryRoot}
+            loadDiff={loadDiff}
+            isActive={focus === 'main' && !overlayOpen}
+            onExit={() => focusPanel('tasks')}
+          />
+        );
+      case 'report':
+        return (
+          <ReportPanel
+            markdown={report}
+            rows={layout.mainRows}
+            columns={layout.mainWidth}
+            theme={theme}
+            cursor={reportCursor}
+            focused={focus === 'main'}
+          />
+        );
+      default:
+        return <Placeholder tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
+    }
+  };
 
-  if (view.kind === 'detail') {
-    const task = tasks.find((t) => t.id === view.taskId)!;
-    const st = run.tasks[task.id]!;
-    const attempt = currentAttempt(st);
-    const u = attempt?.usage ?? st.result?.usage;
-    const files = taskFiles(st);
-    const history = attemptRows(st, now);
-    const shownHistory = history.slice(-MAX_HISTORY_ROWS);
-    const interactions = interactionRows(st, now);
-    const shownInteractions = interactions.slice(-MAX_HISTORY_ROWS);
-    const notes = resultNotes(st.result);
-    // The blocks below push the transcript down, so it gets what is left rather than a fixed ten lines.
-    const blockLines =
-      (shownHistory.length ? 2 + shownHistory.reduce((n, r) => n + 1 + r.notes.length, 0) + (history.length > shownHistory.length ? 1 : 0) : 0) +
-      (shownInteractions.length ? 3 + shownInteractions.length + (interactions.length > shownInteractions.length ? 1 : 0) : 0) +
-      (notes.length ? 2 + notes.reduce((n, g) => n + 1 + g.items.length, 0) : 0);
-    const entries = controller.peek(task.id, 8);
-    const lines = renderTranscript(entries, { color, width: Math.max(20, columns - 4), timestamps: columns >= 100 ? true : 'short' }).slice(-Math.max(3, Math.min(10, rows - 18 - blockLines)));
-    const ratio = contextRatio(u);
-    return (
-      <Box flexDirection="column">
-        <Text bold>{task.id}</Text>
-        <Text dimColor>{'─'.repeat(Math.min(60, columns))}</Text>
-        <Text>
-          Status:       <Text color={STATE_COLOR[st.state]}>{STATE_LABEL[st.state]}</Text>
-          {st.message ? `  (${sanitizeText(st.message).split('\n')[0]})` : ''}
-          {st.pendingInteraction ? paint(`  waiting for you: ${sanitizeText(st.pendingInteraction.title)}`, 'yellow') : ''}
-        </Text>
-        {attempt && (
-          <>
-            <Text>
-              Attempt:      {attempt.number}
-              {task.retry.attempts ? ` / ${task.retry.attempts + 1}` : ''}
-              {attempt.kind === 'merge' ? ' (merge resolution)' : ''}
-            </Text>
-            <Text>
-              Agent:        {task.agent}  Model: {u?.model ?? task.model ?? 'CLI default'}  Effort: {task.effort ?? 'CLI default'}
-            </Text>
-            {task.agent === 'codex' && (
-              <Text>
-                Permissions:  {task.codex.permissionMode ?? 'auto'}  {task.codex.sandbox ?? ''} {task.codex.approvalPolicy ?? ''}
-              </Text>
-            )}
-            <Text>
-              Started:      {formatClock(attempt.startedAt)}   Elapsed: {elapsedCell(st, now)}
-            </Text>
-            <Text>
-              PID:          {attempt.pid ?? '-'}   Session: {attempt.sessionId ?? '-'}
-            </Text>
-            <Text>Working Dir:  {attempt.cwd}</Text>
-            {attempt.workspace?.branch && <Text>Branch:       {attempt.workspace.branch}</Text>}
-          </>
-        )}
-        {task.dependsOn.length > 0 && <Text>Depends On:   {task.dependsOn.map((d) => `${stateGlyph(run.tasks[d]?.state ?? 'pending')} ${d}`).join('  ')}</Text>}
-        {task.context?.sources.length ? <Text>Context:      {task.context.sources.map((s) => s.taskId).join(', ')}</Text> : null}
-        {u && (
-          <Text>
-            Usage:        {u.costUsd !== undefined ? `${formatCost(u.costUsd)}  ` : ''}
-            {u.inputTokens !== undefined ? `${formatTokens(u.inputTokens)} in / ${formatTokens(u.outputTokens ?? 0)} out  ` : ''}
-            {u.numTurns !== undefined ? `${u.numTurns} turns  ` : ''}
-            {ratio !== undefined ? `context ${paint(`[${bar(ratio, 12)}] ${Math.round(ratio * 100)}%`, ratio >= 0.9 ? 'red' : ratio >= 0.7 ? 'yellow' : 'green')} ${formatTokens(u.contextTokens ?? 0)}/${formatTokens(u.contextWindow ?? 0)}` : ''}
-            {u.compactions ? paint(`  ${u.compactions} compaction${u.compactions === 1 ? '' : 's'}`, 'dim') : ''}
-          </Text>
-        )}
-        {files.length > 0 && (
-          <Text wrap="truncate-end">
-            Files:        ±{files.length}  {files.slice(0, 6).map(fileLabel).join(', ')}
-            {files.length > 6 ? ` … +${files.length - 6} (C for all)` : ''}
-          </Text>
-        )}
-        {shownHistory.length > 0 && (
-          <>
-            <Text> </Text>
-            <Text bold>Attempts</Text>
-            {history.length > shownHistory.length && <Text dimColor>{`  … ${history.length - shownHistory.length} earlier attempt${history.length - shownHistory.length === 1 ? '' : 's'} (cao task ${task.id})`}</Text>}
-            {shownHistory.map((row) => (
-              <React.Fragment key={row.number}>
-                <Text wrap="truncate-end">{`  ${row.line}`}</Text>
-                {row.notes.map((note, i) => (
-                  <Text key={i} dimColor wrap="truncate-end">{`      ↳ ${note}`}</Text>
-                ))}
-              </React.Fragment>
-            ))}
-          </>
-        )}
-        {shownInteractions.length > 0 && (
-          <>
-            <Text> </Text>
-            <Text bold>Interactions</Text>
-            {interactions.length > shownInteractions.length && <Text dimColor>{`  … ${interactions.length - shownInteractions.length} earlier (cao task ${task.id})`}</Text>}
-            {shownInteractions.map((row) => (
-              <Text key={`${row.attempt}-${row.record.id}`} wrap="truncate-end">{`  ${row.line}`}</Text>
-            ))}
-            <Text dimColor>{`  waited ${formatDuration(totalWaitedMs(interactions))} in total across ${interactions.length} request${interactions.length === 1 ? '' : 's'}`}</Text>
-          </>
-        )}
-        {notes.length > 0 && (
-          <>
-            <Text> </Text>
-            <Text bold>Result</Text>
-            {notes.map((group) => (
-              <React.Fragment key={group.label}>
-                <Text>{`  ${group.label}:`}</Text>
-                {group.items.map((item, i) => (
-                  <Text key={i} wrap="truncate-end">{`    - ${sanitizeText(item)}`}</Text>
-                ))}
-              </React.Fragment>
-            ))}
-          </>
-        )}
-        <Text> </Text>
-        <Text bold>Latest activity</Text>
-        {lines.map((l, i) => (
-          <Text key={i} wrap="truncate-end">
-            {'  '}
-            {l}
-          </Text>
-        ))}
-        {lines.length === 0 && <Text dimColor>  (no output yet)</Text>}
-        <Text> </Text>
-        <Text dimColor>F/Enter follow live transcript   Esc/Q back</Text>
-      </Box>
-    );
-  }
-
-  const maxRows = Math.max(3, rows - 12);
-  const start = Math.max(0, Math.min(cursor - Math.floor(maxRows / 2), tasks.length - maxRows));
-  const visible = tasks.slice(start, start + maxRows);
-  // The current attempt sits in parentheses after the total, and only a retried task has one. Padded to the
-  // widest one on screen it is a column like any other; padded to nothing, one retried task shifts every
-  // cell after it — agent, ctx, cost, ±files, activity — right on that row alone, exactly when the table is
-  // worth reading. Zero when no task was retried, so nothing is paid for the common case.
-  const currentWidth = Math.max(0, ...visible.map((t) => elapsedParts(run.tasks[t.id]!, now).current).map((c) => (c ? c.length + 3 : 0)));
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
+      {header}
+      <TabBar tab={tab} focused={focus === 'tabs'} theme={theme} columns={columns} />
+      <Box flexDirection="column" height={layout.bodyRows} overflow="hidden">
+        {layout.compact && (
+          <TaskStrip tasks={visible} run={run} cursor={Math.min(cursor, Math.max(0, visible.length - 1))} columns={columns} theme={theme} focused={focus === 'tasks'} runningGlyph={runningGlyph} />
+        )}
+        <Box flexDirection="row" height={layout.mainRows} overflow="hidden">
+          {!layout.compact && (
+            <>
+              <Sidebar
+                tasks={visible}
+                run={run}
+                cursor={Math.min(cursor, Math.max(0, visible.length - 1))}
+                width={layout.sidebarWidth}
+                rows={layout.mainRows}
+                theme={theme}
+                focused={focus === 'tasks'}
+                runningGlyph={runningGlyph}
+                search={searching ? search : undefined}
+              />
+              <Text> </Text>
+            </>
+          )}
+          <Box flexDirection="column" width={layout.mainWidth} overflow="hidden">
+            {overlayOpen && overlay.kind !== 'search' ? (
+              overlay.kind === 'palette' ? (
+                <Palette entries={paletteMatches} query={paletteQuery} cursor={paletteCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
+              ) : (
+                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} />
+              )
+            ) : (
+              mainPanel()
+            )}
+          </Box>
+        </Box>
+      </Box>
+      <Footer
+        hints={overlayOpen ? 'Esc close   ↑↓ move   Enter choose' : footerHints(focus, tab)}
+        columns={columns}
+        theme={theme}
+        columnsShown={layout.footerColumns}
+        snapshotAge={now - (snapshot?.at ?? now)}
+        notice={notice}
+      />
+    </Box>
+  );
+}
+
+/** What the review view starts from: the live tool-stream list, until it has read the attempt's own diff. */
+function reviewTasks(run: WorkflowRun): ReviewTaskInput[] {
+  return run.workflow.tasks.map((t) => {
+    const st = run.tasks[t.id]!;
+    return { taskId: t.id, state: st.state, live: st.state === 'running' || st.state === 'waiting', attempts: st.attempts.length, files: taskFiles(st) };
+  });
+}
+
+/** `/` over a task list [D12]: the same matcher the palette uses, so one query means one thing. */
+function filterTasks(tasks: ResolvedTask[], query: string): ResolvedTask[] {
+  const matches = filterPalette(
+    tasks.map((t) => ({ id: t.id, label: t.id, run: () => undefined })),
+    query,
+  );
+  const order = new Map(matches.map((m, i) => [m.id, i]));
+  return tasks.filter((t) => order.has(t.id)).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+}
+
+interface UsageViewProps {
+  run: WorkflowRun;
+  theme: Theme;
+  columns: number;
+  rows: number;
+  sort: 'order' | 'cost';
+  header: React.JSX.Element;
+  headerRows: number;
+}
+
+/**
+ * `U`: tokens, context, cost and time in tools per task. Still a screen of its own rather than a tab,
+ * because it is the whole run at once and stage 3 replaces it with the usage footer (§3.6).
+ */
+function UsageView({ run, theme, columns, rows, sort, header, headerRows }: UsageViewProps): React.JSX.Element {
+  const tasks = run.workflow.tasks;
+  const narrow = columns < 100;
+  const idWidth = Math.min(28, Math.max(12, ...tasks.map((t) => t.id.length)));
+  const taskCell = (id: string): string => truncateVisible(id, idWidth).padEnd(idWidth);
+  const totalUsage = addUsage(...tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
+  const list = tasks.map((t) => ({ t, st: run.tasks[t.id]!, u: taskUsage(run.tasks[t.id]!) }));
+  if (sort === 'cost') list.sort((a, b) => (b.u.costUsd ?? 0) - (a.u.costUsd ?? 0));
+  // Header, blank, column headings, blank, total, two legend lines, the footer hint: what is left is rows.
+  const legend = narrow ? ['Context = tokens in the session window'] : ['Cache r/w = tokens read from / written to the prompt cache', 'Time = duration the agent reported   Tools = time spent inside tool calls'];
+  const budget = Math.max(1, rows - headerRows - 5 - legend.length);
+  const slice = windowOf(list, 0, budget, { anchor: 0 });
+
+  return (
+    <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
       {header}
       <Text> </Text>
-      {visible.map((t, i) => {
-        const idx = start + i;
-        const st = run.tasks[t.id]!;
-        const a = currentAttempt(st);
-        const u = a?.usage ?? st.result?.usage;
-        const glyph = st.state === 'running' ? SPINNER[frame.current]! : st.state === 'waiting' ? (frame.current % 4 < 2 ? '?' : ' ') : stateGlyph(st.state);
-        const files = taskFiles(st).length;
-        const elapsed = elapsedParts(st, now);
+      {/* Below 100 columns the four detail columns do not fit beside the task name, and a header that wraps
+          takes its continuation from the middle of a column heading. They are dropped instead; what is left
+          is the four numbers an operator opens this view for, plus the context bar. */}
+      <Text bold wrap="truncate-end">
+        {'  '}
+        {'Task'.padEnd(idWidth)}  {'State'.padEnd(11)} {'Cost'.padStart(7)} {'In'.padStart(7)} {'Out'.padStart(7)}
+        {narrow ? '' : ` ${'Cache r/w'.padStart(11)} ${'Turns'.padStart(5)} ${'Time'.padStart(6)} ${'Tools'.padStart(6)}`}
+        {'  '}Context
+      </Text>
+      {slice.items.map(({ t, st, u }) => {
         const ratio = contextRatio(u);
-        const ctx = u?.contextTokens !== undefined && ACTIVE_TASK_STATES.has(st.state) ? paint(`ctx ${formatTokens(u.contextTokens)}${u.contextWindow ? `/${formatTokens(u.contextWindow)}` : ''}`, ratio !== undefined && ratio >= 0.9 ? 'red' : ratio !== undefined && ratio >= 0.7 ? 'yellow' : 'dim') : '';
-        const cost = u?.costUsd !== undefined ? paint(formatCost(u.costUsd), 'dim') : '';
-        const activity = activityCell({
-          task: t,
-          state: st,
-          entries: controller.peek(t.id, ACTIVITY_LOOKBACK),
-          startedAt: a?.startedAt,
-          pendingDeps: st.state === 'pending' ? t.dependsOn.filter((d) => !['success', 'skipped'].includes(run.tasks[d]?.state ?? '')) : [],
-          now,
-          color,
-        });
+        const ctx = u.contextTokens !== undefined ? `${formatTokens(u.contextTokens)}${u.contextWindow ? `/${formatTokens(u.contextWindow)}` : ''}` : '';
+        const ctxToken = ratio === undefined ? 'muted' : ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'success';
+        // Cache reads and cache writes share one cell: two more full columns would push the context bar off
+        // an 80-column terminal, and the pair is only ever read together.
+        const cache = u.cacheReadTokens !== undefined || u.cacheCreationTokens !== undefined ? `${formatTokens(u.cacheReadTokens ?? 0)}/${formatTokens(u.cacheCreationTokens ?? 0)}` : '';
         return (
           <Text key={t.id} wrap="truncate-end">
-            {idx === cursor ? paint('▶ ', 'cyan') : '  '}
-            {paint(glyph, STATE_COLOR[st.state])} {idx === cursor ? paint(taskCell(t.id), ['inverse', 'bold']) : taskCell(t.id)}  {paint(STATE_LABEL[st.state].padEnd(11), STATE_COLOR[st.state])} {elapsed.total.padStart(9)}
-            {currentWidth ? paint((elapsed.current ? ` (${elapsed.current})` : '').padEnd(currentWidth), 'dim') : ''}  {paint(agentLabel(t.agent, u?.model ?? t.model), 'magenta')}
-            {ctx ? `  ${ctx}` : ''}
-            {cost ? `  ${cost}` : ''}
-            {files ? paint(`  ±${files}`, 'dim') : ''}
-            {activity ? `  │ ${activity}` : ''}
+            {'  '}
+            {taskCell(t.id)}  <Text color={theme.stateColor(st.state)}>{STATE_LABEL[st.state].padEnd(11)}</Text> {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
+            {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)}
+            {narrow ? '' : ` ${cache.padStart(11)} ${String(u.numTurns ?? '').padStart(5)} ${(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} `}
+            {narrow ? '' : theme.paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'info')}
+            {'  '}
+            {ratio !== undefined ? theme.paint(`[${bar(ratio, narrow ? 5 : 8)}] `, ctxToken) : ''}
+            {theme.paint(ctx, ctxToken)}
+            {u.compactions ? theme.paint(`  ${u.compactions} compaction${u.compactions === 1 ? '' : 's'}`, 'muted') : ''}
           </Text>
         );
       })}
-      {tasks.length > maxRows && (
-        <Text dimColor>
-          {'  '}… {tasks.length} tasks, showing {start + 1}-{start + visible.length}
-        </Text>
-      )}
+      {slice.belowMarker && <Text wrap="truncate-end">{theme.paint(`  ${slice.belowMarker}`, 'muted')}</Text>}
       <Text> </Text>
-      {notice && <Text color="yellow">{notice}</Text>}
+      <Text wrap="truncate-end">
+        Total: {formatCost(totalUsage.costUsd ?? 0)}   {formatTokens(totalUsage.inputTokens ?? 0)} in / {formatTokens(totalUsage.outputTokens ?? 0)} out
+        {!narrow && totalUsage.cacheCreationTokens ? `   ${formatTokens(totalUsage.cacheCreationTokens)} cache write` : ''}
+        {totalUsage.durationMs !== undefined ? `   ${formatDuration(totalUsage.durationMs)} of agent time` : ''}
+        {!narrow && totalUsage.toolMs !== undefined ? `   ${formatDuration(totalUsage.toolMs)} in tools` : ''}
+      </Text>
+      {/* Two lines rather than one: the single legend is 133 columns and wrapped even on a wide terminal,
+          which put "Tools = time spent inside tool calls" halfway through a sentence. */}
+      {legend.map((line) => (
+        <Text key={line} dimColor wrap="truncate-end">
+          {line}
+        </Text>
+      ))}
       <Text dimColor wrap="truncate-end">
-        ↑↓ select  Enter details  F follow  U usage  C files  R restart  ? help  Q minimise (run continues)  Ctrl+C stop
+        S sort by {sort === 'order' ? 'cost' : 'workflow order'}   Esc/Q back
       </Text>
     </Box>
   );
+}
+
+/**
+ * Leave the alternate screen if the process dies without unmounting — a crash, a force-kill. Ink restores
+ * the primary buffer on unmount, which covers every ordinary exit; this covers the one where the error
+ * message would otherwise be printed onto a screen that is about to disappear.
+ */
+function armAltScreenRestore(): () => void {
+  const restore = (): void => {
+    try {
+      process.stdout.write('[?1049l[?25h');
+    } catch {
+      /* the stream is already gone; there is nothing left to restore */
+    }
+  };
+  process.once('exit', restore);
+  return () => process.removeListener('exit', restore);
 }
 
 export function createDashboard(opts: DashboardOptions): DashboardController {
@@ -742,21 +817,17 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
   let instance: Instance | undefined;
   let finished = false;
   let seq = 0;
+  let disarm: (() => void) | undefined;
 
+  // One store for the life of the workspace, fed from the bus: a store created per mount would lose the tab
+  // and the cursor every time the workspace was minimised and reopened.
+  const attached = attachStore(opts.bus, opts.controller);
   const renderTree = opts.mount ?? render;
+  const options = workspaceRenderOptions({ flag: opts.altScreen });
+
   const mount = (): Instance => {
-    const created = renderTree(<DashboardApp {...opts} shared={shared} finished={finished} />, {
-      // The render options §2.5 specifies. `incrementalRendering` is why Ink 7 is here at all: only the
-      // lines that changed are rewritten, which is what stops the dashboard flickering and tearing while a
-      // spinner ticks. `kittyKeyboard: {mode: 'auto'}` asks the terminal once whether it speaks the kitty
-      // protocol and is what Shift+Enter needs where it does [D15]; terminals that do not answer are left
-      // exactly as they were. `alternateScreen` is not set yet: [D4] makes it a user's choice through
-      // `--no-alt-screen`, `CAO_ALT_SCREEN` and the user config, none of which exist before stage 1.
-      incrementalRendering: true,
-      exitOnCtrlC: false,
-      patchConsole: false,
-      kittyKeyboard: { mode: 'auto' },
-    });
+    const created = renderTree(<DashboardApp {...opts} shared={shared} finished={finished} store={attached.store} />, options);
+    if (options.alternateScreen && process.stdout.isTTY) disarm ??= armAltScreenRestore();
     instance = created;
     return created;
   };
@@ -816,11 +887,18 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
         if (item.kind === 'approval') item.resolve('defer');
         else item.resolve({ kind: 'deny', message: 'The run ended' });
       }
-      if (!instance) return;
+      if (!instance) {
+        attached.detach();
+        disarm?.();
+        return;
+      }
       const current = instance;
-      current.rerender(<DashboardApp {...opts} shared={shared} finished />);
+      current.rerender(<DashboardApp {...opts} shared={shared} finished store={attached.store} />);
       await current.waitUntilExit().catch(() => undefined);
       instance = undefined;
+      attached.detach();
+      disarm?.();
+      disarm = undefined;
     },
   };
   return controller;

@@ -1,4 +1,5 @@
-/** Small number formatters shared by the dashboard and the CLI commands. */
+/** Small number formatters shared by the workspace and the CLI commands. */
+import { glyph } from '../util/glyphs.js';
 
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n)) return '-';
@@ -49,5 +50,5 @@ export function contextRatio(usage?: { contextTokens?: number; contextWindow?: n
 /** A fixed-width bar like `████░░░░`. */
 export function bar(ratio: number, width: number): string {
   const filled = Math.round(Math.max(0, Math.min(1, ratio)) * width);
-  return `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, width - filled))}`;
+  return `${glyph('barFull').repeat(filled)}${glyph('barEmpty').repeat(Math.max(0, width - filled))}`;
 }

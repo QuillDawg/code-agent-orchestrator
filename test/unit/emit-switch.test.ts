@@ -57,7 +57,8 @@ describe('emit: --emit is strictly boolean and takes no value (§4.2.7)', () => 
   it('runs the workflow named after it — the most-typed form of the command', async () => {
     // An optional-value option would consume the positional here, leaving `emit: "workflow.yaml"` and no
     // workflow. This one line is the whole reason the flag has no value form.
-    expect(await parse(['run', '--emit', 'workflow.yaml'])).toEqual({ arg: 'workflow.yaml', opts: { tui: true, emit: true } });
+    // `altScreen` is commander's default for `--no-alt-screen`, like `tui` for `--no-tui`.
+    expect(await parse(['run', '--emit', 'workflow.yaml'])).toEqual({ arg: 'workflow.yaml', opts: { tui: true, emit: true, altScreen: true } });
   });
 
   it('refuses a value rather than quietly taking one', async () => {

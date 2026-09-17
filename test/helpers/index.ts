@@ -219,6 +219,9 @@ export class MemoryRunStore implements RunStore {
   async writeReport(runId: string, markdown: string): Promise<void> {
     this.reports.set(runId, markdown);
   }
+  async readReport(runId: string): Promise<string | null> {
+    return this.reports.get(runId) ?? null;
+  }
   async writeLive(_runId: string, live: LiveStatus): Promise<void> {
     this.live = live;
   }

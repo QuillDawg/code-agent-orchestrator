@@ -271,7 +271,10 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
     const positionText = `  file ${selectedIndex + 1}/${files.length}`;
     const label = shortenLabel(fileLabel(file), Math.max(12, width - group.taskId.length - counts.length - attemptText.length - positionText.length - 2));
     return (
-      <Box flexDirection="column">
+      // The view fills the rows it was given and keeps its footer on the last of them. It used to be the
+      // whole screen, where that happened by itself; inside the workspace's Changes tab a short patch would
+      // otherwise leave the key list stranded halfway up the panel.
+      <Box flexDirection="column" height={height}>
         <Text wrap="truncate-end">
           {paint(group.taskId, STATE_COLOR[group.state], color)} {paint(label, 'bold', color)} {countsLabel(file, color)}
           {paint(attemptText, 'dim', color)}
@@ -290,6 +293,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
             {line}
           </Text>
         ))}
+        <Box flexGrow={1} />
         {notice && (
           <Text color="yellow" wrap="truncate-end">
             {notice}
@@ -311,7 +315,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
   const pathWidth = Math.min(Math.max(10, width - countsWidth - 9), Math.max(0, ...files.map((f) => fileLabel(f.file).length)));
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={height}>
       {rows.length === 0 && <Text dimColor>  (no files changed yet)</Text>}
       {visibleRows.map((row) =>
         row.kind === 'task' ? (
@@ -335,6 +339,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
           {'  '}… {files.length} files, showing {listTop.current + 1}-{listTop.current + visibleRows.length} of {rows.length} rows
         </Text>
       )}
+      <Box flexGrow={1} />
       {notice && (
         <Text color="yellow" wrap="truncate-end">
           {notice}

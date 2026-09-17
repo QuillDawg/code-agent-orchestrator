@@ -53,6 +53,7 @@ export interface RunStore {
   writeResult(runId: string, taskId: string, result: EnrichedTaskResult): Promise<void>;
   writeContext(runId: string, taskId: string, markdown: string): Promise<void>;
   writeReport(runId: string, markdown: string): Promise<void>;
+  readReport(runId: string): Promise<string | null>;
   writeLive(runId: string, live: LiveStatus): Promise<void>;
   readLive(runId: string): Promise<LiveStatus | null>;
   acquireLock(runId: string): Promise<{ ok: true } | { ok: false; lock: RunLock }>;
@@ -233,6 +234,11 @@ export class FileRunStore implements RunStore {
   /** `report.md` in the run directory: the run's own summary of itself, rewritten whenever the run ends. */
   async writeReport(runId: string, markdown: string): Promise<void> {
     await writeFileAtomic(this.paths.reportFile(runId), this.redactor.redact(markdown));
+  }
+
+  /** `report.md` as it is on disk, or null when the run has not ended and written one yet. */
+  async readReport(runId: string): Promise<string | null> {
+    return fs.readFile(this.paths.reportFile(runId), 'utf8').catch(() => null);
   }
 
   async writeLive(runId: string, live: LiveStatus): Promise<void> {

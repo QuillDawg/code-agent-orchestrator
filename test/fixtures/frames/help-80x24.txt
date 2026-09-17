@@ -1,21 +1,24 @@
-Keys
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
+[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+Task #/# ✓ implement-parser  Completed  claude|opus-#
+Tasks — the panel with the keys
+  ↑↓               move through the tasks
+  Enter            open the selected task in the panel
+  F / L            follow the task's live transcript
+  R                restart a failed, blocked, cancelled or skipped task
+  /                search the task list
 
-  ↑↓        select a task            Enter     task details
-  F / L     follow a task's transcript
-  U         usage per task (S sorts by cost)
-  C         review what each task changed
-  R         restart a failed, blocked, cancelled or skipped task
-  Q         minimise the dashboard (the run continues; D reopens it)
-  Ctrl+C    stop the run (twice to force)
+Anywhere
+  Tab / Shift+Tab  move between the task list, the tabs and the panel
+  Ctrl+P           command palette: every action and every task id
+  ?                the keys of whatever has focus
+  Q                minimise the workspace (the run continues; D reopens it)
+  Ctrl+C           stop the run (twice to force)
 
-  In a transcript: ←→/Tab or #-# task   P picker   [ ] attempt
-      ↑↓ PgUp/PgDn scroll   g oldest   G newest   / search   n/N match
-      t tool output   T thinking   k kind filter   Esc/Q back
-  In the review: ↑↓ select   Enter hunks   N/P hunk   ←→ file
-      O opens $VISUAL/$EDITOR   Esc back
-
-  When a worker needs you, a prompt appears here automatically:
-  Y allow   A allow for the rest of the task   N deny   R deny with a reason
-  #-# / ↑↓ Enter choose an answer   T type an answer   N decline
-
-Esc/Q back
+Transcript viewer (F)
+  ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt
+  ↑↓ PgUp/PgDn     scroll    g oldest line    G newest line and follow again
+  t / T / k        tool output, thinking, kind filter
+▼ # more   ↑↓ scroll   Esc close
+Esc close   ↑↓ move   Enter choose  quota: stage #

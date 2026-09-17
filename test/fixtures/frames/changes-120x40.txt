@@ -1,0 +1,40 @@
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+ Overview │ Session │ Logs │[Changes]│ Report │ Diagnostics
+Tasks #/#                            ✓ implement-parser  # file seen while it ran; no patch captured
+▶ ✓ implement-pars… claude|opus-# █    ▶ M src/parser.ts  edited
+  ✗ implement-rend… codex|gpt-#-…!█  ✗ implement-renderer  no diff captured
+  ○ review-and-mer… claude        █
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                     ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   o editor   Esc/Q back
+Ctrl+P palette   ? help   Q minimise  quota: stage #  updated #s ago

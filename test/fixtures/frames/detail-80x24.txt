@@ -1,20 +1,24 @@
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
+[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+Task #/# ✓ implement-parser  Completed  claude|opus-#
+✗ implement-renderer failed  after # attempt
+  exit code #
+  R re-run    F open logs    C open diff
+
+▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
+  ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit…
+  ○ review-and-merge    Waiting                claude  │ waiting for: implement…
+
 implement-parser
-────────────────────────────────────────────────────────────
-Status:       Completed
+Status:       ✓ Completed
 Attempt:      # / #
 Agent:        claude  Model: claude-opus-#  Effort: CLI default
 Started:      ##:##:##   Elapsed: ##m ##s
 PID:          ####   Session: sess-abc###
-Working Dir:  /repo/.orchestrator/worktrees/implement-parser
-Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##%
-##.#k/###k
-Files:        ±#  src/parser.ts
-
-Attempts
+  … cao task implement-parser for the rest
   ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.…
 
 Latest activity
-  ##:## › Reading the parser
   ##:## $ npm test
-
-F/Enter follow live transcript   Esc/Q back
+↑↓ select   F / L follow   R restart   U usage   C changes   Ct…  quota: stage #

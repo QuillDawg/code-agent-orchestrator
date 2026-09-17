@@ -11,18 +11,52 @@
  * already uses (`app.tsx`), so a burst of events costs one re-render rather than one per event. Nothing
  * here is authoritative and nothing here is persisted; after a resume the run is re-read, never mirrored.
  *
- * `DashboardApp` is not on this store yet — stage 1 moves it. Stage 0 only puts the store here.
+ * The workspace tree reads all of this through `useStore` and writes it through the actions below; nothing
+ * in `src/tui/` keeps a `useState` for something another panel has to agree about.
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { ResolvedTask, TaskRunState, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import type { EventBus } from '../events/event-bus.js';
 import { systemClock, type Clock } from '../util/misc.js';
 
-/** Which screen is up. The same set the dashboard renders today. */
+/**
+ * Which screen is up. `dashboard` is the workspace shell - header, sidebar, tabs, footer - and the rest are
+ * the full-screen views it opens over itself: the transcript viewer, the usage table.
+ *
+ * `detail`, `review` and `help` are regions of the shell now rather than screens of their own; they survive
+ * in this union as the targets `selectFocusedTaskId` and the command palette still name.
+ */
 export type View = { kind: 'dashboard' } | { kind: 'detail'; taskId: string } | { kind: 'follow'; taskId: string; attempt?: number } | { kind: 'usage' } | { kind: 'review' } | { kind: 'help' };
 
-/** Which region of the current view has the keys. A prompt takes them from whatever had them. */
-export type FocusRegion = 'tasks' | 'detail' | 'transcript' | 'review' | 'hunks' | 'modal';
+/** The main panel's tabs (3.2), in the order the tab bar draws them. */
+export const WORKSPACE_TABS = ['overview', 'session', 'logs', 'changes', 'report', 'diagnostics'] as const;
+export type WorkspaceTab = (typeof WORKSPACE_TABS)[number];
+
+export const TAB_LABEL: Record<WorkspaceTab, string> = {
+  overview: 'Overview',
+  session: 'Session',
+  logs: 'Logs',
+  changes: 'Changes',
+  report: 'Report',
+  diagnostics: 'Diagnostics',
+};
+
+/**
+ * Which region has the keys. `tasks` is the sidebar list, `tabs` the tab bar and `main` the panel under it;
+ * Tab and Shift+Tab move between those three. The rest are regions a full-screen view owns, and `modal` is
+ * a prompt, which takes the keys from whatever had them.
+ */
+export type FocusRegion = 'tasks' | 'tabs' | 'main' | 'detail' | 'transcript' | 'review' | 'hunks' | 'modal';
+
+/** The three panels Tab cycles through, in the order it visits them. */
+export const FOCUS_PANELS = ['tasks', 'tabs', 'main'] as const satisfies readonly FocusRegion[];
+
+/**
+ * What is open over the shell and holds the keys: the command palette, the search field of the focused
+ * list, or the contextual help. Their text lives in `drafts`, so a half-typed query survives the panel
+ * being re-rendered under it.
+ */
+export type Overlay = { kind: 'none' } | { kind: 'palette' } | { kind: 'search' } | { kind: 'help' };
 
 /** The run as the screen last saw it, stamped so a subscriber can tell one coalesced update from the next. */
 export interface RunSnapshot {
@@ -35,17 +69,36 @@ export interface RunSnapshot {
 
 export interface PresentationState {
   view: View;
+  tab: WorkspaceTab;
   focus: FocusRegion;
   /** Index into the snapshot's task list; clamped to it whenever a snapshot lands. */
   cursor: number;
+  /**
+   * The cursor of every *other* list - the palette, the report, anything a panel scrolls. The task list has
+   * its own field because it is the one list whose length the store knows and can clamp to by itself; these
+   * are clamped against the length the caller passes, which is the only thing that knows it this frame.
+   */
+  cursors: Record<string, number>;
+  /** Half-typed text keyed by field: the palette query, a list's search, later a composer [D14]. */
+  drafts: Record<string, string>;
+  overlay: Overlay;
   notice: string | null;
   snapshot: RunSnapshot | null;
 
   setView(view: View): void;
+  setTab(tab: WorkspaceTab): void;
+  /** Move `delta` tabs along the bar, stopping at the ends. */
+  moveTab(delta: number): void;
   setFocus(focus: FocusRegion): void;
+  /** Move focus `delta` panels along `FOCUS_PANELS`, wrapping as Tab does. */
+  moveFocus(delta: number): void;
   setCursor(cursor: number): void;
   /** Move the cursor by `delta`, stopping at the ends of the task list rather than wrapping. */
   moveCursor(delta: number): void;
+  setListCursor(list: string, cursor: number, length: number): void;
+  moveListCursor(list: string, delta: number, length: number): void;
+  setDraft(field: string, text: string): void;
+  setOverlay(overlay: Overlay): void;
   /** Show `text` for `ttlMs`, replacing any notice already up. `null` clears it now. */
   setNotice(text: string | null, ttlMs?: number): void;
   setSnapshot(snapshot: RunSnapshot): void;
@@ -70,15 +123,33 @@ export function createPresentationStore(clock: Clock = systemClock): Presentatio
 
   return createStore<PresentationState>((set, get) => ({
     view: { kind: 'dashboard' },
+    tab: 'overview',
     focus: 'tasks',
     cursor: 0,
+    cursors: {},
+    drafts: {},
+    overlay: { kind: 'none' },
     notice: null,
     snapshot: null,
 
     setView: (view) => set({ view }),
+    setTab: (tab) => set({ tab }),
+    moveTab: (delta) => set({ tab: WORKSPACE_TABS[clamp(WORKSPACE_TABS.indexOf(get().tab) + delta, WORKSPACE_TABS.length - 1)]! }),
     setFocus: (focus) => set({ focus }),
+    moveFocus: (delta) => {
+      const panels = FOCUS_PANELS as readonly FocusRegion[];
+      const at = panels.indexOf(get().focus);
+      // A focus that is not one of the three panels (a modal, a viewer) counts as "before the first", so
+      // the next Tab lands on the sidebar rather than nowhere.
+      const next = (((at < 0 ? 0 : at + delta) % panels.length) + panels.length) % panels.length;
+      set({ focus: panels[next]! });
+    },
     setCursor: (cursor) => set({ cursor: clamp(cursor, Math.max(0, taskList(get().snapshot).length - 1)) }),
     moveCursor: (delta) => get().setCursor(get().cursor + delta),
+    setListCursor: (list, cursor, length) => set({ cursors: { ...get().cursors, [list]: clamp(cursor, Math.max(0, length - 1)) } }),
+    moveListCursor: (list, delta, length) => get().setListCursor(list, (get().cursors[list] ?? 0) + delta, length),
+    setDraft: (field, text) => set({ drafts: { ...get().drafts, [field]: text } }),
+    setOverlay: (overlay) => set({ overlay }),
     setNotice: (text, ttlMs = NOTICE_TTL_MS) => {
       clearNoticeTimer();
       set({ notice: text });
@@ -145,6 +216,16 @@ export function attachStore(bus: EventBus, scheduler: StoreRunSource, clock: Clo
 
 /** Selectors. Kept next to the state they read so a view never reaches into the shape by hand. */
 export const selectView = (s: PresentationState): View => s.view;
+export const selectTab = (s: PresentationState): WorkspaceTab => s.tab;
+export const selectOverlay = (s: PresentationState): Overlay => s.overlay;
+export const selectDraft =
+  (field: string) =>
+  (s: PresentationState): string =>
+    s.drafts[field] ?? '';
+export const selectListCursor =
+  (list: string) =>
+  (s: PresentationState): number =>
+    s.cursors[list] ?? 0;
 export const selectFocus = (s: PresentationState): FocusRegion => s.focus;
 export const selectCursor = (s: PresentationState): number => s.cursor;
 export const selectNotice = (s: PresentationState): string | null => s.notice;

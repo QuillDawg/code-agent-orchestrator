@@ -39,6 +39,16 @@ describe('FileRunStore', () => {
     expect(list.map((r) => r.runId)).toEqual([run2.runId, run.runId]);
   });
 
+  it('reads report.md back, and says there is none before the run has ended', async () => {
+    const root = await tmpDir();
+    const store = new FileRunStore(root, new Redactor(['hunter2secret']));
+    const runId = await store.allocateRunId();
+    // The Report tab of the workspace reads this file; a run that has not ended yet has not written one.
+    expect(await store.readReport(runId)).toBeNull();
+    await store.writeReport(runId, '# Run report\n\nhunter2secret\n');
+    expect(await store.readReport(runId)).toBe('# Run report\n\n[REDACTED]\n');
+  });
+
   it('locks runs per process and detects stale locks', async () => {
     const root = await tmpDir();
     const store = new FileRunStore(root);

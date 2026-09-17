@@ -35,6 +35,8 @@ export interface RunControllerReads {
   olderTranscript(taskId: string, attempt: number, oldest: TranscriptEntry | undefined, count?: number): Promise<TranscriptEntry[]>;
   olderTaskTranscript(taskId: string, attempt: number, oldest: TranscriptEntry | undefined, count?: number): Promise<TranscriptEntry[]>;
   capturedDiff(taskId: string): Promise<{ attempt: number; diff: AttemptDiff; patch: string } | null>;
+  /** `report.md` from the run directory, or null while the run has not written one. */
+  readReport(): Promise<string | null>;
   /** Last-resort synchronous persistence on a force-kill; the crash handler's only chance to save state. */
   persistInterruptedSync(): void;
 }
@@ -87,6 +89,7 @@ export function createRunController(deps: RunControllerDeps): RunController {
     olderTranscript: (taskId, attempt, oldest, count) => scheduler.olderTranscript(taskId, attempt, oldest, count),
     olderTaskTranscript: (taskId, attempt, oldest, count) => scheduler.olderTaskTranscript(taskId, attempt, oldest, count),
     capturedDiff: (taskId) => scheduler.capturedDiff(taskId),
+    readReport: () => scheduler.readReport(),
     persistInterruptedSync: () => scheduler.persistInterruptedSync(),
 
     setKillHandler: (handler) => {

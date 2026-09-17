@@ -1,0 +1,40 @@
+stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+ Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
+Tasks #/#                            Logs
+▶ ✓ implement-pars… claude|opus-# █  The Logs panel arrives in stage #.
+  ✗ implement-rend… codex|gpt-#-…!█  It will hold this run’s own log: the orchestrator’s events, the runner’s stderr an…
+  ○ review-and-mer… claude        █  Until then: F opens the transcript viewer that cao logs --follow shares, and cao l…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+←→ tab   Enter open   Ctrl+P palette   ? help   Q minimise  quota: stage #  updated #s ago

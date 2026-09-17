@@ -16,6 +16,7 @@ import { emitCommand, EMIT_ACTIONS } from './commands/emit.js';
 import { DEFAULT_WORKFLOW_FILES } from './util.js';
 import { OrchestratorError } from '../util/errors.js';
 import { packageInfo } from '../util/package-info.js';
+import { isThemeName, THEME_NAMES, type ThemeName } from '../tui/theme.js';
 import type { PermissionMode } from 'code-agent-orchestrator-protocol';
 
 const pkg = packageInfo();
@@ -41,6 +42,11 @@ const PERMISSION_MODES: PermissionMode[] = ['auto', 'acceptEdits', 'dontAsk', 'b
 function permissionMode(value: string): PermissionMode {
   if (!PERMISSION_MODES.includes(value as PermissionMode)) throw new InvalidArgumentError(`must be one of ${PERMISSION_MODES.join(', ')}`);
   return value as PermissionMode;
+}
+
+function themeName(value: string): ThemeName {
+  if (!isThemeName(value)) throw new InvalidArgumentError(`must be one of ${THEME_NAMES.join(', ')}`);
+  return value;
 }
 
 function collect(value: string, previous: string[] = []): string[] {
@@ -89,7 +95,9 @@ export function buildProgram(): Command {
     .option('--emit', 'announce this run to a desktop app on this machine (~/.cao); see cao emit status')
     .option('--no-emit', 'do not announce this run, whatever cao emit and CAO_EMIT say')
     .option('--emit-feed', 'reserved for the per-run live feed; it is not served yet')
-    .option('--no-tui', 'disable the interactive dashboard (line output)')
+    .option('--no-tui', 'disable the interactive workspace (line output)')
+    .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
+    .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
     .option('-v, --verbose', 'verbose output')
     .action((workflow: string | undefined, opts) => exitWith(() => runCommand(workflow, opts)));
@@ -119,7 +127,9 @@ export function buildProgram(): Command {
     .option('--emit', 'announce this run to a desktop app on this machine (~/.cao); see cao emit status')
     .option('--no-emit', 'do not announce this run, whatever cao emit and CAO_EMIT say')
     .option('--emit-feed', 'reserved for the per-run live feed; it is not served yet')
-    .option('--no-tui', 'disable the interactive dashboard')
+    .option('--no-tui', 'disable the interactive workspace')
+    .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
+    .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
     .option('-v, --verbose', 'verbose output')
     .action((run: string | undefined, opts) => exitWith(() => resumeCommand(run, opts)));

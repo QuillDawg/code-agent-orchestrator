@@ -28,6 +28,10 @@ export interface ResumeOptions {
   emit?: boolean;
   /** `--emit-feed`; reserved, and served by nothing yet. */
   emitFeed?: boolean;
+  /** `--no-alt-screen` gives `false`; undefined lets `CAO_ALT_SCREEN` and `~/.cao/config.json` decide [D4]. */
+  altScreen?: boolean;
+  /** `--theme <name>`; `CAO_THEME` and `NO_COLOR` are read when it is absent [D35]. */
+  theme?: string;
 }
 
 export async function resumeCommand(runRef: string | undefined, opts: ResumeOptions): Promise<number> {
@@ -94,5 +98,5 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
   out(renderHeader({ workflow: run.workflow, runId, runners, layers, resumed: true, verbose: opts.verbose }));
   if (reconciliation.rerun.length) out(`Re-running: ${reconciliation.rerun.join(', ')}\n`);
 
-  return executeRun({ run, environment, secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: true, emit: opts.emit, emitFeed: opts.emitFeed });
+  return executeRun({ run, environment, secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: true, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme });
 }

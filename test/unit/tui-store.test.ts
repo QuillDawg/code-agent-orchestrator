@@ -16,6 +16,12 @@ import {
   selectTaskState,
   selectTasks,
   selectView,
+  selectTab,
+  selectOverlay,
+  selectDraft,
+  selectListCursor,
+  FOCUS_PANELS,
+  WORKSPACE_TABS,
 } from '../../src/tui/store.js';
 
 /** A clock whose timers only fire when the test says so, so nothing here waits on wall time. */
@@ -132,6 +138,67 @@ describe('presentation store', () => {
     expect(selectFocusedTaskId(store.getState())).toBe('b');
     expect(selectTaskState('b')(store.getState())?.state).toBe('pending');
     expect(selectTaskState('missing')(store.getState())).toBeNull();
+  });
+});
+
+describe('the workspace shell state', () => {
+  it('starts on Overview with nothing open over it', () => {
+    const store = createPresentationStore(fakeClock());
+    expect(selectTab(store.getState())).toBe('overview');
+    expect(selectOverlay(store.getState())).toEqual({ kind: 'none' });
+    expect(selectDraft('palette')(store.getState())).toBe('');
+    expect(selectListCursor('report')(store.getState())).toBe(0);
+  });
+
+  it('moves along the tab bar and stops at both ends rather than wrapping', () => {
+    const store = createPresentationStore(fakeClock());
+    store.getState().moveTab(1);
+    expect(selectTab(store.getState())).toBe(WORKSPACE_TABS[1]);
+    store.getState().moveTab(99);
+    expect(selectTab(store.getState())).toBe(WORKSPACE_TABS[WORKSPACE_TABS.length - 1]);
+    store.getState().moveTab(-99);
+    expect(selectTab(store.getState())).toBe(WORKSPACE_TABS[0]);
+    store.getState().setTab('changes');
+    expect(selectTab(store.getState())).toBe('changes');
+  });
+
+  it('cycles focus through the three panels, wrapping as Tab does', () => {
+    const store = createPresentationStore(fakeClock());
+    const seen: string[] = [store.getState().focus];
+    for (let i = 0; i < FOCUS_PANELS.length; i += 1) {
+      store.getState().moveFocus(1);
+      seen.push(store.getState().focus);
+    }
+    expect(seen).toEqual(['tasks', 'tabs', 'main', 'tasks']);
+    store.getState().moveFocus(-1);
+    expect(store.getState().focus).toBe('main');
+    // A focus a full-screen view took (a prompt, the transcript) rejoins the cycle at the first panel.
+    store.getState().setFocus('modal');
+    store.getState().moveFocus(1);
+    expect(store.getState().focus).toBe('tasks');
+  });
+
+  it('keeps a cursor per list, each clamped to the length its own panel knows', () => {
+    const store = createPresentationStore(fakeClock());
+    store.getState().setListCursor('report', 400, 120);
+    expect(selectListCursor('report')(store.getState())).toBe(119);
+    store.getState().moveListCursor('report', -10, 120);
+    expect(selectListCursor('report')(store.getState())).toBe(109);
+    store.getState().moveListCursor('palette', -5, 10);
+    expect(selectListCursor('palette')(store.getState())).toBe(0);
+    // One list's cursor is not another's.
+    expect(selectListCursor('report')(store.getState())).toBe(109);
+  });
+
+  it('holds half-typed text per field so an overlay can be re-rendered under it', () => {
+    const store = createPresentationStore(fakeClock());
+    store.getState().setDraft('palette', 'rest');
+    store.getState().setDraft('search', 'impl');
+    expect(selectDraft('palette')(store.getState())).toBe('rest');
+    expect(selectDraft('search')(store.getState())).toBe('impl');
+    store.getState().setOverlay({ kind: 'palette' });
+    expect(selectOverlay(store.getState())).toEqual({ kind: 'palette' });
+    expect(selectDraft('palette')(store.getState())).toBe('rest');
   });
 });
 
