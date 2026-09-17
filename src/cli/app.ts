@@ -19,6 +19,7 @@ import { WorkflowEventBus } from '../events/event-bus.js';
 import { ShellHookRunner } from '../execution/hooks.js';
 import { WorkflowScheduler, type SchedulerDeps } from '../workflow/scheduler.js';
 import { createRunController, type RunController } from '../workflow/control/controller.js';
+import { registerLocalController } from '../workflow/control/local.js';
 import { Redactor } from '../logging/redact.js';
 import { ConsoleLogger, type Logger } from '../logging/logger.js';
 import { Git } from '../workspace/git.js';
@@ -143,6 +144,9 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     completion: new WorkflowCompletionStore(run.configPath),
   });
   const controller = createRunController({ scheduler });
+  // So a command raised in this process reaches the controller directly instead of writing a request file
+  // for itself to poll (§2.2); `cao task stop|restart` is the caller.
+  registerLocalController(run.runId, controller);
   return { store, processManager, runners, workspace, bus, scheduler, controller, logger, redactor };
 }
 

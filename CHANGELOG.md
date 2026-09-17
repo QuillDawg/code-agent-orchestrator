@@ -189,8 +189,40 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   review handoff with cost-appropriate models.
 - `cao validate` now names, once per workflow, the tasks that run on Codex transport `exec`, and states
   that no human can be reached during them. The run log records the same thing once per such task.
+- **`cao task stop <task>` and `cao task restart <task>`.** `cao task` is now a command with subcommands —
+  `show` (the default, so `cao task <refs>` is unchanged), `stop` and `restart`. `stop` cancels the attempt
+  a task is running and ends it `cancelled`; `restart` sends a task that finished without succeeding back to
+  `pending`. Both reach the process that owns the run — the run controller directly when that is this
+  process, a request file it answers when it is another — and print what came back, exiting `2` on a
+  refusal with the owner's own sentence. `--wait <seconds>` (default 30) is how long to wait for that
+  answer; an elapsed wait is not a refusal and says so. With nobody executing the run, both say so and name
+  `cao resume`. A literal subcommand name wins, so a task called `stop` is reached with `cao task show stop`
+  — which the help for `cao task` says in as many words.
+- A test parses every `Examples:` block in the CLI's own help and every fenced `cao …` line in `README.md`
+  and `docs/capabilities.md`, and puts each of them through the parser. An example that names an option or
+  a command this `cao` does not have now fails the suite instead of being found by a reader.
 
 ### Changed
+
+- **`cao` on its own prints the help to stdout and exits 0.** It used to print the same help to *stderr*
+  and exit 2, so `cao | less` showed nothing and a shell treated "what is this" as a failure. A real usage
+  error — an unknown command, a missing argument, a bad option value — is still exit 2, and an unknown
+  command is now answered with the command it was probably meant to be.
+- **Root help is grouped**: **Run** (`run`, `resume`, `ui`, `stop`, `validate`), **Inspect** (`status`,
+  `list`, `logs`, `peek`, `diff`, `report`), **Task controls** (`task`) and **Diagnostics** (`doctor`,
+  `clean`, `emit`), instead of one list of fifteen. Every command's help now ends with worked examples and
+  the exit codes that command really produces, and help wraps to `$COLUMNS` when there is no terminal to
+  ask, as every table in this CLI already did, rather than to a fixed 80. The exit-code and environment
+  footer gains `CAO_ALT_SCREEN`, `CAO_THEME` and `CAO_REDUCED_MOTION`.
+- **`cao doctor` starts no agent unless `--probe` asks it to.** The live probes were on by default, which
+  made an ordinary `cao doctor` cost one small model call and up to a minute per agent mode. They are now
+  opt-in: `cao doctor --probe` runs them, and without it the probe rows are still printed, as
+  `- <agent> live start  not probed (pass --probe)`, so a report never looks like the probes passed.
+  `--no-probe` is still accepted and still means no probes; it is deprecated and its help text says so.
+  Exit codes are unchanged.
+- A control request that names a task is now aimed at that task: a `stop` request carrying a `taskId`
+  cancels that one attempt instead of stopping the whole run. `stop.json` and a `stop` request with no task
+  are the run-level stop they have always been.
 
 - **The workspace stays open when the run ends.** `cao run` and `cao resume` used to leave 50 ms after the
   run finished, which meant the screen showing a failure was the screen that disappeared. The workspace now

@@ -27,10 +27,12 @@ import { runCommand } from '../../src/cli/commands/run.js';
 import { statusCommand } from '../../src/cli/commands/status.js';
 import { stopCommand } from '../../src/cli/commands/stop.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
+import { taskControlCommand } from '../../src/cli/commands/task-control.js';
 import { diffCommand } from '../../src/cli/commands/diff.js';
 import { emitCommand } from '../../src/cli/commands/emit.js';
 import { entryFile, registryKey } from '../../src/persistence/registry.js';
 import { controlRequest, readAck, writeControlRequest } from '../../src/persistence/requests.js';
+import { controlEnvelope } from '../../src/workflow/control/commands.js';
 
 const NL = String.fromCharCode(10);
 
@@ -43,6 +45,9 @@ async function until(cond: () => Promise<boolean>, timeoutMs = 30_000): Promise<
   }
 }
 const YAML = ['name: consistency', 'tasks:', '  - id: implement-api', '    prompt: p', '  - id: implement-ui', '    prompt: p'].join(NL) + NL;
+
+/** Two tasks in one layer, so one can be cancelled and restarted while the other keeps the run alive. */
+const PAIR = ['name: pair', 'execution:', '  maxConcurrency: 2', 'tasks:', '  - id: a', '    parallelGroup: g', '    onFailure: continue', '    prompt: p', '  - id: b', '    parallelGroup: g', '    prompt: p'].join(NL) + NL;
 
 async function writeWorkflow(repo: string, yaml = YAML): Promise<string> {
   const file = path.join(repo, 'workflow.yaml');
@@ -188,12 +193,27 @@ describe('CLI consistency', () => {
   // being checked is exactly that exit, plus that every subcommand inherits the override.
   it('exits 2 for commander usage errors too, as cao --help promises', async () => {
     const cli = (...args: string[]) => execa('npx', ['tsx', 'src/bin.ts', ...args], { cwd: process.cwd(), reject: false, windowsHide: true });
-    expect((await cli('frobnicate')).exitCode).toBe(2);
+    const frobnicate = await cli('frobnicate');
+    expect(frobnicate.exitCode).toBe(2);
     expect((await cli('logs', 'x', '--lines', '0')).exitCode).toBe(2);
     const help = await cli('--help');
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain('Exit codes:');
     expect((await cli('status', '--help')).exitCode).toBe(0);
+    expect((await cli('task', '--help')).exitCode).toBe(0);
+
+    // §3.3: `cao` alone is not a mistake. Help on **stdout**, exit 0 - it used to be stderr and 2.
+    const bare = await cli();
+    expect(bare.exitCode).toBe(0);
+    expect(bare.stderr).toBe('');
+    expect(bare.stdout).toContain('Usage: cao [options] [command]');
+    expect(bare.stdout).toContain('Task controls:');
+
+    // A mistyped command still is a mistake, and now says what was probably meant.
+    expect(frobnicate.stderr).toContain("unknown command 'frobnicate'");
+    const mistyped = await cli('stauts');
+    expect(mistyped.exitCode).toBe(2);
+    expect(mistyped.stderr).toContain('Did you mean status?');
   }, 120_000);
 
   it('cao stop reports a stale lock and requests an interrupt from a live orchestrator', async () => {
@@ -344,6 +364,59 @@ describe('CLI consistency', () => {
     expect(shown.stdout).toContain('filesChanged: src/red.ts');
     expect(shown.stdout).toContain('W src/hidden.ts');
   }, 30_000);
+
+  /**
+   * `cao task stop|restart` with the run owned by *this* process (§3.3, §2.3): the controller is right
+   * here, so the command is a call rather than a file, and the answer is the ack itself.
+   */
+  it('cao task stop and restart reach the controller in this process when it owns the run', async () => {
+    const repo = await tmpGitRepo('cao-task-local-');
+    const configPath = await writeWorkflow(repo, PAIR);
+    const prepared = await prepareWorkflow(configPath, { launchDirectory: repo, claudeCommand: FAKE_CLAUDE });
+    requireValid(prepared);
+    const store = new FileRunStore(repo);
+    const run = await createRun(store, { workflow: prepared.workflow, rawConfig: prepared.loaded.raw });
+    // Workers that take their time, so there is something to cancel and something still running afterwards.
+    const runtime = createRuntime({ run, environment: { FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_DELAY_MS: '4000' }, secrets: [], logger: silentLogger });
+    expect(await store.acquireLock(run.runId)).toEqual({ ok: true });
+    const execution = runtime.scheduler.execute();
+    try {
+      await waitFor(() => run.tasks['a']!.state === 'running' && run.tasks['b']!.state === 'running');
+
+      const stopped = await captureCli(() => taskControlCommand('stop', [run.runId, 'a'], { repository: repo }));
+      expect(stopped.code).toBe(0);
+      expect(stopped.stdout).toContain('stop a');
+      expect(stopped.stdout).toContain('applied');
+      await waitFor(() => run.tasks['a']!.state === 'cancelled');
+
+      // ...and a cancelled task is exactly the state `restart` takes [D22], so the pair works as one tool.
+      const restarted = await captureCli(() => taskControlCommand('restart', [run.runId, 'a'], { repository: repo }));
+      expect(restarted.code).toBe(0);
+      expect(restarted.stdout).toContain('applied');
+      await waitFor(() => run.tasks['a']!.state !== 'cancelled');
+
+      // A control the run refuses is exit 2 with the owner's own sentence, not a silent success.
+      const refused = await captureCli(() => taskControlCommand('restart', [run.runId, 'b'], { repository: repo }));
+      expect(refused.code).toBe(2);
+      expect(refused.stdout).toContain('rejected');
+      expect(refused.stdout).toContain('still running');
+    } finally {
+      await runtime.controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli'));
+      await execution;
+      await store.releaseLock(run.runId);
+    }
+  }, 120_000);
+
+  it('cao task stop refuses when no orchestrator owns the run, and says what does move it on', async () => {
+    const repo = await tmpGitRepo('cao-task-noowner-');
+    const { run } = await execute(repo);
+    for (const kind of ['stop', 'restart'] as const) {
+      await expect(taskControlCommand(kind, [run.runId, 'implement-api'], { repository: repo })).rejects.toThrow(expect.objectContaining({ exitCode: 2 }));
+      await expect(taskControlCommand(kind, [run.runId, 'implement-api'], { repository: repo })).rejects.toThrow(new RegExp(`No orchestrator owns run ${run.runId}.*cao resume ${run.runId}`));
+    }
+    // ...and the reference itself is still resolved the way every other command resolves one
+    await expect(taskControlCommand('stop', [run.runId, 'implement'], { repository: repo })).rejects.toThrow(/implement-api, implement-ui/);
+  }, 60_000);
 });
 
 /**
@@ -444,6 +517,49 @@ describe('the request inbox, from another process', () => {
       process.env.CAO_HOME = home;
       const status = await captureCli(() => emitCommand('status', { json: true }));
       expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
+    } finally {
+      orchestrator.kill();
+      await orchestrator.catch(() => undefined);
+    }
+  }, 180_000);
+
+  /**
+   * `cao task stop <task>` from a terminal that owns nothing (§2.3, §3.3). The same errand as the test
+   * above, across a real process boundary: a `stop` request that names a task is the cancel of one attempt,
+   * and the owner answers it on disk while the run carries on.
+   */
+  it('cao task stop cancels one task in a run another process owns, and is refused once that process is gone', async () => {
+    const repo = await tmpGitRepo('cao-task-inbox-');
+    const env = { CAO_CLAUDE_COMMAND: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_DELAY_MS: '4000' };
+    // Two tasks, because the property under test is that *one* of them stops: a `stop` request that names a
+    // task must not be the run-level stop `stop.json` has always been.
+    await writeWorkflow(repo, PAIR);
+
+    const orchestrator = cao(['run', 'workflow.yaml', '--no-tui'], { cwd: repo, env, reject: false });
+    let runId = '';
+    try {
+      const store = new FileRunStore(repo);
+      const paths = createNativeRunPaths(repo);
+      await until(async () => {
+        runId = (await store.listRuns().catch(() => []))[0]?.runId ?? '';
+        return runId !== '' && (await pathExists(paths.lockFile(runId)));
+      }, 30_000);
+      await until(async () => (await store.readLive(runId))?.tasks['a']?.state === 'running', 30_000);
+
+      const stopped = await captureCli(() => taskControlCommand('stop', [runId, 'a'], { repository: repo }));
+      expect(stopped.code).toBe(0);
+      expect(stopped.stdout).toMatch(new RegExp(`sent to pid ${orchestrator.pid}`));
+      expect(stopped.stdout).toContain('applied');
+      expect(await fs.readdir(paths.requestAcksDir(runId))).toHaveLength(1);
+
+      await orchestrator;
+      const finished = await store.loadRun(runId);
+      expect(finished.tasks['a']!.state).toBe('cancelled');
+      expect(finished.tasks['b']!.state).toBe('success');
+      expect(finished.state).not.toBe('interrupted');
+
+      // The owner has gone with the run: there is nothing to ask, and saying so beats a request nobody reads.
+      await expect(taskControlCommand('restart', [runId, 'a'], { repository: repo })).rejects.toThrow(/No orchestrator owns run/);
     } finally {
       orchestrator.kill();
       await orchestrator.catch(() => undefined);

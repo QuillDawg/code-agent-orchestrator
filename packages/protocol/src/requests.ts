@@ -66,7 +66,10 @@ export interface ControlRequest {
   source: string;
   pid: number;
 
-  /** `approve` | `reject` | `restart` | `answer`. */
+  /**
+   * `approve` | `reject` | `restart` | `answer` | `edit` | `prompt`, and `stop`, where naming a task means
+   * "cancel this attempt" rather than "stop the run".
+   */
   taskId?: string;
   /**
    * `answer` only: the interaction uid (§4.4.1), **opaque** — never parsed to recover a task id or an attempt

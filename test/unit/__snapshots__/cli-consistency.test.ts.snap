@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`root help groups > fits 100 columns and reads the same every time 1`] = `
+"Usage: cao [options] [command]
+
+Code Agent Orchestrator: run YAML-defined workflows as isolated coding-agent sessions
+
+Options:
+  -V, --version                  output the version number
+  -h, --help                     display help for command
+
+Run:
+  run [options] [workflow]       Run a workflow
+  resume [options] [run]         Resume an interrupted, failed or paused run
+  ui [options] [run]             Open the workspace on a run, or pick one
+  stop [options] [run]           Stop a run from another terminal
+  validate [options] [workflow]  Validate a workflow and print its execution plan
+
+Inspect:
+  status [options] [run]         Show a run and its tasks
+  list [options]                 List the runs of this repository
+  logs [options] [refs...]       Show or follow a task transcript
+  peek [options] [refs...]       Peek into a running worker
+  diff [options] [refs...]       Show what a task changed
+  report [options] [run]         Render a run as a document to paste into a pull request
+
+Task controls:
+  task                           Show one task, or steer it: show (default) | stop | restart
+
+Diagnostics:
+  doctor [options] [config]      Check this machine: Node, git, the agent CLIs, and what past runs
+                                 left behind
+  clean [options] [run]          Remove the worktrees and branches a run created
+  emit [options] [action]        Turn announcing runs to the desktop app on or off, and show what it
+                                 is doing
+
+Commands:
+  help [command]                 display help for command
+
+Exit codes:
+  0    completed                     1    failed
+  2    usage or validation error     3    paused (approval or input required)
+  70   internal error                130  interrupted (Ctrl+C or cao stop)
+
+Environment:
+  CAO_CLAUDE_COMMAND   Claude CLI to launch instead of \`claude\`
+  CAO_CODEX_COMMAND    Codex CLI to launch instead of \`codex\`
+  CAO_EMIT             announce runs to a desktop app on this machine (1/0); see cao emit status
+  CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)
+  CAO_DEBUG            print stack traces when a command fails
+  CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)
+  CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)
+  CAO_THEME            workspace theme: default|mono (also --theme)
+  CAO_REDUCED_MOTION   1 stops the spinner and the activity pulse
+  NO_COLOR/FORCE_COLOR disable or force ANSI colour (also --color)
+  COLUMNS              width to lay tables out in when there is no terminal to ask
+
+"
+`;

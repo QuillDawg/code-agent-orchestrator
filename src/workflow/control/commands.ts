@@ -129,9 +129,11 @@ export function commandForRequest(request: ControlRequest): RequestTranslation {
   const taskId = typeof request.taskId === 'string' && request.taskId !== '' ? request.taskId : undefined;
   switch (request.kind) {
     case 'stop':
-      // No mode on the wire: a stop from another terminal has always meant the cancelling kind, the way
-      // Ctrl+C does, and `stop.json` has never carried one.
-      return { ok: true, command: { kind: 'stop', mode: 'cancel' } };
+      // A stop that names a task is `cao task stop <task>` from another terminal (§2.3): one attempt is
+      // aborted and the run carries on. Without a task it is the run-level stop `stop.json` has always been.
+      // No mode on the wire either way: a stop from another terminal has always meant the cancelling kind,
+      // the way Ctrl+C does, and `stop.json` has never carried one.
+      return taskId ? { ok: true, command: { kind: 'cancelTask', taskId } } : { ok: true, command: { kind: 'stop', mode: 'cancel' } };
     case 'kill':
       return { ok: true, command: { kind: 'kill' } };
     case 'restart':

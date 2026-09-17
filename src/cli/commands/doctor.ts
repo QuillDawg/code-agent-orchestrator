@@ -35,9 +35,10 @@ export interface DoctorOptions {
   json?: boolean;
   config?: string;
   /**
-   * Whether to start each agent mode for real (default true). The live probes are the checks that catch
-   * what runs actually fail on, but they spend a small model call and up to a minute per mode - so a
-   * scripted or offline `cao doctor` can ask for the cheap checks alone with `--no-probe`.
+   * Whether to start each agent mode for real. **Off unless it is exactly `true`** `[D32]`: the live probes
+   * are the checks that catch what runs actually fail on, but one of them spends a small model call and they
+   * take up to a minute per mode, and an ordinary `cao doctor` has to be free and fast. `--probe` opts in;
+   * `--no-probe` is still accepted and still means no probes, which is now also the default.
    */
   probe?: boolean;
 }
@@ -258,13 +259,14 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
 
   // Each mode a workflow can select, started for real. This is the only check that runs an agent, and it
   // is the one that catches the failures users actually report: a flag combination the CLI refuses, an
-  // output schema the API refuses, a transport this version does not have. `--no-probe` turns it off, and
-  // says so on its own line rather than quietly leaving the probe rows out.
-  const probes = opts.probe === false
-    ? facts.agents.filter((agent) => agent.found && agent.authenticated !== false).map((agent) => ({ runner: agent.runner, mode: 'live start', status: 'skip' as const, detail: 'not probed (--no-probe)' }))
-    : await deps.probeAgents(facts.agents, environment).catch((err: unknown) => {
+  // output schema the API refuses, a transport this version does not have. It is also the only check that
+  // costs anything, so `--probe` asks for it `[D32]`; without it the rows are still printed, saying they
+  // were not run, rather than quietly leaving out the part of the report a reader is looking for.
+  const probes = opts.probe === true
+    ? await deps.probeAgents(facts.agents, environment).catch((err: unknown) => {
       return [{ runner: 'claude' as const, mode: 'live start', status: 'skip' as const, detail: `not probed: ${(err as Error).message}` }];
-    });
+    })
+    : facts.agents.filter((agent) => agent.found && agent.authenticated !== false).map((agent) => ({ runner: agent.runner, mode: 'live start', status: 'skip' as const, detail: 'not probed (pass --probe)' }));
   if (probes.length) facts.probes = probes;
 
   // Runs: which of them an orchestrator still owns, and which locks are left over from one that is gone.

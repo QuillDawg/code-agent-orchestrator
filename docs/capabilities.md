@@ -298,6 +298,16 @@ kill. A request that cannot be read, or that was written by a newer `cao` than t
 decisions — approving a gate, answering a worker's question — are deliberately **not** taken from a file:
 they are refused with a reason, and stay something you do in the terminal that owns the run.
 
+`cao task stop <task>` and `cao task restart <task>` are the same mechanism aimed at one task rather than the
+whole run: the first cancels the attempt a task is running and ends it as `cancelled`, the second sends a
+task that finished without succeeding back to `pending`. Both go to whichever process owns the run — a call
+into the run controller when that is this process, a request file when it is another one — and both print
+what came back, exiting `2` on a refusal with the owner's own sentence (`Task "review" is still running.
+Cancel it first, then restart it.`). `--wait <seconds>` (default 30) is how long to wait for that answer; an
+elapsed wait is not a refusal, and says so, because the request is still in `requests/` and is applied when
+the owner next reads it. With nobody executing the run there is nothing to ask, and both say so and name
+`cao resume`.
+
 `cao emit status` prints what a run started by this `cao` will accept, on its `Controls:` row.
 
 `cao resume` takes the same overrides as `cao run`: `--max-concurrency`, `--permission-mode` and
@@ -718,21 +728,20 @@ cao 0.1.0-beta.3
 Repository: /home/me/projects/api
 Run state:  /home/me/projects/api/.orchestrator/runs
 
-✓ Node.js     v22.11.0 (requires >=22)
-✓ git         2.47.0, worktrees supported
-✓ claude      2.1.267 (Claude Code) [stream-json, structured-output, safe-mode]  (claude)
-✓ claude ask  ask-mode argv accepted; the session started  (612ms)
-✓ claude deny deny-mode argv accepted; the session started  (588ms)
-! codex       not found  (codex): spawn codex ENOENT
-              → install the Codex CLI and check `codex --version`, or point CAO_CODEX_COMMAND at the binary
-! run locks   1 stale lock(s); the orchestrator that held them is gone
-              · 2026-09-03-002  pid 41208  last heartbeat 2026-09-03T09:14:02.511Z
-              → resume the run, or delete /home/me/projects/api/.orchestrator/runs/2026-09-03-002/lock.json
-! worktrees   1 left over from a finished run
-              · /home/me/projects/api/.orchestrator/worktrees/implement-102  (run 2026-09-03-002)
-              → cao clean 2026-09-03-002 --all
-✓ branches    no orchestrator/* branches left over
-✓ git ignore  .orchestrator/ is ignored (.git/info/exclude)
+✓ Node.js            v22.11.0 (requires >=22)
+✓ git                2.47.0, worktrees supported
+✓ claude             2.1.267 (Claude Code) [streamJson, structuredOutput, isolatedConfig]  (claude)
+! codex              not found  (codex): spawn codex ENOENT
+                     → install the Codex CLI and check `codex --version`, or point CAO_CODEX_COMMAND at the binary
+- claude live start  not probed (pass --probe)
+! run locks          1 stale lock(s); the orchestrator that held them is gone
+                     · 2026-09-03-002  pid 41208  last heartbeat 2026-09-03T09:14:02.511Z
+                     → resume the run, or delete /home/me/projects/api/.orchestrator/runs/2026-09-03-002/lock.json
+! worktrees          1 left over from a finished run
+                     · /home/me/projects/api/.orchestrator/worktrees/implement-102  (run 2026-09-03-002)
+                     → cao clean 2026-09-03-002 --all
+✓ branches           no orchestrator/* branches left over
+✓ git ignore         .orchestrator/ is ignored (.git/info/exclude)
 
 ! All required checks passed, 3 warning(s).
 ```
@@ -748,13 +757,13 @@ What it checks, and how it grades what it finds:
 | `worktrees` | — | a worktree of a finished run is still on disk |
 | `branches` | — | an `orchestrator/*` branch has no worktree holding it |
 | `git ignore` | — | `.orchestrator/` is not ignored, so run state shows up in `git status` |
-| `<agent> <mode>` | a mode a workflow can select would not start: the CLI refused the argv, the API refused the output schema, or the transport is not there | — |
+| `<agent> <mode>` (only with `--probe`) | a mode a workflow can select would not start: the CLI refused the argv, the API refused the output schema, or the transport is not there | — |
 
-### The modes are started for real
+### `--probe` starts the modes for real
 
-The agent lines above say whether the binary is there and new enough; the lines under them say whether the
-thing a run will actually do works. Each mode a workflow can select is started, briefly, and killed as soon
-as it has answered:
+The agent lines above say whether the binary is there and new enough. `cao doctor --probe` adds the lines
+that say whether the thing a run will actually do works: each mode a workflow can select is started,
+briefly, and killed as soon as it has answered.
 
 - **Codex `exec`** runs one trivial turn with a minimal OpenAI-strict output schema, in a temporary
   read-only directory. This is the shortest path through everything that has broken real runs: the flag
@@ -768,9 +777,11 @@ Nothing is written into your repository, nothing survives the command (every pro
 `cao doctor` sweeps the rest), and an agent that is not installed, or not authenticated, is not probed at
 all: it has already said so on its own line.
 
-`cao doctor --no-probe` runs the cheap checks alone - no agent is started, nothing is spent, and no probe
-waits up to a minute - which is what a scripted or offline check wants. The probe rows are still printed,
-as `- <agent> live start  not probed (--no-probe)`, so a report never looks like the probes passed.
+**Ordinary `cao doctor` starts nothing.** The probes are the one part of this command that costs money and
+time, so they are opt-in: without `--probe` no agent is started, nothing is spent, and no check waits up to
+a minute. The rows are still printed, as `- <agent> live start  not probed (pass --probe)`, so a report
+never looks like the probes passed. `--no-probe`, which used to be how you asked for this, is still accepted
+and still means no probes; it is deprecated and its help text says so.
 
 Only the agent and environment checks can stop a run, so only those exit `1`; a warning is something to tidy up, and the exit
 code stays `0`. A check that cannot be answered here — the run checks outside a repository that has never run

@@ -233,27 +233,32 @@ describe.skipIf(!HAS_GIT)('gathering the facts', () => {
 
   /**
    * The live probes start each agent mode for real, which costs a small model call and up to a minute per
-   * mode. A scripted `cao doctor` that used to be free has to be able to ask for the cheap checks alone -
-   * and the report has to say that it did, rather than quietly leaving the probe rows out.
+   * mode - so `cao doctor` does not start one unless it is asked to `[D32]`. The report still has to say
+   * that it did not, rather than quietly leaving the probe rows out, and `--no-probe` has to keep parsing
+   * and keep meaning "no probes" for everyone who already has it in a script.
    */
-  it('--no-probe starts no agent, and says so instead of dropping the probe rows', async () => {
+  it('starts no agent unless --probe asks for one, and says so instead of dropping the probe rows', async () => {
     const repo = await tmpGitRepo('cao-doctor-noprobe-');
     let started = 0;
     const deps = { ...stubDetect(), probeAgents: async () => { started++; return []; } };
 
-    const probed = await gatherFacts({ repository: repo }, deps);
+    const notProbed = [
+      { runner: 'claude', mode: 'live start', status: 'skip', detail: 'not probed (pass --probe)' },
+      { runner: 'codex', mode: 'live start', status: 'skip', detail: 'not probed (pass --probe)' },
+    ];
+    // The default, and the deprecated flag that used to be the only way to get it: no child process at all.
+    for (const opts of [{ repository: repo }, { repository: repo, probe: false }]) {
+      const skipped = await gatherFacts(opts, deps);
+      expect(started).toBe(0);
+      expect(skipped.probes).toEqual(notProbed);
+      const checks = evaluate(skipped);
+      expect(check(checks, 'probe:claude:live start').status).toBe('skip');
+      expect(checks.filter((c) => c.status === 'fail')).toEqual([]);
+    }
+
+    const probed = await gatherFacts({ repository: repo, probe: true }, deps);
     expect(started).toBe(1);
     expect(probed.probes).toBeUndefined(); // the stub found nothing to report
-
-    const skipped = await gatherFacts({ repository: repo, probe: false }, deps);
-    expect(started).toBe(1);
-    expect(skipped.probes).toEqual([
-      { runner: 'claude', mode: 'live start', status: 'skip', detail: 'not probed (--no-probe)' },
-      { runner: 'codex', mode: 'live start', status: 'skip', detail: 'not probed (--no-probe)' },
-    ]);
-    const checks = evaluate(skipped);
-    expect(check(checks, 'probe:claude:live start').status).toBe('skip');
-    expect(checks.filter((c) => c.status === 'fail')).toEqual([]);
   });
 
   it('finds a lock whose orchestrator process is gone, and leaves a live one alone', async () => {
@@ -349,7 +354,8 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout) as { ok: boolean; cao: string; checks: DoctorCheck[]; facts: DoctorFacts };
     expect(parsed.ok).toBe(true);
-    expect(parsed.checks.map((c) => c.id)).toEqual(['node', 'git', 'agent:claude', 'agent:codex', 'locks', 'worktrees', 'branches', 'exclude']);
+    // The probe rows are there without a probe having run: they say so, rather than being left out [D32].
+    expect(parsed.checks.map((c) => c.id)).toEqual(['node', 'git', 'agent:claude', 'agent:codex', 'probe:claude:live start', 'probe:codex:live start', 'locks', 'worktrees', 'branches', 'exclude']);
     expect(parsed.facts.agents[0]).toMatchObject({ runner: 'claude', found: true });
     expect(parsed.cao).toMatch(/^\d+\.\d+\.\d+/);
   });
@@ -358,7 +364,7 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     const repo = await tmpGitRepo('cao-doctor-scoped-');
     const config = path.join(repo, 'workflow.yaml');
     await fs.writeFile(config, `name: scoped\ncodex:\n  command: ${JSON.stringify(FAKE_CODEX)}\n  transport: appServer\n  approvals: host\ntasks:\n  - id: review\n    agent: codex\n    prompt: review\n`);
-    const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, config, json: true }));
+    const { code, stdout } = await captureCli(() => doctorCommand({ repository: repo, config, json: true, probe: true }));
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout) as { checks: DoctorCheck[]; facts: DoctorFacts };
     expect(parsed.facts.agents).toEqual([expect.objectContaining({ runner: 'codex', authenticated: true, requiredCapabilities: ['appServer'] })]);

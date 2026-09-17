@@ -14,6 +14,8 @@ import { renderExecutionPlan } from '../../src/workflow/plan.js';
 import type { TaskState } from 'code-agent-orchestrator-protocol';
 import { buildWorkflow, makeRun, tmpDir } from '../helpers/index.js';
 import { paint, stripAnsi } from '../../src/cli/color.js';
+import { Command, CommanderError } from 'commander';
+import { buildProgram, COMMAND_GROUPS } from '../../src/cli/program.js';
 
 const NL = String.fromCharCode(10);
 const lines = (text: string): string[] => text.split(NL).map(stripAnsi);
@@ -333,5 +335,254 @@ describe('a workflow whose tasks are already recorded as done', () => {
 
   it('and the Agents line says nothing needs launching rather than "not detected"', () => {
     expect(formatAgents([])).toBe('none to launch (every task is already completed)');
+  });
+});
+
+// ------------------------------------------------------------------- CLI discovery and help (§3.3)
+
+interface Dispatched {
+  /** `task show`, `run`, ... - where the arguments actually landed. */
+  path: string;
+  args: unknown[];
+  options: Record<string, unknown>;
+}
+
+function commandPath(command: Command): string {
+  const names: string[] = [];
+  for (let c: Command | null = command; c?.parent; c = c.parent) names.unshift(c.name());
+  return names.join(' ');
+}
+
+/** The program a test parses with: real commands, real options, no side effects and no `process.exit`. */
+function testProgram(): { program: Command; dispatched: Dispatched[]; written: string[] } {
+  const program = buildProgram();
+  const dispatched: Dispatched[] = [];
+  const written: string[] = [];
+  // Commander's own default: throw a CommanderError instead of leaving through `process.exit`.
+  program.exitOverride();
+  program.configureOutput({ writeOut: (s) => void written.push(s), writeErr: (s) => void written.push(s) });
+  const stub = (command: Command): void => {
+    command.exitOverride();
+    command.action((...args: unknown[]) => {
+      const self = args[args.length - 1] as Command;
+      dispatched.push({ path: commandPath(self), args: args.slice(0, -2), options: self.opts() });
+    });
+    command.commands.forEach(stub);
+  };
+  program.commands.forEach(stub);
+  return { program, dispatched, written };
+}
+
+function parseCli(argv: string[]): Dispatched {
+  const { program, dispatched } = testProgram();
+  program.parse(argv, { from: 'user' });
+  if (dispatched.length !== 1) throw new Error(`expected one dispatch for "cao ${argv.join(' ')}", got ${dispatched.length}`);
+  return dispatched[0]!;
+}
+
+/**
+ * Parse and throw only on a real usage error. `--help` and `--version` leave through `CommanderError` too,
+ * with exit code 0 - they are commands that worked, and README.md offers both.
+ */
+function parseOk(argv: string[]): void {
+  try {
+    testProgram().program.parse(argv, { from: 'user' });
+  } catch (err) {
+    if (err instanceof CommanderError && err.exitCode === 0) return;
+    throw err;
+  }
+}
+
+/**
+ * Help at a fixed width, for a command named by its path. `outputHelp`, not `helpInformation`: the Examples
+ * and Exit blocks are `addHelpText('after', ...)`, which is an event only the former emits.
+ */
+function helpAt(columns: number, commandPathParts: string[] = []): string {
+  let out = '';
+  const config = { getOutHelpWidth: () => columns, getErrHelpWidth: () => columns, writeOut: (s: string) => void (out += s) };
+  let command = buildProgram();
+  command.configureOutput(config);
+  for (const name of commandPathParts) {
+    command = command.commands.find((c) => c.name() === name)!;
+    command.configureOutput(config);
+  }
+  command.outputHelp();
+  return out;
+}
+
+/**
+ * CLI discovery and help (§3.3, `[D6]`, `[D18]`).
+ *
+ * Everything here drives the real `buildProgram()`. The actions are the only thing replaced, and only on the
+ * subcommands: an action handler on the root would stop commander ever reaching `unknownCommand()`, which is
+ * the behaviour half of these cases are about.
+ */
+describe('bare cao', () => {
+  it('prints the root help to stdout and exits 0, instead of stderr and 2', () => {
+    const { program, written } = testProgram();
+    // `parse([])` is `cao` with nothing after it. Commander's own answer is `help({ error: true })`, which
+    // writes to stderr and leaves with 1 — remapped to 2 by this CLI's exitOverride.
+    let err: CommanderError | null = null;
+    try {
+      program.parse([], { from: 'user' });
+    } catch (e) {
+      err = e as CommanderError;
+    }
+    expect(err?.code).toBe('commander.help');
+    expect(err?.exitCode).toBe(0);
+    expect(written.join('')).toContain('Usage: cao [options] [command]');
+    expect(written.join('')).toContain('Exit codes:');
+  });
+
+  it('still refuses an unknown command with a suggestion and exit 2', () => {
+    const { program, written } = testProgram();
+    expect(() => program.parse(['stauts'], { from: 'user' })).toThrow(expect.objectContaining({ code: 'commander.unknownCommand' }));
+    expect(written.join('')).toContain("unknown command 'stauts'");
+    expect(written.join('')).toContain('Did you mean status?');
+  });
+});
+
+describe('root help groups', () => {
+  const help = helpAt(100);
+
+  it('lists every command under one of the four headings, in spec order', () => {
+    const headings = [COMMAND_GROUPS.run, COMMAND_GROUPS.inspect, COMMAND_GROUPS.task, COMMAND_GROUPS.diagnostics];
+    const positions = headings.map((h) => help.indexOf(`${NL}${h}${NL}`));
+    expect(positions.every((p) => p > 0)).toBe(true);
+    expect([...positions]).toEqual([...positions].sort((a, b) => a - b));
+
+    const groupOf = (name: string): string | undefined => {
+      const at = help.indexOf(`${NL}  ${name} `);
+      return headings.filter((h) => help.indexOf(`${NL}${h}${NL}`) < at).pop();
+    };
+    for (const name of ['run', 'resume', 'ui', 'stop', 'validate']) expect(groupOf(name), name).toBe(COMMAND_GROUPS.run);
+    for (const name of ['status', 'list', 'logs', 'peek', 'diff', 'report']) expect(groupOf(name), name).toBe(COMMAND_GROUPS.inspect);
+    expect(groupOf('task')).toBe(COMMAND_GROUPS.task);
+    for (const name of ['doctor', 'clean', 'emit']) expect(groupOf(name), name).toBe(COMMAND_GROUPS.diagnostics);
+  });
+
+  it('fits 100 columns and reads the same every time', () => {
+    for (const line of help.split(NL)) expect(line.length).toBeLessThanOrEqual(100);
+    expect(help).toBe(helpAt(100));
+    expect(help).toMatchSnapshot();
+  });
+
+  it('names the environment variables a workspace reads, not only the ones a run reads', () => {
+    const names = ['CAO_CLAUDE_COMMAND', 'CAO_CODEX_COMMAND', 'CAO_EMIT', 'CAO_HOME', 'CAO_DEBUG', 'CAO_ASCII', 'CAO_ALT_SCREEN', 'CAO_THEME', 'CAO_REDUCED_MOTION', 'NO_COLOR', 'COLUMNS'];
+    for (const name of names) expect(help).toContain(name);
+  });
+});
+
+describe('cao task subcommands [D6]', () => {
+  it('sends a bare reference to show, the default subcommand', () => {
+    expect(parseCli(['task', 'review'])).toMatchObject({ path: 'task show', args: [['review']] });
+    expect(parseCli(['task'])).toMatchObject({ path: 'task show', args: [[]] });
+    expect(parseCli(['task', '002', 'review', '--json'])).toMatchObject({ path: 'task show', args: [['002', 'review']], options: { json: true } });
+  });
+
+  it('lets a literal subcommand name win, and show reach a task with that name', () => {
+    expect(parseCli(['task', 'stop', 'review'])).toMatchObject({ path: 'task stop', args: [['review']] });
+    expect(parseCli(['task', 'restart', 'review'])).toMatchObject({ path: 'task restart', args: [['review']] });
+    // ...which is why a task called `edit` (or `stop`, from stage 2 on) needs the long form
+    expect(parseCli(['task', 'show', 'edit'])).toMatchObject({ path: 'task show', args: [['edit']] });
+    expect(parseCli(['task', 'show', 'stop'])).toMatchObject({ path: 'task show', args: [['stop']] });
+  });
+
+  it('gives stop and restart a --wait, and says so in the help', () => {
+    expect(parseCli(['task', 'stop', 'review', '--wait', '0'])).toMatchObject({ path: 'task stop', options: { wait: 0 } });
+    expect(parseCli(['task', 'restart', 'review']).options.wait).toBeUndefined();
+    expect(helpAt(100, ['task', 'stop'])).toContain('default: 30');
+    // The precedence rule is the surprising part, so the help for `task` has to state it.
+    expect(helpAt(100, ['task'])).toContain('cao task show stop');
+  });
+});
+
+describe('cao doctor probes are opt-in [D32]', () => {
+  it('parses --probe, leaves the default unset, and still accepts --no-probe', () => {
+    expect(parseCli(['doctor']).options.probe).toBeUndefined();
+    expect(parseCli(['doctor', '--probe']).options.probe).toBe(true);
+    expect(parseCli(['doctor', '--no-probe']).options.probe).toBe(false);
+    expect(helpAt(100, ['doctor'])).toContain('deprecated');
+  });
+});
+
+/**
+ * Every example this CLI and its documentation offer, put through the parser (§3.3).
+ *
+ * The examples are the part of the help a reader copies, and the part nobody re-runs after renaming an
+ * option. Both sources are scanned: the `Examples:` block of every command's own help, and the fenced
+ * `cao …` lines of README.md and docs/capabilities.md.
+ */
+describe('the examples all parse', () => {
+  /** `<run-id>` and friends stand for something a user types; substitute something the parsers accept. */
+  const PLACEHOLDERS: Record<string, string> = { n: '1', seconds: '30', attempt: '1', mode: 'auto', theme: 'mono', text: 'hello' };
+  const dummy = (token: string): string => token.replace(/<([a-z0-9.-]+)>/gi, (_m, name: string) => PLACEHOLDERS[name.toLowerCase()] ?? 'x');
+
+  /** A shell line, without the comment a human reads and without the redirection a shell would handle. */
+  function argvOf(line: string): string[] {
+    const tokens = line.split('#')[0]!.match(/"[^"]*"|\S+/g) ?? [];
+    const argv: string[] = [];
+    for (const token of tokens) {
+      if (['>', '>>', '|', '&&', ';'].includes(token)) break;
+      argv.push(dummy(token).replace(/^"|"$/g, ''));
+    }
+    return argv.slice(1);
+  }
+
+  function examplesInHelp(): string[] {
+    const found: string[] = [];
+    const walk = (parts: string[], command: Command): void => {
+      const helpLines = helpAt(100, parts).split(NL);
+      const start = helpLines.indexOf('Examples:');
+      if (start >= 0) {
+        for (const line of helpLines.slice(start + 1)) {
+          if (line.trim() === '') break;
+          found.push(line.trim());
+        }
+      }
+      for (const child of command.commands) walk([...parts, child.name()], child);
+    };
+    for (const command of buildProgram().commands) walk([command.name()], command);
+    return found;
+  }
+
+  /**
+   * Fenced `cao …` lines. A block that has a shell prompt (`$ …`) in it is a transcript: what follows the
+   * prompt is output, and `cao 0.1.0-beta.3` there is a version banner rather than a command.
+   */
+  async function examplesInDoc(file: string): Promise<string[]> {
+    const text = await fs.readFile(path.join(process.cwd(), file), 'utf8');
+    const found: string[] = [];
+    let block: string[] | null = null;
+    for (const line of text.split(/\r?\n/)) {
+      if (line.startsWith('```')) {
+        if (block) {
+          if (!block.some((l) => l.startsWith('$ '))) found.push(...block.filter((l) => l.startsWith('cao ')));
+          block = null;
+        } else block = [];
+        continue;
+      }
+      block?.push(line);
+    }
+    return found;
+  }
+
+  it('every Examples: line in the help is a command this CLI accepts', () => {
+    const examples = examplesInHelp();
+    expect(examples.length).toBeGreaterThan(30);
+    for (const example of examples) {
+      expect(example.startsWith('cao '), example).toBe(true);
+      expect(() => parseOk(argvOf(example)), example).not.toThrow();
+    }
+  });
+
+  it('and so is every cao line in README.md and docs/capabilities.md', async () => {
+    for (const file of ['README.md', 'docs/capabilities.md']) {
+      const examples = await examplesInDoc(file);
+      expect(examples.length, file).toBeGreaterThan(5);
+      for (const example of examples) {
+        expect(() => parseOk(argvOf(example)), `${file}: ${example}`).not.toThrow();
+      }
+    }
   });
 });

@@ -154,12 +154,15 @@ Everything below writes `cao` for brevity.
 cao doctor
 # or check only what one workflow will use
 cao doctor workflow.yaml --json
+# ...and start each agent mode for real, which costs a small model call
+cao doctor --probe
 ```
 
 `doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities,
-stale lock files and leftover worktrees, and prints a fix hint under anything that needs one. It also
-**starts each mode a run can use** — Codex `exec` and `app-server`, Claude ask-mode and deny-mode — so a
-green `doctor` means more than "the binary exists". Run it first whenever something does not work.
+stale lock files and leftover worktrees, and prints a fix hint under anything that needs one. Run it first
+whenever something does not work. `--probe` adds the checks that **start each mode a run can use** — Codex
+`exec` and `app-server`, Claude ask-mode and deny-mode — so a green `cao doctor --probe` means more than
+"the binary exists"; without it nothing is started and nothing is spent.
 
 ## Quick start
 
@@ -753,12 +756,13 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao list` | Runs of this repository, newest first. `--limit N`, `--json` |
 | `cao logs [run] [task]` | A worker's transcript as one document. `--follow` opens the viewer; `--thinking`, `--raw`, `--stderr`, `--prompt`, `--attempt N`, `-n N`, `--json` |
 | `cao peek [run] <task>` | What a worker is doing right now, with context size, cost and files. `--follow`, `--json` |
-| `cao task [run] <task>` | Everything recorded about one task: status, model, attempts, PID, cwd, branch, dependencies, usage, changed files, interactions. `--json` |
+| `cao task [run] <task>` | Everything recorded about one task: status, model, attempts, PID, cwd, branch, dependencies, usage, changed files, interactions. `--json`. This is `cao task show`, the default subcommand; a task whose own name is a subcommand is reached with `cao task show <name>` |
+| `cao task stop\|restart [run] <task>` | Cancel the attempt a task is running, or run a finished, unsuccessful task again. Applied by the process that owns the run: directly when that is this one, otherwise through a request it answers. `--wait <seconds>` (default 30), `--repository <dir>` |
 | `cao diff [run] [task]` | What a task changed, as a unified diff `git apply` accepts. `--stat`, `--name-only`, `--file <path>`, `--attempt N`, `--json` |
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
-| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, and start each agent mode a run can use, with a fix hint under each failing check. `--repository <dir>`, `--json` |
+| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, with a fix hint under each failing check. `--probe` also starts each agent mode a run can use; without it nothing is started and nothing is spent. `--repository <dir>`, `--json` |
 
 **Exit codes**
 
@@ -772,8 +776,11 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `130` | interrupted by Ctrl+C or `cao stop` |
 
 **References.** Task and run ids match exactly or by a unique prefix, so `cao task implement-1` and
-`cao diff 004` work. An ambiguous prefix is refused with the candidates listed. Every command's `--help`
-ends with worked examples.
+`cao diff 004` work. An ambiguous prefix is refused with the candidates listed.
+
+**Finding your way.** `cao` on its own prints this list, grouped as **Run**, **Inspect**, **Task controls**
+and **Diagnostics**, and exits 0. Every command's `--help` ends with worked examples and the exit codes that
+command really produces, and a mistyped command is answered with the one it was probably meant to be.
 
 ## Environment variables
 

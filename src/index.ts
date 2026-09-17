@@ -46,6 +46,7 @@ export type { Runtime } from './cli/app.js';
 export { createRunController } from './workflow/control/controller.js';
 export type { RunController, RunControllerDeps, RunControllerReads } from './workflow/control/controller.js';
 export { controlEnvelope } from './workflow/control/commands.js';
+export { localController, registerLocalController } from './workflow/control/local.js';
 export type { ControlCommand, ControlCommandKind, ControlEnvelope, TaskEdit } from './workflow/control/commands.js';
 export { ulid } from './util/ulid.js';
 export { parseDuration, formatDuration } from './util/duration.js';

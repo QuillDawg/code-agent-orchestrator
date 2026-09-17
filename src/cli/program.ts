@@ -1,4 +1,4 @@
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, type HelpContext } from 'commander';
 import { runCommand } from './commands/run.js';
 import { validateCommand } from './commands/validate.js';
 import { resumeCommand } from './commands/resume.js';
@@ -8,19 +8,29 @@ import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
 import { peekCommand } from './commands/peek.js';
 import { taskCommand } from './commands/task.js';
+import { taskControlCommand } from './commands/task-control.js';
 import { diffCommand } from './commands/diff.js';
 import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
 import { stopCommand } from './commands/stop.js';
 import { doctorCommand } from './commands/doctor.js';
 import { emitCommand, EMIT_ACTIONS } from './commands/emit.js';
-import { DEFAULT_WORKFLOW_FILES } from './util.js';
+import { DEFAULT_ACK_WAIT_SECONDS } from '../persistence/requests.js';
+import { DEFAULT_WORKFLOW_FILES, terminalWidth } from './util.js';
 import { OrchestratorError } from '../util/errors.js';
 import { packageInfo } from '../util/package-info.js';
 import { isThemeName, THEME_NAMES, type ThemeName } from '../tui/theme.js';
 import type { PermissionMode } from 'code-agent-orchestrator-protocol';
 
 const pkg = packageInfo();
+
+/** The four headings root help groups its commands under (§3.3). */
+export const COMMAND_GROUPS = {
+  run: 'Run:',
+  inspect: 'Inspect:',
+  task: 'Task controls:',
+  diagnostics: 'Diagnostics:',
+} as const;
 
 function positiveInt(value: string): number {
   const n = Number(value);
@@ -54,19 +64,173 @@ function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
+/**
+ * What every command's help ends with: worked examples, and the exit codes that command really produces.
+ *
+ * Keyed by the path a user types, so a subcommand (`task show`) gets its own block. The examples are
+ * executable: `test/unit/cli-consistency.test.ts` parses every one of them back out of the rendered help
+ * and puts it through the parser, so an option renamed here and forgotten there fails the suite (§3.3).
+ */
+interface CommandHelp {
+  examples: string[];
+  /** One line, in the same words as the root help's exit-code table. */
+  exits: string;
+}
+
+export const COMMAND_HELP: Record<string, CommandHelp> = {
+  run: {
+    examples: [
+      'cao run                                 # workflow.yaml in this directory',
+      'cao run workflows/ship.yaml --dry-run   # the plan, no agents',
+      'cao run --task implement-api --no-tui',
+    ],
+    exits: '0 completed  1 a task failed  2 usage or validation error  3 paused for you  130 interrupted',
+  },
+  validate: {
+    examples: ['cao validate', 'cao validate workflows/ship.yaml --json'],
+    exits: '0 valid  2 invalid workflow, or usage error',
+  },
+  resume: {
+    examples: [
+      'cao resume                              # the latest run, retrying failures',
+      'cao resume 2026-09-04-002 --task review',
+      'cao resume --approve deploy',
+    ],
+    exits: '0 completed  1 a task failed  2 usage error  3 paused for you  130 interrupted',
+  },
+  ui: {
+    examples: [
+      'cao ui                                  # pick a recent run, or start a workflow file',
+      'cao ui 002                              # open that run (observer if another terminal owns it)',
+      'cao ui --json                           # the same list, for a script',
+    ],
+    exits: '0 quit, or the code of a run executed from inside the workspace  2 usage error',
+  },
+  stop: {
+    examples: [
+      'cao stop                                # ask the latest run to stop',
+      'cao stop 002 --wait 0                   # ask and return immediately',
+    ],
+    exits: '0 asked (also when the wait elapses)  2 usage error',
+  },
+  status: {
+    examples: ['cao status', 'cao status 002                          # run ids match by prefix', 'cao status --json'],
+    exits: '0 shown  2 no such run, or usage error',
+  },
+  list: {
+    examples: ['cao list', 'cao list --limit 5'],
+    exits: '0 listed (also when there are no runs)  2 usage error',
+  },
+  logs: {
+    examples: [
+      'cao logs review                         # the latest run, task "review"',
+      'cao logs 2026-09-04-002 review -a 2',
+      'cao logs --follow                       # pick a task and switch between them',
+      'cao logs review --json',
+    ],
+    exits: '0 shown  2 no such run or task, or usage error',
+  },
+  peek: {
+    examples: ['cao peek implement-api', 'cao peek implement-api --follow'],
+    exits: '0 shown  2 no such run or task, or usage error',
+  },
+  task: {
+    examples: [
+      'cao task review                         # show, the default subcommand',
+      'cao task show edit                      # the task called "edit", not a subcommand',
+      'cao task stop review                    # cancel the attempt it is running',
+      'cao task restart review                 # run a finished, unsuccessful task again',
+    ],
+    exits: '0 done  2 usage error, or a control the run refused',
+  },
+  'task show': {
+    examples: ['cao task review', 'cao task show 002 review --json'],
+    exits: '0 shown  2 no such run or task, or usage error',
+  },
+  'task stop': {
+    examples: [
+      'cao task stop review                    # wait up to 30s for the owner to answer',
+      'cao task stop 002 review --wait 0       # write the request and return',
+    ],
+    exits: '0 applied, accepted, or still queued when the wait elapsed  2 refused, no owner, or usage error',
+  },
+  'task restart': {
+    examples: ['cao task restart review', 'cao task restart 002 review --wait 60'],
+    exits: '0 applied, accepted, or still queued when the wait elapsed  2 refused, no owner, or usage error',
+  },
+  diff: {
+    examples: ['cao diff                                # every task, in execution order', 'cao diff review --stat', 'cao diff review --file src/app.ts'],
+    exits: '0 shown  2 no such run or task, or usage error',
+  },
+  report: {
+    examples: ['cao report', 'cao report 002 --out report.md'],
+    exits: '0 written  2 no such run, or usage error',
+  },
+  clean: {
+    examples: ['cao clean                               # worktrees of the latest run', 'cao clean 002 --all                     # worktrees and branches'],
+    exits: '0 cleaned  2 no such run, or usage error',
+  },
+  doctor: {
+    examples: [
+      'cao doctor                              # no agent is started, nothing is spent',
+      'cao doctor --probe                      # start every agent mode for real',
+      'cao doctor --json                       # paste this into a bug report',
+    ],
+    exits: '0 every required check passed  1 a check failed  2 usage error',
+  },
+  emit: {
+    examples: [
+      'cao emit status                         # the setting, where it came from, and who is listening',
+      'cao emit enable                         # announce every run this user starts, from now on',
+      'cao run --emit                          # announce this one run only',
+    ],
+    exits: '0 shown or changed  2 usage error',
+  },
+};
+
+/** `cao <path>` for a command, whatever depth it sits at. */
+function commandPath(command: Command): string {
+  const names: string[] = [];
+  for (let c: Command | null = command; c?.parent; c = c.parent) names.unshift(c.name());
+  return names.join(' ');
+}
+
+/** Attach the Examples and Exit blocks to every command and subcommand that has one. */
+function attachCommandHelp(parent: Command): void {
+  for (const command of parent.commands) {
+    const help = COMMAND_HELP[commandPath(command)];
+    if (help) {
+      command.addHelpText('after', ['', 'Examples:', ...help.examples.map((l) => `  ${l}`), '', `Exit codes: ${help.exits}`, ''].join('\n'));
+    }
+    attachCommandHelp(command);
+  }
+}
+
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name('cao')
     .description('Code Agent Orchestrator: run YAML-defined workflows as isolated coding-agent sessions')
     .version(pkg.version)
-    .configureOutput({ writeErr: (s) => process.stderr.write(s) })
+    // `terminalWidth()`, not commander's own: it reads `$COLUMNS` when there is no TTY, which is how every
+    // table in this CLI is laid out, so `COLUMNS=100 cao --help | ...` wraps where a 100-column terminal
+    // would rather than at commander's fixed 80.
+    .configureOutput({ writeErr: (s) => process.stderr.write(s), getOutHelpWidth: terminalWidth, getErrHelpWidth: terminalWidth })
     // The full help after every mistyped option buries the one line that says what was wrong.
     .showHelpAfterError('(add --help for usage)')
+    // "unknown command 'stauts'" and nothing else is a worse answer than the one letter that was wrong.
+    .showSuggestionAfterError()
     // Commander exits 1 for an unknown command or a bad option value, contradicting the exit code table
     // below: a usage error is 2 everywhere else in this CLI. `--help` and `--version` arrive here with
     // exit code 0 and stay 0. Set before the subcommands, which inherit it.
     .exitOverride((err) => process.exit(err.exitCode === 1 ? 2 : err.exitCode));
+
+  // `cao` alone is someone finding out what this is, not a mistake: help on **stdout**, exit 0 (§3.3).
+  // Commander writes that help to stderr and exits 1 instead. An action handler on the root would fix the
+  // exit code and cost the unknown-command error, which is dispatched only when the root has none - so the
+  // one call that reaches here with nothing parsed is intercepted rather than the parse rearranged.
+  const commanderHelp = program.help.bind(program) as (context?: HelpContext) => never;
+  program.help = ((context?: HelpContext) => commanderHelp(program.args.length === 0 ? { error: false } : context)) as Command['help'];
 
   const exitWith = async (fn: () => Promise<number>): Promise<void> => {
     try {
@@ -81,6 +245,9 @@ export function buildProgram(): Command {
       process.exit(err instanceof OrchestratorError ? err.exitCode : 70);
     }
   };
+
+  // --------------------------------------------------------------------------------------------- Run
+  program.commandsGroup(COMMAND_GROUPS.run);
 
   program
     .command('run')
@@ -102,14 +269,6 @@ export function buildProgram(): Command {
     .option('--activity', 'print agent activity lines in line-output mode')
     .option('-v, --verbose', 'verbose output')
     .action((workflow: string | undefined, opts) => exitWith(() => runCommand(workflow, opts)));
-
-  program
-    .command('validate')
-    .description('Validate a workflow and print its execution plan')
-    .argument('[workflow]', `path to the workflow YAML (default: ${DEFAULT_WORKFLOW_FILES.join(', ')} in this directory)`)
-    .option('--repository <dir>', 'override the repository root')
-    .option('--json', 'machine-readable output')
-    .action((workflow: string | undefined, opts) => exitWith(() => validateCommand(workflow, opts)));
 
   program
     .command('resume')
@@ -157,6 +316,17 @@ export function buildProgram(): Command {
     .action((run: string | undefined, opts) => exitWith(() => stopCommand(run, opts)));
 
   program
+    .command('validate')
+    .description('Validate a workflow and print its execution plan')
+    .argument('[workflow]', `path to the workflow YAML (default: ${DEFAULT_WORKFLOW_FILES.join(', ')} in this directory)`)
+    .option('--repository <dir>', 'override the repository root')
+    .option('--json', 'machine-readable output')
+    .action((workflow: string | undefined, opts) => exitWith(() => validateCommand(workflow, opts)));
+
+  // ----------------------------------------------------------------------------------------- Inspect
+  program.commandsGroup(COMMAND_GROUPS.inspect);
+
+  program
     .command('status')
     .description('Show a run and its tasks')
     .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
@@ -201,14 +371,6 @@ export function buildProgram(): Command {
     .action((refs: string[] | undefined, opts) => exitWith(() => peekCommand(refs ?? [], opts)));
 
   program
-    .command('task')
-    .description('Show everything recorded about one task')
-    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
-    .option('--json', 'machine-readable output')
-    .option('--repository <dir>', 'repository containing .orchestrator')
-    .action((refs: string[] | undefined, opts) => exitWith(() => taskCommand(refs ?? [], opts)));
-
-  program
     .command('diff')
     .description('Show what a task changed')
     .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
@@ -231,6 +393,65 @@ export function buildProgram(): Command {
     .option('--repository <dir>', 'repository containing .orchestrator')
     .action((run: string | undefined, opts) => exitWith(() => reportCommand(run, opts)));
 
+  // ----------------------------------------------------------------------------------- Task controls
+  program.commandsGroup(COMMAND_GROUPS.task);
+
+  // `cao task <refs>` has always meant "show me this task", and it still does: `show` is the default
+  // subcommand [D6]. A literal subcommand name wins, so a task that happens to be called `show` or `stop`
+  // is reached through `cao task show <name>` - which the help below says in as many words.
+  const task = program
+    .command('task')
+    .description('Show one task, or steer it: show (default) | stop | restart')
+    .addHelpText(
+      'after',
+      [
+        '',
+        'A literal subcommand name wins: "cao task stop" stops a task, and a task actually named "stop"',
+        'is reached with "cao task show stop". Everything else is the task reference itself, so',
+        '"cao task review" and "cao task 2026-09-04-002 review" keep working.',
+        '',
+        'stop and restart reach the orchestrator that owns the run: in this process when it owns it,',
+        'otherwise through a request file that process answers. With no owner they are a usage error',
+        'naming "cao resume".',
+      ].join('\n'),
+    );
+
+  task
+    .command('show', { isDefault: true })
+    .description('Everything recorded about one task (the default)')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--json', 'machine-readable output')
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskCommand(refs ?? [], opts)));
+
+  task
+    .command('stop')
+    .description('Cancel the attempt a task is running; the task ends cancelled')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('stop', refs ?? [], opts)));
+
+  task
+    .command('restart')
+    .description('Run a finished, unsuccessful task again in the run that owns it')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('restart', refs ?? [], opts)));
+
+  // ------------------------------------------------------------------------------------ Diagnostics
+  program.commandsGroup(COMMAND_GROUPS.diagnostics);
+
+  program
+    .command('doctor [config]')
+    .description('Check this machine: Node, git, the agent CLIs, and what past runs left behind')
+    .option('--repository <dir>', 'repository to check (default: launch directory / git root)')
+    .option('--json', 'machine-readable output')
+    .option('--probe', 'also start each agent mode for real (a small model call and up to a minute per mode)')
+    .option('--no-probe', 'deprecated: the probes are off unless --probe is given; accepted and ignored')
+    .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
+
   program
     .command('clean')
     .description('Remove the worktrees and branches a run created')
@@ -242,14 +463,6 @@ export function buildProgram(): Command {
     .action((run: string | undefined, opts) => exitWith(() => cleanCommand(run, opts)));
 
   program
-    .command('doctor [config]')
-    .description('Check this machine: Node, git, the agent CLIs, and what past runs left behind')
-    .option('--repository <dir>', 'repository to check (default: launch directory / git root)')
-    .option('--json', 'machine-readable output')
-    .option('--no-probe', 'skip the live agent probes (they start each agent mode and spend a small model call)')
-    .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
-
-  program
     .command('emit')
     .description('Turn announcing runs to the desktop app on or off, and show what it is doing')
     .argument('[action]', `${EMIT_ACTIONS.join('|')} (default: status)`)
@@ -258,29 +471,9 @@ export function buildProgram(): Command {
     .option('--json', 'machine-readable output')
     .action((action: string | undefined, opts) => exitWith(() => emitCommand(action, opts)));
 
-  // A short description says what a command is for; these say what to type, for the arguments that are not
-  // obvious from the usage line alone (which run, which task, what happens when you name neither).
-  const EXAMPLES: Record<string, string[]> = {
-    run: ['cao run                                 # workflow.yaml in this directory', 'cao run workflows/ship.yaml --dry-run   # the plan, no agents', 'cao run --task implement-api --no-tui'],
-    validate: ['cao validate', 'cao validate workflows/ship.yaml --json'],
-    resume: ['cao resume                              # the latest run, retrying failures', 'cao resume 2026-09-04-002 --task review', 'cao resume --approve deploy'],
-    ui: ['cao ui                                  # pick a recent run, or start a workflow file', 'cao ui 002                              # open that run (observer if another terminal owns it)', 'cao ui --json                           # the same list, for a script'],
-    stop: ['cao stop                                # ask the latest run to stop', 'cao stop 002 --wait 0                   # ask and return immediately'],
-    status: ['cao status', 'cao status 002                          # run ids match by prefix', 'cao status --json'],
-    list: ['cao list', 'cao list --limit 5'],
-    logs: ['cao logs review                         # the latest run, task "review"', 'cao logs 2026-09-04-002 review -a 2', 'cao logs --follow                       # pick a task and switch between them', 'cao logs review --json > review.jsonl'],
-    peek: ['cao peek implement-api', 'cao peek implement-api --follow'],
-    task: ['cao task review', 'cao task 002 review --json'],
-    diff: ['cao diff                                # every task, in execution order', 'cao diff review --stat', 'cao diff review --file src/app.ts'],
-    report: ['cao report', 'cao report 002 --out report.md'],
-    clean: ['cao clean                               # worktrees of the latest run', 'cao clean 002 --all                     # worktrees and branches'],
-    doctor: ['cao doctor', 'cao doctor --json                       # paste this into a bug report', 'cao doctor --no-probe                   # no agent is started, nothing is spent'],
-    emit: ['cao emit status                         # the setting, where it came from, and who is listening', 'cao emit enable                         # announce every run this user starts, from now on', 'cao run --emit                          # announce this one run only'],
-  };
-  for (const command of program.commands) {
-    const lines = EXAMPLES[command.name()];
-    if (lines) command.addHelpText('after', ['', 'Examples:', ...lines.map((l) => `  ${l}`), ''].join('\n'));
-  }
+  // A short description says what a command is for; the examples say what to type, for the arguments that
+  // are not obvious from the usage line alone (which run, which task, what happens when you name neither).
+  attachCommandHelp(program);
 
   // What a script needs to know and could otherwise only find in the README.
   program.addHelpText(
@@ -299,6 +492,9 @@ export function buildProgram(): Command {
       '  CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)',
       '  CAO_DEBUG            print stack traces when a command fails',
       '  CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)',
+      '  CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)',
+      `  CAO_THEME            workspace theme: ${THEME_NAMES.join('|')} (also --theme)`,
+      '  CAO_REDUCED_MOTION   1 stops the spinner and the activity pulse',
       '  NO_COLOR/FORCE_COLOR disable or force ANSI colour (also --color)',
       '  COLUMNS              width to lay tables out in when there is no terminal to ask',
       '',
