@@ -596,8 +596,9 @@ attempts, diffs and the report stay where they were. Under it are the things you
 a `cao resume` run from inside the workspace:
 
 `S` resume the run · `R` re-run the selected task · `>` resume from the selected task and everything
-downstream · `A` answer a task that asked a question, and resume with the answer · `A`/`X` approve or
-reject a paused approval gate · `Q` leave, returning the latest run's exit code.
+downstream · `A` answer a task that asked a question, and resume with the answer (`Ctrl+J` for a newline,
+`Enter` to send) · `A`/`X` approve or reject a paused approval gate · `Q` leave, returning the latest run's
+exit code.
 
 Each action validates first and takes the run lock again. Between them the workspace holds no lock, so
 another terminal may take the run; if one has, the workspace follows it instead: the badge says
@@ -628,7 +629,8 @@ has ended `Q` leaves at once, with that run's exit code; watching another termin
 the window. See [above](#the-workspace-stays-open-when-the-run-ends) for the ended-run actions (`S` `R`
 `>` `A` `X`) and the observer's controls (`S` `K` `R`).
 
-`Ctrl+C` is the only chord the workspace itself reads; every other `Ctrl`+key is left to the terminal.
+`Ctrl+C`, `Ctrl+P`, and `Ctrl+J` for a newline in the answer field are the chords the workspace reads;
+the transcript viewer adds `Ctrl+A` to scroll up. Every other `Ctrl`+key is left to the terminal.
 Below 100 columns the sidebar collapses to a one-line task strip, and the footer gives up its freshness
 chip first, then its quota chip, then the focused panel's own keys — `? help` and the way out survive
 last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than

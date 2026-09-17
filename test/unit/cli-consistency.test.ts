@@ -16,6 +16,7 @@ import { buildWorkflow, makeRun, tmpDir } from '../helpers/index.js';
 import { paint, stripAnsi } from '../../src/cli/color.js';
 import { Command, CommanderError } from 'commander';
 import { buildProgram, COMMAND_GROUPS } from '../../src/cli/program.js';
+import { globalKeys } from '../../src/tui/workspace/keys.js';
 
 const NL = String.fromCharCode(10);
 const lines = (text: string): string[] => text.split(NL).map(stripAnsi);
@@ -583,6 +584,30 @@ describe('the examples all parse', () => {
       for (const example of examples) {
         expect(() => parseOk(argvOf(example)), `${file}: ${example}`).not.toThrow();
       }
+    }
+  });
+});
+
+/**
+ * What the documentation promises about the keyboard (§3.2).
+ *
+ * The chord sentence is the kind of claim that rots quietly: it was written when `Ctrl+C` really was the
+ * only one the workspace read, and it stayed on the page through `Ctrl+P` and the answer field's `Ctrl+J`,
+ * contradicting the same README four lines above it. Both documents are checked against the table the
+ * workspace itself answers from, so a chord added there is a failing test until the prose catches up.
+ */
+describe('the chords the docs promise', () => {
+  const DOCS = ['README.md', 'docs/capabilities.md'];
+  /** The two no table holds: the answer composer's newline (`app.tsx`) and the viewer's page up (`viewer.tsx`). */
+  const INLINE_CHORDS = ['Ctrl+J', 'Ctrl+A'];
+
+  it('name every chord the workspace reads, and call none of them the only one', async () => {
+    const chords = [...new Set([...globalKeys('executing').map((k) => k.keys), ...INLINE_CHORDS])].filter((k) => k.startsWith('Ctrl+'));
+    expect(chords).toEqual(expect.arrayContaining(['Ctrl+C', 'Ctrl+P', 'Ctrl+J', 'Ctrl+A']));
+    for (const file of DOCS) {
+      const text = await fs.readFile(path.join(process.cwd(), file), 'utf8');
+      for (const chord of chords) expect(text, `${file} does not mention ${chord}`).toContain(chord);
+      expect(text.match(/only chords?/g) ?? [], `${file} calls a chord the only one`).toEqual([]);
     }
   });
 });
