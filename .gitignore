@@ -7,9 +7,11 @@ dist/
 !.env.example
 coverage/
 
-# `.cao-files/` is tracked on purpose: the workflows and task scopes under it are how this
-# repository's own improvement runs are defined, and they are reviewed like any other source.
-# Run state never lands there — that is `.orchestrator/`, ignored above.
+# `.cao-files/` is local working material for running cao on itself (workflows, task scopes,
+# baseline captures). It is never committed: cao writes completion markers into the workflow
+# YAML mid-run and tasks commit their own work, so a tracked copy dirties the tree and breaks
+# the run. Run state never lands there either — that is `.orchestrator/`, ignored above.
+.cao-files/
 
 # `.agents/` (the cao skills for Claude Code and Codex) and `scripts/install-cao-skills.ps1`
 # (the installer that copies them into a user's agent directories) are tracked as well. They

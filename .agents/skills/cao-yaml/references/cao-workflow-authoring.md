@@ -2,7 +2,7 @@
 
 ## Artifact contract
 
-Write the workflow below the target project's `.cao-files/` directory. The file is a reviewable project artifact: do not add it to `.gitignore` and do not overwrite an existing file. Run validation from the target project's root because `repository: .` is resolved from CAO's launch directory, not from the YAML file's directory.
+Write the workflow below the target project's `.cao-files/` directory. Respect the target project's own version-control choice for that directory: if `.cao-files/` is listed in its `.gitignore`, leave it ignored and never stage anything under it; do not add or remove ignore rules for it, and do not overwrite an existing file. Run validation from the target project's root because `repository: .` is resolved from CAO's launch directory, not from the YAML file's directory.
 
 Use a filename of `YYMMDD--<stage>--<slug>.yaml`, where stage is one of `workflow`, `wayfinder`, `spec`, `tickets`, or `implement`. If it exists, append a two-digit sequence before `.yaml`.
 
