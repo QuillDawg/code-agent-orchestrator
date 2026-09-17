@@ -1,0 +1,62 @@
+# CAO v2 beta: decision record
+
+**Date:** 2026-09-17
+**Status:** decided. Items marked *(owner)* were answered by the project owner in the spec review; items marked *(recommended, accepted)* are the reviewer's recommendation, which the owner delegated in bulk ("for all questions go with your recommendation").
+**Companion:** [cao-v2-beta-spec.md](cao-v2-beta-spec.md) is the spec these decisions shape. This file is the short list; the spec carries the detail.
+
+## Release shape
+
+| # | Decision | Choice |
+|---|---|---|
+| D1 *(owner)* | Are phases releases or stages? | **Internal stages.** Every stage lands on `main` green and has its own exit criteria; one release ships at the end. |
+| D2 *(owner)* | Version | **`2.0.0-beta.1`** on the `beta` npm tag. Protocol package keeps its own semver; `PROTOCOL_VERSION` stays `1`. |
+| D3 *(owner)* | Which controls cross the process boundary | **Inbox for non-permission controls.** `stop`, `kill`, `restart`, `edit`, `prompt` travel through `requests/` with acknowledgments from any process. `approve` and `answer` stay in-process until presence gating ships with the desktop work. A workspace on a run it does not own is an **observer**. |
+| D4 *(owner)* | Alternate screen | **On by default.** Off with `--no-alt-screen`, `CAO_ALT_SCREEN=0`, or the user-config key. On quit the normal buffer is restored and the run summary printed there. |
+| D5 *(owner)* | Minimise to plain output | **Kept as the third quit answer** (stay / stop and quit / continue in plain output). Plain mode behaves as today, `D` or Enter reopens, auto-reopen on a pending interaction. On a finished run `Q` exits at once with the run's exit code. |
+| D6 *(owner)* | CLI shape for task controls | **Nested:** `cao task show\|edit\|prompt\|stop\|restart [run] <task>`, `show` is the default subcommand so `cao task <refs>` keeps working. A literal subcommand name wins; a task called `edit` is reached with `cao task show edit`. `cao stop [run]` stays run-level. |
+
+## Stack *(recommended, accepted)*
+
+| # | Decision | Choice |
+|---|---|---|
+| D7 | Ink / React | **Ink `^7.1.1` (never below 7.0.6, the Windows fix) and React `^19.3`.** Ink 6 is superseded; Ink 7 needs Node 22 and React 19.2+, and its next release needs 19.3. Audit `key.delete` → `key.backspace` and `key.meta` on Escape. |
+| D8 | `@inkjs/ui` | **Not a dependency.** Idle since 2024-05, no multiline input, uncontrolled `TextInput`. Spinner, badge, progress bar and status line are written in-house. |
+| D9 | Lists | **Hand-rolled windowing** (`items.slice(start, start + visibleRows)`) keyed to `useWindowSize()`. `ink-scroll-list` renders every child and is dropped. Revisit Ink's `contentOffsetY` when it ships. |
+| D10 | Glyphs and durations | **Extend the existing `src/util/glyphs.ts` and `src/util/duration.ts`**; `figures` and `pretty-ms` are not added. One glyph table with `CAO_ASCII` fallback stays the single source. |
+| D11 | Links | **`ink-link`** (maintained, OSC 8 on Windows Terminal, text fallback elsewhere). |
+| D12 | Fuzzy search | **`fuzzysort` 4** for the command palette and list filters. |
+| D13 | Presentation state | **`zustand` 5**, one vanilla store created by the run controller and consumed by the Ink tree through `useStore`. Persisted run state stays authoritative. |
+| D14 | Multiline composer | **In-house controlled buffer** (`string[]` lines, code-point cursor, `usePaste`). No ecosystem package qualifies. **Open in `$VISUAL`/`$EDITOR`** through Ink 7.1's `suspendTerminal()` is the escape hatch. |
+| D15 | Key chords | Enter submits. **Newline is Ctrl+J or backslash+Enter**; Shift+Enter works only where the kitty protocol exists (`kittyKeyboard: {mode: 'auto'}`) and is documented as a bonus, never required. Ctrl+P palette, Tab / Shift+Tab focus, `/` search, `?` help, Esc back, `Q` quit. |
+| D16 | Paste | Bracketed paste via `usePaste`, lossless where ConPTY delivers the markers. A paste over 20 lines is shown collapsed as `[pasted N lines]` in the composer while the buffer keeps every byte. The `$EDITOR` route is the documented fallback for very large text. |
+| D17 | Tests for the full-screen tree | **In-house render harness** wrapping Ink's `render({stdout, stdin})` with configurable `columns`/`rows`; `ink-testing-library` stays for existing component tests. |
+| D18 | Commander | Upgrade to **commander `^15`** (15.0.0, 2026-05-29). `.commandsGroup()`/`.optionsGroup()` exist since 14.0.0; `.showSuggestionAfterError()` since 8.2.0. Verified against the commander changelog. |
+
+## Behaviour *(recommended, accepted)*
+
+| # | Decision | Choice |
+|---|---|---|
+| D19 | What the editor edits | **The resolved task prompt** (defaults, template and `foreach` already applied), never the YAML template. Context injection stays automatic and is shown read-only beneath the editable prompt. |
+| D20 | Editable fields | `prompt`, `agent`, `model`, `effort`, `timeout`, `retries` (`retry.attempts`), and **budget = `claude.maxBudgetUsd`, Claude only**. On a Codex task the budget field reads "not supported by Codex" and validation rejects a value. No new YAML key. |
+| D21 | Where edits live | `TaskRunState.revisions: TaskRevision[]` in `workflow.json` (additive, `schemaVersion` stays 1) plus a `task.edited` summary event in the run log. Each attempt records the `revision` it ran with. `cao task show` prints the revision history. Source YAML is never touched; the existing `state: completed` marker written by `WorkflowCompletionStore` is the one documented exception. |
+| D22 | Stopping one task | New scheduler command `cancelTask(taskId)`: aborts the in-flight attempt (open interactions settled with a deny first), attempt outcome `cancelled`, task state `cancelled`. `restart` returns it to `pending`. Edit of a running or waiting task = validate → cancel → apply → restart, one controller command. |
+| D23 | Steering | Available only where a live channel exists: Claude with stdin open (ask mode) and Codex app-server (`turn/steer` with `expectedTurnId`). Claude deny mode and Codex exec offer **stop and continue** instead. No argv changes to make headless workers steerable. |
+| D24 | Acknowledgment of a prompt | Claude: pass `--replay-user-messages` when `claude --help` advertises it and mark **acknowledged** when the CLI echoes the message; until then the state is **queued**. Codex app-server: **accepted** on the `turn/steer` result, **rejected** with the server's reason on error. A follow-up to a stopped task is **delivered** when its new attempt starts. |
+| D25 | Follow-ups | A follow-up to a failed, paused, cancelled or interrupted task creates a new attempt `triggeredBy: 'user_input'`, resuming the session where `retry.resumeSession` allows and the runner reported one; otherwise the fresh prompt carries the message under `# User Input`. The existing `--input` path becomes one caller of this. **Fresh session** is an explicit option, never a silent fallback. |
+| D26 | Prompt persistence | `attempt.prompts: PromptDelivery[]` (id, time, source, mode, transport, state, reason, redacted text) plus a `user` transcript entry in the attempt's `events.jsonl`. The run-level log records only the summary, never the text. |
+| D27 | Successful tasks | Immutable: no edit, no prompt. The composer is disabled with a hint to add a task or start a new run. Re-running one with `--task` stays as it is today (a new attempt with the same configuration). |
+| D28 | Codex quota | One `codex app-server --stdio` **quota process per workspace session**, never per attempt: `initialize`, `account/read`, then `account/rateLimits/read` on entry and every five minutes, and `account/rateLimits/updated` notifications in between (these arrive only during turns, so attempt processes forward theirs too). Non-billable and thread-free. **Refused by the server for API-key auth**, so the footer has an explicit `authRequired` state ("sign in with ChatGPT for quotas"). Shown per window as the provider labels them (`5h 42% · resets 14:05`, `7d 61%`), with plan type. |
+| D29 | Claude quota | **Unavailable, with the hint "see /usage in Claude Code".** No documented programmatic read exists, and calling the undocumented OAuth usage endpoint would break `cao`'s "no network calls of its own" promise. Not even behind a flag in this beta. |
+| D30 | "Fable" in the footer | Dropped as a concept. The footer shows the windows a provider reports under the provider's own labels; `cao` invents no category. |
+| D31 | Quota timers | Start only when the workspace mounts, `unref`'d, stopped on unmount. Headless never starts them. |
+| D32 | Doctor | `--probe` opts in to live probes; `--no-probe` is accepted as a no-op alias with a deprecation note in help. Only the Codex exec probe was ever billable; the others stay non-billable by construction. |
+| D33 | Diagnostics bundle | `cao diagnostics [run] --out <file>` writes **one JSON file**: doctor facts, redacted `workflow.json`, run `events.jsonl`, `live.json`, `orchestrator.log`, every `attempt.json`, stderr tails. `--include transcripts,prompts,diffs` adds the excluded content. No archive format, no network. |
+| D34 | `--debug` | `run` and `resume` gain `--debug` (same effect as `CAO_DEBUG=1`): debug-level logger to `orchestrator.log`, stack traces on errors, and the Diagnostics panel in the workspace. |
+| D35 | Theme | One `theme.ts` token table (violet/cyan accents, status colours, borders). `--theme cyberpunk\|mono`, `CAO_THEME`, `NO_COLOR` → mono, `CAO_ASCII` → ASCII glyphs, `CAO_REDUCED_MOTION=1` or Ink's screen-reader flag → no animation. Colour downsampled by Ink for 256-colour terminals. The dashboard's hard-coded `color = true` goes away. |
+| D36 | Retry from the workspace | After a run ends: **Resume run** (= `cao resume`), **Re-run task** (= `--task`), **Resume from task** (= `--from`), **Answer and resume** (`needs_input`, through the composer), **Approve / Reject** (paused gates). Each re-acquires the lock and builds a new runtime through the resume path. If another process took the lock meanwhile the workspace flips to observer with a banner. |
+| D37 | Observer mode | Reads `workflow.json`, `live.json` and the event tail; transcripts through the existing follow tailer; sends stop/edit/prompt through the inbox and shows their acks; pending approvals and questions are shown read-only with "answer in the owning terminal (pid N)". Takes no lock. |
+| D38 | Inbox mechanics | `requests/<ULID>-<kind>.json`, `protocol: 1` first, `expectedAttempt`/`expectedRevision` for staleness, processed in ULID order by the owning scheduler, acknowledged in `requests/acks/<ULID>.json` with `accepted\|rejected` and a reason, `rejected/` for unreadable files. `stop.json` keeps working and is translated into a `stop` request internally. Duplicate ULIDs are ignored after the first. |
+| D39 | Protocol additions | `TaskRevision`, `PromptDelivery`, `ControlAck`, `QuotaSnapshot`, `edit` and `prompt` capability tokens. Protocol package minor bump; wire major unchanged. |
+| D40 | Terminals | Windows Terminal (any shell inside it) is the primary Windows target. conhost and standalone mintty are best-effort with `--no-alt-screen` and `CAO_ASCII=1` documented. |
+| D41 | Release gate | typecheck, lint, `npm test`, build, `npm pack` smoke (`cao --help`, `cao doctor --json` without probes, `cao ui` on a fixture run against the fake agents), and `npm run test:agents` on a machine with both real CLIs. |
+| D42 | Stage tooling | One CAO workflow per stage under `.cao-files/v2/`, each with scope files and the baseline → feature → iterate → review → fix → gate shape already used for the hardening pass. `.cao-files/` is local and git-ignored; nothing under it is ever committed. |
