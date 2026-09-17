@@ -13,8 +13,9 @@ import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock } from '../../util/duration.js';
 import { renderMarkdown } from '../markdown.js';
-import { endedKeys, GLOBAL_KEYS, PROMPT_KEYS, QUIT_ANSWERS, VIEWER_KEYS, panelHelp, type KeyHelp } from './keys.js';
+import { endedKeys, globalKeys, PROMPT_KEYS, QUIT_ANSWERS, VIEWER_KEYS, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
+import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
 import { TAB_LABEL, type ControlRecord, type FocusRegion, type WorkspaceTab } from '../store.js';
 import type { Theme, ThemeToken } from '../theme.js';
@@ -72,7 +73,7 @@ export interface DiagnosticsPanelProps {
  * newest row is at the bottom, so the panel reads as the log it is.
  */
 export function DiagnosticsPanel({ controls, rows, columns, theme }: DiagnosticsPanelProps): React.JSX.Element {
-  const notes = PLACEHOLDER_TEXT.diagnostics ?? [];
+  const notes = wrapLines(PLACEHOLDER_TEXT.diagnostics ?? [], columns);
   // The history first, the stage-3 note with whatever is left: a row of it is worth more than a row of a
   // sentence that says the same thing on every frame.
   const historyRows = Math.max(0, Math.min(controls.length + 1, rows - 2));
@@ -102,6 +103,17 @@ export function DiagnosticsPanel({ controls, rows, columns, theme }: Diagnostics
   );
 }
 
+/**
+ * Paragraphs to lines that fit `columns`.
+ *
+ * The placeholders and the Diagnostics note are prose, and prose that is truncated has lost the half of the
+ * sentence that says what to do instead — "Until then: F follows the selected task, and cao task <id> shows
+ * everything record…" was the whole answer the panel existed to give.
+ */
+export function wrapLines(paragraphs: readonly string[], columns: number): string[] {
+  return paragraphs.flatMap((line) => (line.trim() === '' ? [''] : wrapPlain(line, Math.max(20, columns))));
+}
+
 export interface PlaceholderProps {
   tab: WorkspaceTab;
   rows: number;
@@ -110,7 +122,7 @@ export interface PlaceholderProps {
 }
 
 export function Placeholder({ tab, rows, columns, theme }: PlaceholderProps): React.JSX.Element {
-  const lines = PLACEHOLDER_TEXT[tab] ?? [`The ${TAB_LABEL[tab]} panel is not filled in yet.`];
+  const lines = wrapLines(PLACEHOLDER_TEXT[tab] ?? [`The ${TAB_LABEL[tab]} panel is not filled in yet.`], columns);
   return (
     <Box flexDirection="column" width={columns}>
       <Text bold>{TAB_LABEL[tab]}</Text>
@@ -201,10 +213,14 @@ export interface PaletteProps {
 }
 
 export function Palette({ entries, query, cursor, rows, columns, theme }: PaletteProps): React.JSX.Element {
-  const slice = windowOf(entries, cursor, Math.max(1, rows - 3), { anchor: 0 });
+  // Two rows of border, the query and the key line: what is left is entries. Without the explicit height
+  // Yoga shrank the box to the rows it had and took the shrink out of the first child, so at 80x24 the
+  // palette drew its matches with no sign of what had been typed to find them.
+  const slice = windowOf(entries, cursor, Math.max(1, rows - 4), { anchor: 0 });
   const width = Math.max(20, Math.min(columns - 2, 72));
+  const height = Math.min(rows, Math.max(4, slice.items.length + 4));
   return (
-    <Box flexDirection="column" width={width} borderStyle="round" borderColor={theme.ink('border')}>
+    <Box flexDirection="column" width={width} height={height} flexShrink={0} borderStyle="round" borderColor={theme.ink('border')}>
       <Text wrap="truncate-end">
         {theme.paint('> ', 'accent')}
         {query}
@@ -238,29 +254,47 @@ export interface HelpPanelProps {
   ended?: EndedAction[];
   /** The controls this window may send to the process that owns the run (§2.1, [D37]). */
   observer?: ObserverAction[];
+  /** What the workspace is doing, which decides what "Anywhere" says about Q and Ctrl+C. */
+  mode?: KeyMode;
 }
 
-/** The help sections for the focused panel, most relevant first. */
-export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[], observer?: ObserverAction[]): Array<{ title: string; keys: KeyHelp[] }> {
-  const panel = panelHelp(focus, tab);
+/**
+ * The help sections for the focused panel, most relevant first.
+ *
+ * `mode` decides what "Anywhere" says about `Q` and `Ctrl+C`, and the keys the lead sections have claimed
+ * are taken out of the panel's own list — so every row of this panel is true of the frame behind it, which
+ * is the only thing `?` is for.
+ */
+export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[], observer?: ObserverAction[], mode: KeyMode = 'executing'): Array<{ title: string; keys: KeyHelp[] }> {
+  const taken = new Set([...(observer ?? []), ...(ended ?? [])].map((action) => action.key.toUpperCase()));
+  if (mode === 'observing') taken.add('R');
+  const panel = panelHelp(focus, tab, taken);
   return [
     ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} — the panel with the keys`, keys: panel.keys },
-    { title: 'Anywhere', keys: GLOBAL_KEYS },
+    { title: 'Anywhere', keys: globalKeys(mode) },
     { title: 'Transcript viewer (F)', keys: VIEWER_KEYS },
     { title: 'When a worker needs you', keys: PROMPT_KEYS },
   ];
 }
 
-export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended, observer }: HelpPanelProps): React.JSX.Element {
-  const sections = helpSections(focus, tab, ended, observer);
+export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended, observer, mode }: HelpPanelProps): React.JSX.Element {
+  const sections = helpSections(focus, tab, ended, observer, mode);
   const keyWidth = Math.min(22, Math.max(...sections.flatMap((s) => s.keys.map((k) => k.keys.length))));
   const lines: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
+  // Wrapped under the key column rather than truncated. This is the panel an operator opens *because* a key
+  // surprised them, and at 80 columns a truncated row ended in the half of the sentence that mattered:
+  // "Q  quit: while a run is going it asks first; on an ended run it le…".
+  const whatWidth = Math.max(16, columns - keyWidth - 4);
   for (const section of sections) {
     if (lines.length) lines.push({ text: ' ' });
     lines.push({ text: section.title, bold: true });
-    for (const key of section.keys) lines.push({ text: `  ${key.keys.padEnd(keyWidth)}  ${key.what}`, dim: false });
+    for (const key of section.keys) {
+      const [first, ...rest] = wrapPlain(key.what, whatWidth);
+      lines.push({ text: `  ${key.keys.padEnd(keyWidth)}  ${first ?? ''}`, dim: false });
+      for (const line of rest) lines.push({ text: `  ${' '.repeat(keyWidth)}  ${line}`, dim: true });
+    }
   }
   const slice = windowOf(lines, cursor, Math.max(1, rows - 1), { anchor: cursor });
   return (
@@ -290,18 +324,26 @@ export interface QuitPromptProps {
  * finish while I do something else".
  */
 export function QuitPrompt({ cursor, rows, columns, theme }: QuitPromptProps): React.JSX.Element {
-  const width = Math.max(20, Math.min(columns - 2, 72));
+  // As wide as the panel allows, not 72: this is the one prompt whose whole job is the sentence explaining
+  // each answer, and at 120 columns the box was capped narrow enough to cut "…with the run's exit code" off
+  // the answer it describes. What still does not fit drops onto its own indented line rather than being cut.
+  const width = Math.max(20, columns - 2);
+  const inline = QUIT_ANSWERS.every((answer) => 4 + answer.key.length + answer.label.length + answer.what.length <= width - 2);
+  const height = Math.min(rows, QUIT_ANSWERS.length * (inline ? 1 : 2) + 3);
   return (
-    <Box flexDirection="column" width={width} height={Math.min(rows, QUIT_ANSWERS.length + 3)} borderStyle="round" borderColor={theme.ink('border')}>
+    <Box flexDirection="column" width={width} height={height} flexShrink={0} borderStyle="round" borderColor={theme.ink('border')}>
       <Text bold wrap="truncate-end">
         The run is still going. What now?
       </Text>
       {QUIT_ANSWERS.map((answer, i) => (
-        <Text key={answer.kind} wrap="truncate-end">
-          {i === cursor ? theme.paint(`${glyph('cursor')} `, 'accent') : '  '}
-          {theme.paint(answer.key, 'key')} {i === cursor ? theme.paint(answer.label, 'selection') : answer.label}
-          {theme.paint(`  ${answer.what}`, 'muted')}
-        </Text>
+        <Box key={answer.kind} flexDirection="column">
+          <Text wrap="truncate-end">
+            {i === cursor ? theme.paint(`${glyph('cursor')} `, 'accent') : '  '}
+            {theme.paint(answer.key, 'key')} {i === cursor ? theme.paint(answer.label, 'selection') : answer.label}
+            {inline ? theme.paint(`  ${answer.what}`, 'muted') : ''}
+          </Text>
+          {inline ? null : <Text wrap="truncate-end">{theme.paint(`      ${answer.what}`, 'muted')}</Text>}
+        </Box>
       ))}
     </Box>
   );

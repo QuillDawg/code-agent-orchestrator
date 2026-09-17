@@ -2,9 +2,9 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
 [██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
 [Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
 Tasks #/#                            ✗ implement-renderer failed  after # attempt
-▶ ✓ implement-pars… claude|opus-# █    exit code #
-  ✗ implement-rend… codex|gpt-#-…!█    R re-run    F open logs    C open diff
-  ○ review-and-mer… claude        █
+▶ ✓ implement-par… claude|opus-#  █    exit code #
+  ✗ implement-ren… codex|gpt-#-… !█    R re-run    F open logs    C open diff
+  ○ review-and-me… claude         █
                                      ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
                                        ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit co…
                                        ○ review-and-merge    Waiting                claude  │ waiting for: implement-re…
@@ -37,4 +37,4 @@ Tasks #/#                            ✗ implement-renderer failed  after # atte
 
 
 
-↑↓ select   Enter open   F / L follow   R restart   / search   Ctrl+P palette   ? help …  quota: stage #  updated #s ago
+↑↓ select   Enter open   F / L follow   R restart   / search   Ctrl+P palette   ? help   Q quit   quota: stage #

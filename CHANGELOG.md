@@ -349,6 +349,47 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **An ended run offers the actions for the task it leads with.** The Overview led with the failed task and
+  then listed the actions for whatever the cursor happened to be on, so a run that failed on its third task
+  said "migrate-runner failed" and offered "R Re-run scaffold-config" underneath it. When a run ends the
+  selection now moves to the task the outcome is about — the first failure, or the first task waiting for a
+  person — so the lead block, the table, the detail and the actions are all about one task. A run that
+  stopped without failing also names the task it is waiting on and what it asked, instead of only the run
+  state and an exit code.
+- **The header's clock stops when the run does.** Elapsed was `now - startedAt` whatever the run was doing,
+  so a workspace left open on a finished run counted upwards for as long as it was open — and disagreed
+  with the Overview's own outcome line, which has always used `endedAt`, on the same frame.
+- **The footer always says how to leave.** It was one string truncated to the terminal, and the cell it cut
+  first was the last one, which was `Q` — so on a 120-column terminal an ended run's footer never named the
+  key that leaves. The keys are now dropped whole, least important first (the freshness chip, the quota
+  chip, the panel's keys from the right, the palette chord), and `? help` and the way out are the last two
+  standing. `Q` is also described correctly per mode: it used to read `Q minimise` everywhere, which
+  stopped being true when `Q` gained its three answers.
+- **`?` describes each key once, and only keys that work.** In observer mode the help said both "Q closes
+  this window" and "Q quits: it asks first", and both "Ctrl+C asks the owner to stop" and "Ctrl+C stops the
+  run in this process"; on an ended run it offered `R` twice with two different meanings. The "Anywhere"
+  section is now written for the mode the workspace is in, and a key an ended run's actions or an observer's
+  controls have taken is no longer listed under the panel as well.
+- **An observer's `Q` closes the window instead of asking about workers it does not have.** `Q` opened the
+  stay · stop and quit · continue-in-plain prompt, all three of which are about the workers in *this*
+  process. `R` on a task the owner would not restart fell through to the local restart and was refused by
+  the read-only controller with a generic sentence; a window that is watching now says what a re-run needs
+  and sends nothing.
+- **Panels that are prose wrap instead of being cut.** The Session, Logs and Diagnostics placeholders and
+  every row of `?` were truncated at the panel edge, which ate the half of the sentence that says what to do
+  instead: "Until then: F follows the selected task, and cao task <id> shows everything record…".
+- **The command palette shows what has been typed into it.** The box had no height of its own, so when the
+  entry list was longer than the panel — an 80x24 terminal with a dozen tasks — Yoga shrank it and took the
+  rows out of the first child, and the query line simply was not drawn.
+- **The quit prompt shows what each answer means.** Its box was capped at 72 columns inside a panel that was
+  wider, so the sentence an operator reads to choose between the three answers ended in "…leave with the
+  run's exit c". It now uses the width it has and drops an explanation onto its own line when it has to.
+- **The sidebar's attention badge is not part of the model name.** The agent cell is padded to its full
+  width, so the `!` of a failed task ran into it and the row read `claude|sonnet!`; the column in front of
+  the badge is now reserved, and only when a task in the list is actually using it.
+- **The header names what a waiting task is waiting for.** A task with no interaction attached was labelled
+  `(approval)` whatever its state, which is the wrong word for the `needs_input` task that a run most often
+  stops on — the question is in its message, and that is what the line says now.
 - **`cao resume --approve <task>` no longer re-asks and pauses again.** The decision `--approve` and
   `--reject` record on the task was only honoured if an approval handler happened to read it back, so a
   headless resume re-gated the task and paused on the same question. The scheduler now applies a decision

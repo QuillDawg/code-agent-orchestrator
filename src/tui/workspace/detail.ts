@@ -132,6 +132,31 @@ export function detailLines(input: DetailInput): DetailLine[] {
   return out;
 }
 
+/** Every task a failure block would lead with, in workflow order. */
+function failedTasks(run: WorkflowRun): Array<{ task: ResolvedTask; state: TaskRunState }> {
+  return run.workflow.tasks
+    .map((t) => ({ task: t, state: run.tasks[t.id] }))
+    .filter((row): row is { task: ResolvedTask; state: TaskRunState } => row.state !== undefined && (row.state.state === 'failed' || row.state.state === 'blocked'));
+}
+
+/** The states a run stops in that are waiting for a person rather than for a worker. */
+const WAITING_ON_A_HUMAN = new Set(['needs_input', 'awaiting_approval', 'waiting']);
+
+/**
+ * The task the ended state is about: the first failure, or failing that the first thing waiting for a
+ * person (§2.4, §3.1).
+ *
+ * One function because three things have to agree on it — the lead block names it, the actions under that
+ * block are the actions *for* it, and the cursor is moved to it when the run ends. Before they agreed, a
+ * run that failed on task 3 led with "migrate-runner failed" and then offered "R Re-run scaffold-config",
+ * because the actions were built from wherever the cursor happened to be left.
+ */
+export function leadTaskId(run: WorkflowRun): string | undefined {
+  const failed = failedTasks(run)[0];
+  if (failed) return failed.task.id;
+  return run.workflow.tasks.find((t) => WAITING_ON_A_HUMAN.has(run.tasks[t.id]?.state ?? ''))?.id;
+}
+
 /**
  * The block the Overview leads with after a failure (§3.1): which task, what kind of failure, the latest
  * error line, how many attempts it took, and what can be done about it from here.
@@ -140,9 +165,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
  * an action offered before it exists is worse than one that is not offered yet.
  */
 export function failureLines(run: WorkflowRun, theme: Theme, opts: { actions?: string | false } = {}): DetailLine[] {
-  const failed = run.workflow.tasks
-    .map((t) => ({ task: t, state: run.tasks[t.id] }))
-    .filter((row): row is { task: ResolvedTask; state: TaskRunState } => row.state !== undefined && (row.state.state === 'failed' || row.state.state === 'blocked'));
+  const failed = failedTasks(run);
   if (failed.length === 0) return [];
   const lead = failed[0]!;
   const last = lead.state.attempts[lead.state.attempts.length - 1];
@@ -154,6 +177,25 @@ export function failureLines(run: WorkflowRun, theme: Theme, opts: { actions?: s
     ...(error ? [{ text: `  ${error}`, dim: true }] : []),
     ...(actions === false ? [] : [{ text: actions, dim: true }]),
     { text: ' ' },
+  ];
+}
+
+/**
+ * What the Overview leads with when a run stopped without anything failing (§2.4): the task that is waiting
+ * for a person, and what it asked for.
+ *
+ * A paused run used to lead with "Run paused   1/3 done   exit 3" and nothing else — the run state without
+ * the one fact that follows from it, which is *who* is waiting and *what for*. That is in the table further
+ * down, but the table is not where the eye goes and it is not what the actions underneath are about.
+ */
+function attentionLines(run: WorkflowRun, theme: Theme, columns: number): DetailLine[] {
+  const id = leadTaskId(run);
+  const state = id ? run.tasks[id] : undefined;
+  if (!id || !state) return [];
+  const asked = state.pendingInteraction ? `${state.pendingInteraction.kind}: ${sanitizeText(state.pendingInteraction.title)}` : firstLine(sanitizeText(state.message ?? ''));
+  return [
+    { text: theme.paint(`${stateGlyph(state.state)} ${id} ${STATE_LABEL[state.state].toLowerCase()}`, 'warning'), bold: true },
+    ...(asked ? [{ text: `  ${truncateVisible(asked, Math.max(10, columns - 2))}`, dim: true }] : []),
   ];
 }
 
@@ -177,8 +219,8 @@ export interface EndedBlock {
   columns: number;
 }
 
-/** Break `text` on spaces so it fits `width`; the observer banner is a sentence, not a list. */
-function wrapPlain(text: string, width: number): string[] {
+/** Break `text` on spaces so it fits `width`; a banner or a paragraph is a sentence, not a list. */
+export function wrapPlain(text: string, width: number): string[] {
   const out: string[] = [];
   let rest = text;
   while (rest.length > width) {
@@ -237,7 +279,8 @@ export function endedLines(run: WorkflowRun, theme: Theme, block: EndedBlock): D
     ...(run.exitCode !== undefined ? [`exit ${run.exitCode}`] : []),
   ];
   const lines: DetailLine[] = [{ text: parts.join('   '), bold: true }];
-  lines.push(...failureLines(run, theme, { actions: false }).slice(0, -1));
+  const failure = failureLines(run, theme, { actions: false }).slice(0, -1);
+  lines.push(...(failure.length ? failure : attentionLines(run, theme, block.columns)));
   if (block.banner) for (const line of wrapPlain(block.banner, Math.max(20, block.columns - 2))) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
   else for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
   lines.push({ text: ' ' });

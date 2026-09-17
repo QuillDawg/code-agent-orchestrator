@@ -21,4 +21,4 @@ PID:          ####   Session: sess-abc###
 
 Latest activity
   ##:## $ npm test
-↑↓ select   F / L follow   R restart   U usage   C changes   Ct…  quota: stage #
+↑↓ select   F / L follow   R restart   Ctrl+P palette   ? help   Q quit

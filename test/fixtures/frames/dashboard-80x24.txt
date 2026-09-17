@@ -21,4 +21,4 @@ PID:          ####   Session: sess-abc###
 
 Latest activity
   ##:## $ npm test
-↑↓ select   Enter open   F / L follow   R restart   / search   …  quota: stage #
+↑↓ select   Enter open   F / L follow   Ctrl+P palette   ? help   Q quit

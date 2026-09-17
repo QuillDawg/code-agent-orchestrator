@@ -19,6 +19,8 @@ export interface ObserverAction {
   /** The key that sends it, as it is printed. Compared case-insensitively. */
   key: string;
   label: string;
+  /** What the footer calls it, where the line is shared with the panel's keys and the global chords. */
+  short: string;
   kind: ObserverControlKind;
   taskId?: string;
 }
@@ -38,10 +40,10 @@ export function observerActions(run: WorkflowRun, selected: ResolvedTask | undef
   const has = (token: CapabilityToken): boolean => capabilities.includes(token);
   const actions: ObserverAction[] = [];
   const running = run.state === 'running';
-  if (has('stop') && running) actions.push({ key: 'S', label: 'Stop the run', kind: 'stop' });
-  if (has('kill') && running) actions.push({ key: 'K', label: 'Kill the run', kind: 'kill' });
+  if (has('stop') && running) actions.push({ key: 'S', label: 'Stop the run', short: 'stop the run', kind: 'stop' });
+  if (has('kill') && running) actions.push({ key: 'K', label: 'Kill the run', short: 'kill the run', kind: 'kill' });
   if (has('restart') && selected && RESTARTABLE.has(run.tasks[selected.id]?.state ?? '')) {
-    actions.push({ key: 'R', label: `Re-run ${selected.id}`, kind: 'restart', taskId: selected.id });
+    actions.push({ key: 'R', label: `Re-run ${selected.id}`, short: 're-run task', kind: 'restart', taskId: selected.id });
   }
   return actions;
 }
@@ -51,13 +53,14 @@ export function observerActionFor(actions: ObserverAction[], input: string): Obs
   return actions.find((a) => a.key.toLowerCase() === input.toLowerCase());
 }
 
-/** The observer's keys as help rows, for `?`. */
+/**
+ * The observer's keys as help rows, for `?`.
+ *
+ * `Ctrl+C` and `Q` are not here: `globalKeys('observing')` says what they do in this mode, and listing them
+ * twice in one help panel is what let the "Anywhere" section go on claiming the owner's meanings for both.
+ */
 export function observerKeys(actions: ObserverAction[]): KeyHelp[] {
-  return [
-    ...actions.map((action) => ({ keys: action.key, what: `${action.label} — sent to the owner as a request`, short: action.label })),
-    { keys: 'Ctrl+C', what: 'ask the owner to stop the run; again to kill it', short: 'stop' },
-    { keys: 'Q', what: 'close this window; the run carries on in the terminal that owns it', short: 'close' },
-  ];
+  return actions.map((action) => ({ keys: action.key, what: `${action.label} — sent to the owner as a request`, short: action.label }));
 }
 
 /** One task the owner is waiting on a human for, as this window may show it: read-only (§2.1). */

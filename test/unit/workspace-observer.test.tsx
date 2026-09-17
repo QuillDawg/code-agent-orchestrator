@@ -256,6 +256,83 @@ describe('the workspace while another process owns the run', () => {
     }
   });
 
+  it('never reaches the controller in this process with R, whatever the selection is', async () => {
+    // `restart` is advertised, but a task that has succeeded is not one the owner would take a request
+    // for, so `R` used to fall through to the local restart — and the panel and `?` went on offering it as
+    // "restart a failed, blocked, cancelled or skipped task", which is not what this window can do at all.
+    const run = liveRun({ 'implement-api': { state: 'success' } });
+    const submitted: unknown[] = [];
+    const { sent, surface } = surfaceDouble(['stop', 'kill', 'restart']);
+    const size = { columns: 110, rows: 32 };
+    const tree = renderTree(
+      <DashboardApp
+        run={run as never}
+        bus={{ onAny: () => () => undefined } as never}
+        controller={{ ...controllerStub, submit: (command: unknown) => { submitted.push(command); return Promise.resolve({ status: 'applied' }); } } as never}
+        shared={shared()}
+        finished
+        onMinimise={() => undefined}
+        onInterrupt={() => undefined}
+        onQuit={() => undefined}
+        role="observer"
+        banner="owned by pid 4242"
+        badge="observing · owner pid 4242"
+        observer={surface}
+      />,
+      size,
+    );
+    try {
+      await wait();
+      expect(tree.lastText()).not.toContain('R restart');
+      tree.write('r');
+      await wait();
+      expect(submitted, 'an observer submitted a command to this process').toEqual([]);
+      expect(sent, 'an observer sent a request the owner would refuse').toEqual([]);
+      expect(tree.lastText()).toContain('watching pid 4242');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('leaves at once on Q rather than asking the three questions about workers it does not have', async () => {
+    // `?` and the footer both say `Q` closes the window. The quit prompt [D5] is about the workers in
+    // *this* process, and an observer has none: "stop and quit" would stop nothing and "continue in plain
+    // output" has no output to continue.
+    const run = liveRun({ 'implement-api': { state: 'running' } });
+    const { surface } = surfaceDouble(['stop']);
+    const quits: number[] = [];
+    const size = { columns: 110, rows: 32 };
+    const tree = renderTree(
+      <DashboardApp
+        run={run as never}
+        bus={{ onAny: () => () => undefined } as never}
+        controller={controllerStub as never}
+        shared={shared()}
+        // Deliberately not `finished`: an observer that took over a window mid-session is still an observer.
+        finished={false}
+        onMinimise={() => undefined}
+        onInterrupt={() => undefined}
+        onQuit={() => quits.push(1)}
+        role="observer"
+        banner="owned by pid 4242"
+        badge="observing · owner pid 4242"
+        observer={surface}
+      />,
+      size,
+    );
+    try {
+      await wait();
+      tree.write('q');
+      await wait();
+      expect(quits).toEqual([1]);
+      expect(tree.lastText()).not.toContain('The run is still going. What now?');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
   it('says abandoned rather than observing once the owner has gone', async () => {
     const run = liveRun({ 'implement-api': { state: 'failed' } }, 'running');
     // What the session does on the flip: the role goes back to owner, the surface goes away, §2.4 returns.

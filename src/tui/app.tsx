@@ -42,7 +42,7 @@ import { ReviewView, type ReviewTaskInput } from './dashboard/review.js';
 import { taskFiles } from './dashboard/files.js';
 import { sanitizeText } from '../cli/color.js';
 import { truncateVisible } from '../cli/util.js';
-import { BELL } from '../util/misc.js';
+import { BELL, firstLine } from '../util/misc.js';
 import { bar, contextRatio, formatCost, formatTokens } from './format.js';
 import { currentAttempt, elapsedCell } from './history.js';
 import {
@@ -74,10 +74,11 @@ import { markAltScreen, restoreTerminal } from './terminal.js';
 import type { ResumeRequest } from '../workflow/resume-request.js';
 import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
 import { workspaceLayout } from './workspace/layout.js';
-import { footerHints, QUIT_ANSWERS } from './workspace/keys.js';
+import { alwaysHintCells, footerHints, QUIT_ANSWERS, type KeyMode } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
 import { AnswerField, DiagnosticsPanel, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
 import { endedActionFor, endedActions } from './workspace/ended.js';
+import { leadTaskId } from './workspace/detail.js';
 import { answerElsewhere, observerActionFor, observerActions, pendingLines, type ObserverAction } from './workspace/observer.js';
 import type { ObserverSurface } from '../workflow/control/observer.js';
 
@@ -346,6 +347,12 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     };
   }, [tab, controller, props.finished]);
 
+  // ------------------------------------------------------------------ who is driving (§2.1, [D37])
+  // Read before the actions below, because every one of them asks it first: an observer has no lock to
+  // take and no scheduler to submit to, and a control it sends is a request file rather than a call.
+  const canResume = Boolean(props.onResume) && (props.role ?? 'owner') === 'owner';
+  const observing = (props.role ?? 'owner') === 'observer' && Boolean(props.observer);
+
   // ------------------------------------------------------------------ actions
   const setNotice = (text: string) => store.getState().setNotice(text);
   // Stable, so the review view's own per-attempt cache is not thrown away on every spinner frame.
@@ -385,6 +392,13 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   const restart = (task: ResolvedTask | undefined): void => {
     if (!task) return;
+    // Nothing a window that does not own the run may reach the controller with (§2.1, [D37]). `R` is the
+    // observer's re-run request when the selected task can take one, and this is every other case: the
+    // controller here is a read-only view of the run directory, and submitting to it is not a control.
+    if (observing) {
+      setNotice(`This window is watching ${props.observer?.ownerPid !== undefined ? `pid ${props.observer.ownerPid}` : 'another process'}. A re-run can only be asked for on a task that has failed, been blocked, cancelled or skipped.`);
+      return;
+    }
     // The controller decides, not the screen: it holds the run state this frame is only a picture of, and
     // its rejection is already a sentence written for this notice.
     const attempts = run.tasks[task.id]?.attempts;
@@ -416,12 +430,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const closeOverlay = (): void => store.getState().setOverlay({ kind: 'none' });
 
   // ------------------------------------------------------------------ lifecycle (§2.4)
-  // The actions an ended run offers, and whether this process may run them: an observer has no lock to take
-  // and says so in a banner instead ([D36], [D37]).
-  const canResume = Boolean(props.onResume) && (props.role ?? 'owner') === 'owner';
-  // Observer mode (§2.1, [D37]): the controls are the ones the run advertises and the selection allows, and
-  // everything else on the screen is read-only, including the questions a worker is waiting on.
-  const observing = (props.role ?? 'owner') === 'observer' && Boolean(props.observer);
+  // The controls an observer may send: the ones the run advertises and the selected task could accept.
+  // Everything else on its screen is read-only, including the questions a worker is waiting on.
   const obsActions = useMemo(
     () => (observing && props.observer ? observerActions(run, selected, props.observer.capabilities) : []),
     [observing, props.observer, run, selected],
@@ -429,6 +439,37 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   /** Whether this window has already asked the owner to stop; the next Ctrl+C escalates to kill (§2.3). */
   const stopSent = useRef(false);
   const actions = useMemo(() => (props.finished && canResume ? endedActions(run, selected) : []), [props.finished, canResume, run, selected]);
+  /** What this window is doing, which is what `Q` and `Ctrl+C` mean and what `?` is allowed to say (§2.1, §2.4). */
+  const mode: KeyMode = observing ? 'observing' : props.finished ? 'ended' : 'executing';
+  /** The keys the lead actions have claimed this frame, so the panel does not advertise its own meaning for them. */
+  const takenKeys = useMemo(() => {
+    const taken = new Set([...obsActions, ...actions].map((action) => action.key.toUpperCase()));
+    // `R` is never the local restart while observing: there is no scheduler here to restart anything in.
+    if (observing) taken.add('R');
+    return taken;
+  }, [obsActions, actions, observing]);
+  /**
+   * When the run ends, move to the task the ended state is about (§3.1).
+   *
+   * The Overview leads with the failed task and the actions under it are for the *selected* one, so a run
+   * that failed on task 3 led with "migrate-runner failed" and offered "R Re-run scaffold-config" — the
+   * cursor had never left task 1. This is the one moment the workspace moves the cursor on its own, and it
+   * is the moment the operator's attention moves too.
+   */
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (!props.finished) {
+      jumped.current = false;
+      return;
+    }
+    if (jumped.current) return;
+    jumped.current = true;
+    const id = leadTaskId(run);
+    const index = id ? visible.findIndex((t) => t.id === id) : -1;
+    if (index >= 0) store.getState().setCursor(index);
+    // The run object is mutated in place, so the effect has to key off the ended flag, not off `run`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.finished, store]);
   const resume = (request: ResumeRequest): void => {
     props.onResume?.(request);
   };
@@ -450,7 +491,10 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       minimise();
       return;
     }
-    if (props.finished) {
+    // An observer leaves at once too. The three quit answers are all about the workers in *this* process
+    // [D5]: there are none here, "stop and quit" would stop nothing and "continue in plain output" has no
+    // output to continue. `?` and the footer have always said `Q` closes the window; now it does.
+    if (props.finished || observing) {
       props.onQuit();
       return;
     }
@@ -726,8 +770,13 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const attention = waiting.length
     ? waiting
         .map((t) => {
-          const p = run.tasks[t.id]?.pendingInteraction;
-          return `${t.id}${p ? ` (${p.kind}: ${sanitizeText(p.title)})` : ' (approval)'}`;
+          const st = run.tasks[t.id];
+          const p = st?.pendingInteraction;
+          // Without the state the fallback said "(approval)" for every task with no interaction attached,
+          // which is the wrong word for a `needs_input` task — and `needs_input` is the state a run most
+          // often stops in with nothing attached, because the question is in `message`.
+          const what = p ? `${p.kind}: ${sanitizeText(p.title)}` : st?.message ? firstLine(sanitizeText(st.message)) : STATE_LABEL[st?.state ?? 'waiting'].toLowerCase();
+          return `${t.id} (${what})`;
         })
         .join('   ')
     : undefined;
@@ -929,7 +978,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                   theme={theme}
                 />
               ) : (
-                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} ended={actions} observer={observing ? obsActions : undefined} />
+                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} ended={actions} observer={observing ? obsActions : undefined} mode={mode} />
               )
             ) : (
               mainPanel()
@@ -938,7 +987,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         </Box>
       </Box>
       <Footer
-        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, observing ? obsActions : actions)}
+        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })}
+        always={overlayOpen ? undefined : alwaysHintCells(mode)}
         columns={columns}
         theme={theme}
         columnsShown={layout.footerColumns}

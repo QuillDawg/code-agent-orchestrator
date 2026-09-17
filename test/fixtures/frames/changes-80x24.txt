@@ -21,4 +21,4 @@ Task #/# ✓ implement-parser  Completed  claude|opus-#
 
 
 ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   o editor   Esc/Q back
-Ctrl+P palette   ? help   Q minimise  quota: stage #
+Ctrl+P palette   ? help   Q quit   quota: stage #

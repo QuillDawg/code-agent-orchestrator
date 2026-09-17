@@ -191,7 +191,7 @@ describe('dashboard frames', () => {
 
   for (const size of sizes) {
     it(`renders the task list unchanged at ${size.name}`, async () => {
-      await capture(`dashboard-${size.name}`, size, 'R restart');
+      await capture(`dashboard-${size.name}`, size, 'F / L follow');
     });
 
     it(`renders the usage view unchanged at ${size.name}`, async () => {
@@ -228,7 +228,7 @@ describe('dashboard frames', () => {
     const tree = renderTree(element, { columns: 120, rows: 40 });
     try {
       await wait();
-      await tree.waitFor((frame) => frame.includes('R restart'));
+      await tree.waitFor((frame) => frame.includes('F / L follow'));
       expect(normalise(tree.lastText())).toBe(await golden('dashboard-120x40'));
 
       // The harness emits `resize` and yields one macrotask - far less than the 1000 ms spinner interval

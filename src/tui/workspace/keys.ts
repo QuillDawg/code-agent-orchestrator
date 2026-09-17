@@ -24,14 +24,41 @@ export interface PanelHelp {
   keys: KeyHelp[];
 }
 
-/** Answered everywhere, whatever has focus. */
-export const GLOBAL_KEYS: KeyHelp[] = [
-  { keys: 'Tab / Shift+Tab', what: 'move between the task list, the tabs and the panel' },
-  { keys: 'Ctrl+P', what: 'command palette: every action and every task id' },
-  { keys: '?', what: 'the keys of whatever has focus' },
-  { keys: 'Q', what: 'quit: while a run is going it asks first; on an ended run it leaves at once' },
-  { keys: 'Ctrl+C', what: 'stop the run and stay here (again within 20s to force and exit 130)' },
-];
+/**
+ * What the workspace is doing right now, which is what `Q` and `Ctrl+C` mean this frame.
+ *
+ * The three modes differ in exactly the two keys an operator reaches for when they want out, so a single
+ * "anywhere" table has to be wrong in two of the three - and it was: `?` told an observer that `Q` asks
+ * before quitting and that `Ctrl+C` stops the workers in this process, while the section above it on the
+ * same screen said the opposite of both.
+ */
+export type KeyMode = 'executing' | 'ended' | 'observing';
+
+/** The two keys that mean something different in each mode; the rest of `globalKeys` is fixed. */
+const LEAVING_KEYS: Record<KeyMode, [KeyHelp, KeyHelp]> = {
+  executing: [
+    { keys: 'Q', what: 'quit: stay, stop and quit, or carry on in plain output', short: 'quit' },
+    { keys: 'Ctrl+C', what: 'stop the run and stay here; again within 20s forces it' },
+  ],
+  ended: [
+    { keys: 'Q', what: 'quit and return the run’s exit code', short: 'quit' },
+    { keys: 'Ctrl+C', what: 'nothing left to stop: the run has already ended' },
+  ],
+  observing: [
+    { keys: 'Q', what: 'close this window; the run carries on where it is', short: 'close' },
+    { keys: 'Ctrl+C', what: 'ask the owner to stop the run; again to kill it' },
+  ],
+};
+
+/** Answered everywhere, whatever has focus, in the words this mode makes true. */
+export function globalKeys(mode: KeyMode = 'executing'): KeyHelp[] {
+  return [
+    { keys: 'Tab / Shift+Tab', what: 'move between the task list, the tabs and the panel' },
+    { keys: 'Ctrl+P', what: 'command palette: every action and every task id' },
+    { keys: '?', what: 'the keys of whatever has focus' },
+    ...LEAVING_KEYS[mode],
+  ];
+}
 
 /** What a quit request offers while execution is still running [D5]. */
 export type QuitAnswerKind = 'stay' | 'stopAndQuit' | 'plain';
@@ -55,9 +82,14 @@ export const QUIT_KEYS: KeyHelp[] = [
   { keys: '↑↓ / Enter', what: 'choose an answer    Esc stays' },
 ];
 
-/** The ended-state actions as help rows (§2.4); empty while a run is still executing. */
+/**
+ * The ended-state actions as help rows (§2.4); empty while a run is still executing.
+ *
+ * `Q` is not repeated here: `globalKeys('ended')` already says what it does, and one key described twice in
+ * one help panel is how the two descriptions drift apart.
+ */
 export function endedKeys(actions: EndedAction[]): KeyHelp[] {
-  return [...actions.map((action) => ({ keys: action.key, what: action.label, short: action.label })), { keys: 'Q', what: 'quit and return the run’s exit code', short: 'quit' }];
+  return actions.map((action) => ({ keys: action.key, what: action.label, short: action.label }));
 }
 
 /** The transcript viewer, reached with `F` and shared with `cao logs --follow`. */
@@ -119,27 +151,60 @@ const MAIN_KEYS: Record<WorkspaceTab, KeyHelp[]> = {
   diagnostics: PLACEHOLDER_KEYS,
 };
 
-/** The keys of the panel that has focus, and what to call it. */
-export function panelHelp(focus: FocusRegion, tab: WorkspaceTab): PanelHelp {
-  if (focus === 'tabs') return { title: 'Tabs', keys: TAB_BAR_KEYS };
-  if (focus === 'main') return { title: TAB_LABEL[tab], keys: MAIN_KEYS[tab] };
-  return { title: 'Tasks', keys: TASK_LIST_KEYS };
+/**
+ * The keys of the panel that has focus, and what to call it.
+ *
+ * `taken` is the set of keys an ended run's actions or an observer's controls have claimed this frame.
+ * Those handlers run before the panel's own, so a panel row for a key they answer describes something that
+ * cannot happen: on an ended run `R` re-runs the task through a fresh resume, and the Tasks panel's
+ * "R restart a failed task" is a second meaning for a key that no longer has it.
+ */
+export function panelHelp(focus: FocusRegion, tab: WorkspaceTab, taken: ReadonlySet<string> = new Set()): PanelHelp {
+  const keep = (keys: KeyHelp[]): KeyHelp[] => (taken.size === 0 ? keys : keys.filter((help) => !(help.keys.length === 1 && taken.has(help.keys.toUpperCase()))));
+  if (focus === 'tabs') return { title: 'Tabs', keys: keep(TAB_BAR_KEYS) };
+  if (focus === 'main') return { title: TAB_LABEL[tab], keys: keep(MAIN_KEYS[tab]) };
+  return { title: 'Tasks', keys: keep(TASK_LIST_KEYS) };
 }
 
-const ALWAYS = ['Ctrl+P palette', '? help', 'Q minimise'];
+/**
+ * The chords that work in every panel, for the footer.
+ *
+ * Kept apart from the rest of the line because the footer is truncated to the terminal and these are the
+ * ones that have to survive it: a footer that has run out of room for `Q` is a footer that never says how
+ * to leave, which is what a 120-column terminal showed on every ended run. `Footer` reserves their width
+ * and truncates the panel keys into whatever is left.
+ */
+export function alwaysHintCells(mode: KeyMode = 'executing'): string[] {
+  const leaving = LEAVING_KEYS[mode][0];
+  // In the order the footer gives them up: the palette chord first, the way out last.
+  return ['Ctrl+P palette', '? help', `${leaving.keys} ${leaving.short ?? leaving.what}`];
+}
+
+/** The same cells as one string, for a caller that only wants to read them. */
+export function alwaysHints(mode: KeyMode = 'executing'): string {
+  return alwaysHintCells(mode).join('   ');
+}
+
+export interface FooterHintOptions {
+  /** The ended run's actions or the observer's controls, which lead the line. */
+  lead?: readonly { key: string; label: string; short?: string }[];
+  /** Keys those actions have claimed, so the panel does not advertise its own meaning for them. */
+  taken?: ReadonlySet<string>;
+}
 
 /**
  * The same keys as one line for the footer: the key, a space, the short form of what it does.
  *
- * The Changes panel draws its own key line at the bottom of itself - it has two levels and different keys in
- * each - so the footer stays out of its way and only names the chords that work everywhere.
+ * The chords of `alwaysHints` are not in here; the footer adds them where truncation cannot reach them.
+ * The Changes panel draws its own key line at the bottom of itself - it has two levels and different keys
+ * in each - so the footer stays out of its way and names only the lead actions.
  */
-export function footerHints(focus: FocusRegion, tab: WorkspaceTab, ended?: readonly { key: string; label: string }[]): string {
+export function footerHints(focus: FocusRegion, tab: WorkspaceTab, options: FooterHintOptions = {}): string {
   // An ended run's actions come first wherever they apply: they are the reason the workspace is still open
   // (§2.4), and an operator looking for "how do I retry this" should not have to press `?` to find out. The
   // observer's controls lead for the same reason and are passed in the same way (§2.1).
-  const lead = ended?.length ? ended.map((action) => `${action.key} ${action.label}`) : [];
-  if (focus === 'main' && tab === 'changes') return [...lead, ...ALWAYS].join('   ');
-  const panel = panelHelp(focus, tab).keys.map((help) => `${help.keys} ${help.short ?? help.what}`);
-  return [...lead, ...panel, ...ALWAYS].join('   ');
+  const lead = options.lead?.length ? options.lead.map((action) => `${action.key} ${action.short ?? action.label}`) : [];
+  if (focus === 'main' && tab === 'changes') return lead.join('   ');
+  const panel = panelHelp(focus, tab, options.taken).keys.map((help) => `${help.keys} ${help.short ?? help.what}`);
+  return [...lead, ...panel].join('   ');
 }

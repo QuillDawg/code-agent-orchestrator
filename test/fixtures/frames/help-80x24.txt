@@ -13,12 +13,12 @@ Anywhere
   Tab / Shift+Tab  move between the task list, the tabs and the panel
   Ctrl+P           command palette: every action and every task id
   ?                the keys of whatever has focus
-  Q                quit: while a run is going it asks first; on an ended run it…
-  Ctrl+C           stop the run and stay here (again within ##s to force and ex…
+  Q                quit: stay, stop and quit, or carry on in plain output
+  Ctrl+C           stop the run and stay here; again within ##s forces it
 
 Transcript viewer (F)
   ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt
   ↑↓ PgUp/PgDn     scroll    g oldest line    G newest line and follow again
   t / T / k        tool output, thinking, kind filter
 ▼ # more   ↑↓ scroll   Esc close
-Esc close   ↑↓ move   Enter choose  quota: stage #
+Esc close   ↑↓ move   Enter choose   quota: stage #

@@ -2,9 +2,9 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
 [██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
 [Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
 Tasks #/#                            Tasks — the panel with the keys
-▶ ✓ implement-pars… claude|opus-# █    ↑↓               move through the tasks
-  ✗ implement-rend… codex|gpt-#-…!█    Enter            open the selected task in the panel
-  ○ review-and-mer… claude        █    F / L            follow the task's live transcript
+▶ ✓ implement-par… claude|opus-#  █    ↑↓               move through the tasks
+  ✗ implement-ren… codex|gpt-#-… !█    Enter            open the selected task in the panel
+  ○ review-and-me… claude         █    F / L            follow the task's live transcript
                                        R                restart a failed, blocked, cancelled or skipped task
                                        /                search the task list
 
@@ -12,8 +12,8 @@ Tasks #/#                            Tasks — the panel with the keys
                                        Tab / Shift+Tab  move between the task list, the tabs and the panel
                                        Ctrl+P           command palette: every action and every task id
                                        ?                the keys of whatever has focus
-                                       Q                quit: while a run is going it asks first; on an ended run it le…
-                                       Ctrl+C           stop the run and stay here (again within ##s to force and exit …
+                                       Q                quit: stay, stop and quit, or carry on in plain output
+                                       Ctrl+C           stop the run and stay here; again within ##s forces it
 
                                      Transcript viewer (F)
                                        ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt
@@ -37,4 +37,4 @@ Tasks #/#                            Tasks — the panel with the keys
 
 
 
-Esc close   ↑↓ move   Enter choose  quota: stage #  updated #s ago
+Esc close   ↑↓ move   Enter choose   quota: stage #   updated #s ago

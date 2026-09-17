@@ -13,9 +13,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { tmpDir } from '../helpers/index.js';
 import { windowOf, scrollbarColumn } from '../../src/tui/window.js';
 import { workspaceLayout, footerColumnsFor } from '../../src/tui/workspace/layout.js';
-import { footerHints, panelHelp, GLOBAL_KEYS, VIEWER_KEYS } from '../../src/tui/workspace/keys.js';
-import { filterPalette, PLACEHOLDER_TEXT, reportLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
-import { attentionBadge, headerRowsFor } from '../../src/tui/workspace/chrome.js';
+import { alwaysHints, footerHints, panelHelp, globalKeys, VIEWER_KEYS, type KeyMode } from '../../src/tui/workspace/keys.js';
+import { filterPalette, helpSections, PLACEHOLDER_TEXT, reportLines, wrapLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
+import { attentionBadge, fitCells, headerRowsFor } from '../../src/tui/workspace/chrome.js';
 import { resolveTheme, reducedMotion, isThemeName, THEME_NAMES } from '../../src/tui/theme.js';
 import { altScreenEnabled, readUserConfig, BASE_RENDER_OPTIONS, workspaceRenderOptions } from '../../src/tui/render-options.js';
 import { WORKSPACE_TABS } from '../../src/tui/store.js';
@@ -220,20 +220,78 @@ describe('the keys the footer and ? agree on', () => {
     expect(panelHelp('main', 'changes').keys.some((k) => k.keys === 'O')).toBe(true);
   });
 
-  it('puts every panel key in the footer line, plus the chords that work anywhere', () => {
+  it('puts every panel key in the footer line, and the chords that work anywhere in their own', () => {
     for (const tab of WORKSPACE_TABS) {
       const hints = footerHints('main', tab);
-      expect(hints).toContain('Ctrl+P palette');
-      expect(hints).toContain('? help');
-      expect(hints).toContain('Q minimise');
       // The Changes panel draws its own key line; the footer would only repeat it.
       if (tab === 'changes') continue;
       for (const key of panelHelp('main', tab).keys) expect(hints).toContain(key.keys);
     }
+    // Kept out of `footerHints` on purpose: the footer truncates the panel keys into what is left after
+    // these, so the way out of the workspace is never the thing a narrow terminal drops.
+    expect(alwaysHints('executing')).toContain('Ctrl+P palette');
+    expect(alwaysHints('executing')).toContain('? help');
+  });
+
+  it('gives up whole footer cells, least important first, and never the way out', () => {
+    const cells = ['↑↓ select', 'Enter open', 'F / L follow', 'R restart', '/ search', 'Ctrl+P palette', '? help', 'Q quit', 'quota: stage 3', 'updated 4s ago'];
+    // Display order above; drop order below: the chips, then the panel keys from the right, then the chords.
+    const priority = [9, 8, 4, 3, 2, 1, 0, 5, 6, 7];
+    expect(fitCells(cells, priority, 200)).toEqual(cells);
+    const at120 = fitCells(cells, priority, 120);
+    expect(at120.join('   ').length).toBeLessThanOrEqual(120);
+    expect(at120).not.toContain('updated 4s ago');
+    expect(at120).toContain('/ search');
+    const at60 = fitCells(cells, priority, 60);
+    expect(at60.join('   ').length).toBeLessThanOrEqual(60);
+    // Whatever else goes, `? help` and the way out are the last two standing.
+    expect(at60).toContain('? help');
+    expect(at60).toContain('Q quit');
+    // A cell is kept whole or not at all; nothing is cut in the middle to look like a shorter action.
+    for (const cell of at60) expect(cells).toContain(cell);
+    // Except when even the most important one does not fit, where something beats an empty footer.
+    expect(fitCells(['Q quit and return the exit code'], [0], 8)).toEqual(['Q quit …']);
+  });
+
+  it('says what Q does in the mode the workspace is actually in', () => {
+    // It used to say "Q minimise" in every mode, which stopped being true when §2.4 gave `Q` three answers
+    // during execution, an immediate exit on an ended run, and "close this window" for an observer.
+    expect(alwaysHints('executing')).toContain('Q quit');
+    expect(alwaysHints('ended')).toContain('Q quit');
+    expect(alwaysHints('observing')).toContain('Q close');
+    expect(alwaysHints('executing')).not.toContain('minimise');
+  });
+
+  it('answers with one meaning per key: ? never describes Q or Ctrl+C twice', () => {
+    const observer = [{ key: 'S', label: 'Stop the run', short: 'stop', kind: 'stop' as const }];
+    const ended = [{ key: 'S', label: 'Resume run', short: 'resume run', kind: 'resume' as const }];
+    const cases: Array<[KeyMode, ReturnType<typeof helpSections>]> = [
+      ['observing', helpSections('tasks', 'overview', undefined, observer, 'observing')],
+      ['ended', helpSections('tasks', 'overview', ended, undefined, 'ended')],
+      ['executing', helpSections('tasks', 'overview', undefined, undefined, 'executing')],
+    ];
+    for (const [mode, sections] of cases) {
+      const rows = sections.flatMap((s) => s.keys);
+      for (const key of ['Q', 'Ctrl+C']) {
+        expect(rows.filter((r) => r.keys === key), `${mode} describes ${key} more than once`).toHaveLength(1);
+      }
+    }
+  });
+
+  it('drops a panel key an ended run or an observer has taken over', () => {
+    // `R` is the local restart in the Tasks panel and a resume-backed re-run once the run has ended; the
+    // ended handler runs first, so the panel's own row for it is a description of something impossible.
+    expect(panelHelp('tasks', 'overview').keys.some((k) => k.keys === 'R')).toBe(true);
+    expect(panelHelp('tasks', 'overview', new Set(['R'])).keys.some((k) => k.keys === 'R')).toBe(false);
+    expect(panelHelp('main', 'overview', new Set(['R'])).keys.some((k) => k.keys === 'R')).toBe(false);
+    // Only whole single-key rows are dropped: "F / L" is still the follow key even when F is not taken.
+    expect(panelHelp('tasks', 'overview', new Set(['R'])).keys.some((k) => k.keys === 'F / L')).toBe(true);
+    const observing = helpSections('tasks', 'overview', undefined, [], 'observing');
+    expect(observing.find((s) => s.title.startsWith('Tasks'))!.keys.some((k) => k.keys === 'R')).toBe(false);
   });
 
   it('still lists the transcript viewer and the global chords, so no old key is lost', () => {
-    const keys = [...GLOBAL_KEYS, ...VIEWER_KEYS].map((k) => `${k.keys} ${k.what}`).join('\n');
+    const keys = [...globalKeys(), ...VIEWER_KEYS].map((k) => `${k.keys} ${k.what}`).join('\n');
     for (const old of ['Ctrl+C', 'Q', '?', 'P task picker', '[ ]', 'g oldest line', 'k']) expect(keys).toContain(old);
   });
 });
@@ -245,6 +303,15 @@ describe('the panels a later stage fills', () => {
     expect(PLACEHOLDER_TEXT.diagnostics?.[0]).toContain('stage 3');
     // And what answers the same question today, so the panel is never merely empty.
     for (const lines of Object.values(PLACEHOLDER_TEXT)) expect(lines.join(' ')).toContain('Until then');
+  });
+
+  it('wraps that prose to the panel instead of cutting the half that says what to do instead', () => {
+    for (const columns of [60, 84, 120]) {
+      const lines = wrapLines(PLACEHOLDER_TEXT.session!, columns);
+      for (const line of lines) expect([...line].length, `${columns}: ${line}`).toBeLessThanOrEqual(Math.max(20, columns));
+      // Nothing is lost in the wrapping: the sentence naming today's answer survives whole.
+      expect(lines.join(' ')).toContain('cao task <id> shows everything recorded about it.');
+    }
   });
 
   it('renders report.md through the markdown renderer and filters it with a search', () => {

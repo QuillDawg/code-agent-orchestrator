@@ -4,8 +4,10 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
 Task #/# ✓ implement-parser  Completed  claude|opus-#
 Logs
 The Logs panel arrives in stage #.
-It will hold this run’s own log: the orchestrator’s events, the runner’s stderr…
-Until then: F opens the transcript viewer that cao logs --follow shares, and ca…
+It will hold this run’s own log: the orchestrator’s events, the runner’s stderr
+and the doctor probes.
+Until then: F opens the transcript viewer that cao logs --follow shares, and cao
+logs <task> prints it.
 
 
 
@@ -19,6 +21,4 @@ Until then: F opens the transcript viewer that cao logs --follow shares, and ca�
 
 
 
-
-
-←→ tab   Enter open   Ctrl+P palette   ? help   Q minimise  quota: stage #
+←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   quota: stage #

@@ -69,7 +69,10 @@ export function Header({ run, theme, columns, now, role, badge, attention }: Hea
   const waiting = waitingTasks(run).length;
   const done = summary.success + summary.skipped;
   const narrow = columns < 100;
-  const elapsed = run.startedAt ? formatDuration(now - new Date(run.startedAt).getTime()) : '';
+  // An ended run's clock stops where the run stopped. It used to be `now - startedAt` whatever the run was
+  // doing, so a workspace left open on a finished run counted upwards for as long as it was open — and the
+  // Overview's own outcome line, which does use `endedAt`, disagreed with the header on the same frame.
+  const elapsed = run.startedAt ? formatDuration((run.endedAt ? new Date(run.endedAt).getTime() : now) - new Date(run.startedAt).getTime()) : '';
   const usage = addUsage(...run.workflow.tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
 
   const width = narrow ? 10 : 20;
@@ -173,11 +176,16 @@ export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runni
   const marker = slice.aboveMarker ?? slice.belowMarker;
   const bodyRows = marker ? Math.max(1, listRows - 1) : listRows;
   const shown = marker ? windowOf(tasks, cursor, bodyRows) : slice;
-  // 2 for the cursor column, 2 for the glyph and its space, 1 of gap, 1 for the badge, 1 for the scrollbar.
+  // 2 for the cursor column, 2 for the glyph and its space, 1 of gap, 1 for the scrollbar, and the badge
+  // column with the space in front of it — but only when something in this list actually has a badge. The
+  // agent cell is padded to its full width, so without that space `claude|sonnet` and the `!` of a failed
+  // task ran together as `claude|sonnet!`; charging the task names a column for a badge no row is showing
+  // is the other half of the same mistake.
   // `claude|gpt-5-codex` is 13 columns after `shortModelName`; below that there is no room for an agent
   // column that says anything, so the task name takes it back rather than both being cut to nothing.
+  const badgeWidth = tasks.some((t) => attentionBadge(run.tasks[t.id]) !== ' ') ? 2 : 0;
   const agentWidth = width >= 34 ? 13 : 0;
-  const idWidth = Math.max(6, width - 7 - (agentWidth ? agentWidth + 1 : 0));
+  const idWidth = Math.max(6, width - 6 - badgeWidth - (agentWidth ? agentWidth + 1 : 0));
 
   return (
     <Box flexDirection="column" width={width}>
@@ -199,7 +207,8 @@ export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runni
             <Text color={theme.stateColor(kind)}>{mark}</Text>{' '}
             {selected && focused ? theme.paint(id, 'selection') : id}
             {agent ? theme.paint(` ${agent}`, 'agent') : ''}
-            {theme.paint(attentionBadge(state), 'warning')}
+            {badgeWidth ? ' ' : ''}
+            {badgeWidth ? theme.paint(attentionBadge(state), 'warning') : ''}
             {theme.paint(shown.scrollbar[i] ?? '', 'border')}
           </Text>
         );
@@ -225,7 +234,8 @@ export function TaskStrip({ tasks, run, cursor, columns, theme, focused, running
   const state = task ? run.tasks[task.id] : undefined;
   const kind = state?.state ?? 'pending';
   const mark = kind === 'running' ? runningGlyph : stateGlyph(kind);
-  const label = task ? `${mark} ${task.id}  ${STATE_LABEL[kind]}  ${agentLabel(task.agent, state?.attempts[state.attempts.length - 1]?.usage?.model ?? task.model)}${attentionBadge(state).trim()}` : 'no tasks';
+  const badge = attentionBadge(state).trim();
+  const label = task ? `${mark} ${task.id}  ${STATE_LABEL[kind]}  ${agentLabel(task.agent, state?.attempts[state.attempts.length - 1]?.usage?.model ?? task.model)}${badge ? ` ${badge}` : ''}` : 'no tasks';
   const position = `${tasks.length ? cursor + 1 : 0}/${tasks.length}`;
   return (
     <Text wrap="truncate-end">
@@ -234,8 +244,45 @@ export function TaskStrip({ tasks, run, cursor, columns, theme, focused, running
   );
 }
 
+/** The separator `footerHints` joins its cells with, and therefore the only place the line may be cut. */
+export const HINT_GAP = '   ';
+
+/**
+ * Fit a footer line into `columns` by dropping whole cells, least important first.
+ *
+ * Two rules the old single-truncation footer broke. Cutting the string mid-cell produced `> resume fr…`,
+ * which reads as an action whose name has been shortened rather than as a list that has run out of room —
+ * and the cell it half-showed was still taking the space two whole ones would have. And the cell it always
+ * reached first was the last one, which is `Q`: on a 120-column terminal an ended run's footer never said
+ * how to leave. What is dropped instead is what `?` is for, and `? help` is one of the last cells to go.
+ *
+ * `cells` is in display order; `priority` is the order they are given up, least important first.
+ */
+export function fitCells(cells: readonly string[], priority: readonly number[], columns: number): string[] {
+  const widths = cells.map(visibleLength);
+  const width = (kept: ReadonlySet<number>): number => {
+    let total = 0;
+    for (const i of kept) total += widths[i]! + HINT_GAP.length;
+    return Math.max(0, total - HINT_GAP.length);
+  };
+  const kept = new Set(cells.map((_, i) => i));
+  for (const index of priority) {
+    if (width(kept) <= columns || kept.size <= 1) break;
+    kept.delete(index);
+  }
+  const out = cells.filter((_, i) => kept.has(i));
+  // Not even the most important cell fits: show as much of it as there is room for rather than nothing.
+  if (out.length === 1 && visibleLength(out[0]!) > columns) return [truncateVisible(out[0]!, Math.max(1, columns))];
+  return out;
+}
+
 export interface FooterProps {
   hints: string;
+  /**
+   * The chords that work in every panel (`alwaysHintCells`), least important first. Kept apart from
+   * `hints` because they are the last cells the footer gives up rather than the first.
+   */
+  always?: readonly string[];
   columns: number;
   theme: Theme;
   columnsShown: FooterColumn[];
@@ -245,23 +292,34 @@ export interface FooterProps {
 }
 
 /**
- * The footer: the keys of the focused panel, then the provider quota chips, then how old the picture is.
- * The chips are a placeholder until stage 3 reads a real quota; they say so rather than showing a number
- * nothing measured.
+ * The footer: the keys of the focused panel, then the chords that always work, then the provider quota
+ * chips, then how old the picture is. The chips are a placeholder until stage 3 reads a real quota; they
+ * say so rather than showing a number nothing measured.
+ *
+ * `columnsShown` says which chips the terminal's *width* allows (`footerColumnsFor`); what is drawn also
+ * has to leave room for the keys, so a chip is dropped here too when the line is full — in the same order,
+ * freshness before quota.
  */
-export function Footer({ hints, columns, theme, columnsShown, snapshotAge, notice }: FooterProps): React.JSX.Element {
-  const chips: string[] = [];
-  if (columnsShown.includes('quota')) chips.push(theme.paint('quota: stage 3', 'muted'));
-  if (columnsShown.includes('freshness')) chips.push(theme.paint(`updated ${formatDurationShort(Math.max(0, snapshotAge))} ago`, 'muted'));
-  const right = chips.join('  ');
-  const left = truncateVisible(hints, Math.max(4, columns - visibleLength(right) - 2));
+export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice }: FooterProps): React.JSX.Element {
+  const hintCells = hints ? hints.split(HINT_GAP) : [];
+  const alwaysCells = always ?? [];
+  const chipCells: string[] = [];
+  if (columnsShown.includes('quota')) chipCells.push('quota: stage 3');
+  if (columnsShown.includes('freshness')) chipCells.push(`updated ${formatDurationShort(Math.max(0, snapshotAge))} ago`);
+
+  const cells = [...hintCells, ...alwaysCells, ...chipCells];
+  // Given up in this order: the freshness chip, then the quota chip, then the panel's keys from the right,
+  // then the palette chord — and `? help` and the way out only if even they do not fit.
+  const priority = [
+    ...chipCells.map((_, i) => hintCells.length + alwaysCells.length + chipCells.length - 1 - i),
+    ...hintCells.map((_, i) => hintCells.length - 1 - i),
+    ...alwaysCells.map((_, i) => hintCells.length + i),
+  ];
+  const kept = fitCells(cells, priority, columns);
   return (
     <Box flexDirection="column">
       {notice ? <Text wrap="truncate-end">{theme.paint(notice, 'warning')}</Text> : null}
-      <Text wrap="truncate-end">
-        {theme.paint(left, 'muted')}
-        {right ? `  ${right}` : ''}
-      </Text>
+      <Text wrap="truncate-end">{theme.paint(kept.join(HINT_GAP), 'muted')}</Text>
     </Box>
   );
 }

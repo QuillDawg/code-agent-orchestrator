@@ -128,8 +128,9 @@ describe('the workspace at each terminal size', () => {
         // The sidebar at 120x40; the one-line strip it collapses to at 80x24.
         expect(frame.includes('Tasks 1/3')).toBe(size.columns >= 100);
         expect(frame.includes('Task 1/3 ')).toBe(size.columns < 100);
-        expect(frame).toContain('quota: stage 3');
-        expect(frame.includes('updated')).toBe(size.columns >= 100);
+        // Whatever else it drops, the footer says how to leave and where the rest of the keys are.
+        expect(frame).toContain('? help');
+        expect(frame).toContain('Q quit');
         fits(tree, size);
       } finally {
         tree.unmount();
@@ -266,6 +267,84 @@ describe('navigation', () => {
       fits(tree, size);
     } finally {
       tree.unmount();
+    }
+  });
+
+  it('wraps a help row rather than cutting the half of the sentence that matters', async () => {
+    // `?` is the panel an operator opens *because* a key surprised them, and at 80 columns its rows ended
+    // mid-answer: "Q  quit: while a run is going it asks first; on an ended run it le…".
+    for (const small of [
+      { columns: 80, rows: 24 },
+      { columns: 120, rows: 40 },
+    ]) {
+      const tree = mount(runWith(['a', 'b']), small);
+      try {
+        await wait();
+        tree.write('?');
+        await wait();
+        const frame = tree.lastText();
+        expect(frame).toContain('the panel with the keys');
+        // The whole of each sentence is on screen, across two rows when it has to be.
+        const flat = frame.replace(/\s+/g, ' ');
+        expect(flat, `${small.columns} cut a help row`).toContain('quit: stay, stop and quit, or carry on in plain output');
+        expect(flat, `${small.columns} cut a help row`).toContain('stop the run and stay here; again within 20s forces it');
+        expect(flat, `${small.columns} cut a help row`).toContain('restart a failed, blocked, cancelled or skipped task');
+        // The longest row in the table, and the one an 80-column panel has no room for on a single line.
+        tree.write(KEYS.pageDown);
+        await wait();
+        expect(tree.lastText().replace(/\s+/g, ' '), `${small.columns} cut the longest help row`).toContain('allow, allow for the rest of the task, deny, deny with a reason');
+        fits(tree, small);
+      } finally {
+        tree.unmount();
+      }
+    }
+  });
+
+  it('names what a waiting task is waiting for, not "approval" for every one of them', async () => {
+    const run = runWith(['a', 'ask-human']) as unknown as { tasks: Record<string, { state: string; message?: string }> };
+    run.tasks['ask-human'] = { ...run.tasks['ask-human']!, state: 'needs_input', message: 'postgres or sqlite?' };
+    const tree = mount(run, size);
+    try {
+      await wait();
+      const frame = tree.lastText();
+      expect(frame).toContain('Needs you: ask-human (postgres or sqlite?)');
+      expect(frame).not.toContain('ask-human (approval)');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('shows what has been typed into the palette, at every terminal it opens on', async () => {
+    // The box had no height of its own, so on a terminal with fewer rows than it wanted Yoga shrank it and
+    // took the shrink out of the first child: at 80x24 the palette drew its matches with no sign at all of
+    // the query that had found them.
+    for (const small of [
+      { columns: 80, rows: 24 },
+      { columns: 100, rows: 30 },
+      { columns: 120, rows: 40 },
+    ]) {
+      // Enough tasks that the entry list is longer than the panel: that is when Yoga has to take the rows
+      // from somewhere, and the somewhere used to be the query line.
+      const tree = mount(runWith(['implement-parser', 'implement-renderer', 'review', 'port-schema', 'migrate-runner', 'update-docs', 'final-review', 'ship']), small);
+      try {
+        await wait();
+        tree.write(KEYS.ctrlP);
+        await wait();
+        // With nothing typed the list is at its longest, which is when the box has to give rows up.
+        expect(tree.lastText(), `${small.columns}x${small.rows} lost the query line`).toMatch(/> [█_]/);
+        expect(tree.lastText()).toContain('Enter run');
+        fits(tree, small);
+        for (const ch of 'rep') {
+          tree.write(ch);
+          await wait(10);
+        }
+        await wait();
+        expect(tree.lastText(), `${small.columns}x${small.rows} lost the query`).toContain('> rep');
+        fits(tree, small);
+      } finally {
+        tree.unmount();
+      }
     }
   });
 
@@ -468,6 +547,28 @@ describe('the panels on their own', () => {
         expect(lastFrame()).toContain('more');
       }
     }
+  });
+
+  it('keeps the attention badge off the agent column, and charges nothing for it when no row has one', () => {
+    // The agent cell is padded to its full width, so the `!` of a failed task ran straight into it and the
+    // sidebar read `claude|sonnet!`. The space in front of it is only reserved when a row is using it.
+    // A model that fills the agent cell exactly: `claude|sonnet` is the 13 columns the column is padded to.
+    const withModel = (ids: string[]) => {
+      const r = runWith(ids) as { workflow: { tasks: { model?: string }[] } };
+      for (const t of r.workflow.tasks) t.model = 'sonnet';
+      return r as never;
+    };
+    const quiet = withModel(['implement-parser', 'implement-renderer']);
+    (quiet as unknown as { tasks: Record<string, { state: string }> }).tasks['implement-renderer']!.state = 'running';
+    const loudRun = withModel(['implement-parser', 'implement-renderer']);
+    const calm = renderInk(<Sidebar tasks={(quiet as { workflow: { tasks: never[] } }).workflow.tasks} run={quiet} cursor={0} width={40} rows={6} theme={theme} focused runningGlyph=">" />).lastFrame() ?? '';
+    const loud = renderInk(<Sidebar tasks={(loudRun as { workflow: { tasks: never[] } }).workflow.tasks} run={loudRun} cursor={1} width={40} rows={6} theme={theme} focused runningGlyph=">" />).lastFrame() ?? '';
+    // `runWith` makes the second task the failed one, so its row is the one with a badge.
+    expect(loud).toContain('claude|sonnet !');
+    expect(loud).not.toContain('claude|sonnet!');
+    // With nothing to badge, the task names get the column back.
+    expect(calm).not.toContain('claude|sonnet !');
+    expect(calm).toContain('implement-renderer');
   });
 
   it('draws no more rows than the Overview panel was given', () => {

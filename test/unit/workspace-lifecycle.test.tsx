@@ -141,6 +141,81 @@ describe('the workspace on an ended run', () => {
     }
   });
 
+  it('offers the actions for the task it leads with, not for whatever the cursor was left on', async () => {
+    // §3.1 asks the Overview to lead with the failed task *and the actions available for that task*. The
+    // actions are built from the selection, and the selection was still on task 1 — so a run that failed
+    // on the third task said "implement-renderer failed" and then offered "R Re-run implement-parser".
+    const run = endedRun({
+      'implement-parser': { state: 'success', outcome: 'success' },
+      'port-schema': { state: 'success', outcome: 'success' },
+      'implement-renderer': { state: 'failed', outcome: 'failed', error: 'the build failed', attempts: 2 },
+      review: { state: 'pending' },
+    });
+    const requests: ResumeRequest[] = [];
+    const { tree, size } = mount(run, { onResume: (r) => requests.push(r) });
+    try {
+      await wait();
+      const frame = tree.lastText();
+      expect(frame).toContain('implement-renderer failed');
+      expect(frame).toContain('R Re-run implement-renderer');
+      expect(frame).toContain('> Resume from implement-renderer');
+      expect(frame).not.toContain('Re-run implement-parser');
+      // The detail below the table is the same task, so the whole panel is about one thing.
+      expect(frame).toContain('Status:       ✗ Failed');
+      tree.write('r');
+      await wait();
+      expect(requests).toEqual([{ kind: 'task', taskId: 'implement-renderer' }]);
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('leads a paused run with the task that is waiting for a person and what it asked', async () => {
+    const run = endedRun(
+      {
+        'implement-parser': { state: 'success', outcome: 'success' },
+        'ask-human': { state: 'needs_input', message: 'postgres or sqlite?' },
+        review: { state: 'pending' },
+      },
+      'paused',
+    );
+    const { tree, size } = mount(run, { onResume: () => undefined });
+    try {
+      await wait();
+      const frame = tree.lastText();
+      // It used to say "Run paused   1/3 done   exit 3" and nothing else: the state without the one fact
+      // that follows from it, which is who is waiting and what for.
+      expect(frame).toContain('Run paused');
+      expect(frame).toContain('ask-human needs input');
+      expect(frame).toContain('postgres or sqlite?');
+      // And the answer action is the one for that task, because the cursor moved to it.
+      expect(frame).toContain('A Answer ask-human and resume');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('stops the clock in the header when the run ends', async () => {
+    // The header read `now - startedAt` whatever the run was doing, so a workspace left open on a finished
+    // run counted upwards for as long as it was open - and disagreed with the Overview's own outcome line,
+    // which does use `endedAt`, on the same frame.
+    const run = endedRun({ 'implement-parser': { state: 'failed', outcome: 'failed', error: 'boom' } });
+    const { tree, size } = mount(run, { onResume: () => undefined });
+    try {
+      await wait();
+      const header = tree.lastText().split(NL)[1] ?? '';
+      // started 09:12:34, ended 09:21:05.
+      expect(header).toContain('08m 31s');
+      await wait(1100);
+      expect(tree.lastText().split(NL)[1] ?? '').toContain('08m 31s');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
   it('runs Resume run, Re-run task and Resume from task from their keys', async () => {
     const run = endedRun({ 'implement-parser': { state: 'failed', outcome: 'failed', error: 'boom' }, review: { state: 'cancelled', outcome: 'cancelled' } });
     const requests: ResumeRequest[] = [];
@@ -292,6 +367,31 @@ describe('quitting while the run is still going [D5]', () => {
       fits(tree, size);
     } finally {
       tree.unmount();
+    }
+  });
+
+  it('shows what each answer means whole, at every terminal it can be asked on', async () => {
+    // The box was capped at 72 columns inside a panel that was wider, so the sentence an operator reads to
+    // choose between the three answers ended in "…leave with the run's exit c". This is the one prompt
+    // whose whole job is that sentence: what does not fit on the row drops onto its own instead.
+    for (const [columns, rows] of [
+      [80, 24],
+      [100, 30],
+      [120, 40],
+    ] as const) {
+      const { tree, size } = mount(live(), { finished: false, columns, rows });
+      try {
+        await wait();
+        tree.write('q');
+        await wait();
+        const frame = tree.lastText();
+        for (const answer of ['go back to the workspace; nothing changes', 'stop the workers, then leave with the run’s exit code', 'the run carries on printing lines; D or Enter reopens this']) {
+          expect(frame, `${columns}x${rows} cut "${answer}"`).toContain(answer);
+        }
+        fits(tree, size);
+      } finally {
+        tree.unmount();
+      }
     }
   });
 

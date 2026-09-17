@@ -1348,7 +1348,7 @@ describe('DashboardApp', () => {
 
       tree.write(String.fromCharCode(27));
       await wait();
-      await tree.waitFor((frame) => frame.includes('R restart'));
+      await tree.waitFor((frame) => frame.includes('F / L follow'));
       tree.write('u');
       await wait();
       const usage = await tree.waitFor((frame) => frame.includes('S sort by cost'));
