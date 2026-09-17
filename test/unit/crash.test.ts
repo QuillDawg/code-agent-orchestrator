@@ -1,7 +1,8 @@
 /** The process-level crash handlers `bin.ts` installs before it parses anything. */
 import { describe, it, expect, afterEach } from 'vitest';
 import { crashMessage, installCrashHandlers, setCrashPersist, INTERNAL_ERROR_EXIT, type CrashTarget } from '../../src/cli/crash.js';
-import { markAltScreen, restoreTerminal, LEAVE_ALT_SCREEN, SHOW_CURSOR } from '../../src/tui/terminal.js';
+import { EventEmitter } from 'node:events';
+import { armAltScreenRestore, altScreenIsActive, markAltScreen, restoreTerminal, LEAVE_ALT_SCREEN, SHOW_CURSOR } from '../../src/tui/terminal.js';
 
 function fakeProcess() {
   const listeners = new Map<string, (reason: unknown) => void>();
@@ -99,6 +100,24 @@ describe('crash handlers', () => {
     });
     listeners.get('unhandledRejection')!(new Error('rejected'));
     expect(exits).toEqual([INTERNAL_ERROR_EXIT, INTERNAL_ERROR_EXIT]);
+  });
+
+  // Every screen that takes the alternate buffer arms this, so the terminal comes back from an exit that
+  // unmounts nothing - a force-kill, a `process.exit` from a signal path (§2.4).
+  it('armAltScreenRestore puts the terminal back on a process exit, until it is disarmed', () => {
+    const drawn: string[] = [];
+    const streams = { stdout: { write: (chunk: string) => drawn.push(chunk) } };
+    const hooks = new EventEmitter();
+
+    const disarm = armAltScreenRestore(streams, hooks);
+    expect(altScreenIsActive()).toBe(true);
+    expect(hooks.listenerCount('exit')).toBe(1);
+    hooks.emit('exit');
+    expect(drawn.join('')).toBe(`${LEAVE_ALT_SCREEN}${SHOW_CURSOR}`);
+
+    disarm();
+    expect(altScreenIsActive()).toBe(false);
+    expect(hooks.listenerCount('exit')).toBe(0);
   });
 
   it('restoreTerminal is safe to call twice and forgets the alternate screen after the first', () => {

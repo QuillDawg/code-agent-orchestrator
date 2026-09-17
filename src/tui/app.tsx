@@ -70,7 +70,7 @@ import {
 import { reducedMotion, resolveTheme, type Theme } from './theme.js';
 import { windowOf } from './window.js';
 import { workspaceRenderOptions } from './render-options.js';
-import { markAltScreen, restoreTerminal } from './terminal.js';
+import { armAltScreenRestore } from './terminal.js';
 import type { ResumeRequest } from '../workflow/resume-request.js';
 import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
 import { workspaceLayout } from './workspace/layout.js';
@@ -1102,21 +1102,6 @@ function UsageView({ run, theme, columns, rows, sort, header, headerRows }: Usag
       </Text>
     </Box>
   );
-}
-
-/**
- * Leave the alternate screen if the process dies without unmounting — a force-kill, `process.exit` from a
- * signal path. Ink restores the primary buffer on unmount, which covers every ordinary exit, and
- * `installCrashHandlers` covers an uncaught error; this is the remainder.
- */
-function armAltScreenRestore(): () => void {
-  const restore = (): void => restoreTerminal();
-  markAltScreen(true);
-  process.once('exit', restore);
-  return () => {
-    markAltScreen(false);
-    process.removeListener('exit', restore);
-  };
 }
 
 export function createDashboard(opts: DashboardOptions): DashboardController {

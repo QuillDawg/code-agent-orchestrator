@@ -12,7 +12,8 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { uiCommand } from '../../src/cli/commands/ui.js';
 import { createDetachedController } from '../../src/workflow/control/detached.js';
-import { Launcher, launcherRows, type LauncherChoice } from '../../src/tui/launcher.js';
+import { Launcher, launcherRows, runLauncher, type LauncherChoice } from '../../src/tui/launcher.js';
+import { altScreenIsActive, markAltScreen } from '../../src/tui/terminal.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { controlEnvelope } from '../../src/workflow/control/commands.js';
 import { buildWorkflow, captureCli, makeRun, tmpDir } from '../helpers/index.js';
@@ -182,6 +183,33 @@ describe('the launcher', () => {
       expect(chosen[1]).toEqual({ kind: 'quit' });
     } finally {
       tree.unmount();
+    }
+  });
+
+  // The launcher takes the alternate screen, so it owes the terminal the same exit handler the workspace
+  // arms (§2.4): Ink covers an unmount and the crash handler covers a throw, but a `process.exit` while the
+  // picker is up would otherwise leave the shell on the alternate buffer.
+  it('arms the alternate-screen restore while it is up, and disarms it on the way out', async () => {
+    const tty = process.stdout.isTTY;
+    (process.stdout as { isTTY?: boolean }).isTTY = true;
+    const before = process.listeners('exit').length;
+    let unmounted = (): void => {};
+    const exited = new Promise<void>((resolve) => {
+      unmounted = resolve;
+    });
+    const instance = { unmount: () => unmounted(), waitUntilExit: () => exited, rerender: () => {}, cleanup: () => {}, clear: () => {} };
+    try {
+      const pending = runLauncher({ runs: [], workflows: [], altScreen: true, mount: (() => instance) as unknown as Parameters<typeof runLauncher>[0]['mount'] });
+      await wait(0);
+      expect(altScreenIsActive()).toBe(true);
+      expect(process.listeners('exit')).toHaveLength(before + 1);
+      unmounted();
+      expect(await pending).toEqual({ kind: 'quit' });
+      expect(altScreenIsActive()).toBe(false);
+      expect(process.listeners('exit')).toHaveLength(before);
+    } finally {
+      (process.stdout as { isTTY?: boolean }).isTTY = tty;
+      markAltScreen(false);
     }
   });
 });

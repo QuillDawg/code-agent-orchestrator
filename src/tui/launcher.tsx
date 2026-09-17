@@ -13,7 +13,7 @@ import { glyph } from '../util/glyphs.js';
 import { truncateVisible } from '../cli/util.js';
 import { formatCost } from './format.js';
 import { workspaceRenderOptions } from './render-options.js';
-import { markAltScreen } from './terminal.js';
+import { armAltScreenRestore } from './terminal.js';
 import { resolveTheme, type Theme } from './theme.js';
 import { windowOf } from './window.js';
 
@@ -160,11 +160,13 @@ export async function runLauncher(opts: LauncherOptions): Promise<LauncherChoice
     />,
     options,
   );
-  if (options.alternateScreen && process.stdout.isTTY) markAltScreen(true);
-  await instance.waitUntilExit().catch(() => undefined);
-  if (options.alternateScreen && process.stdout.isTTY) {
-    // Ink leaves the alternate screen itself on unmount; this only clears the flag the crash handler reads.
-    markAltScreen(false);
+  // Ink leaves the alternate screen itself on unmount and the crash handler covers a throw; arming this
+  // covers the remainder — a `process.exit` while the picker is up — exactly as the workspace does (§2.4).
+  const disarm = options.alternateScreen && process.stdout.isTTY ? armAltScreenRestore() : undefined;
+  try {
+    await instance.waitUntilExit().catch(() => undefined);
+  } finally {
+    disarm?.();
   }
   return choice;
 }

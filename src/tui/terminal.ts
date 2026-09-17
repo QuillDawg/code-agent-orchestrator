@@ -21,6 +21,12 @@ export interface TerminalStreams {
   stdin?: { isTTY?: boolean; setRawMode?(mode: boolean): unknown };
 }
 
+/** The part of `process` that `armAltScreenRestore` registers on; a test hands it an `EventEmitter`. */
+export interface ExitHooks {
+  once(event: 'exit', listener: () => void): unknown;
+  removeListener(event: 'exit', listener: () => void): unknown;
+}
+
 let altScreenActive = false;
 
 /** Called by the workspace when it enters (`true`) or leaves (`false`) the alternate screen. */
@@ -52,4 +58,22 @@ export function restoreTerminal(streams: TerminalStreams = process as unknown as
     /* same */
   }
   altScreenActive = false;
+}
+
+/**
+ * Take the alternate screen and leave it again if the process dies without unmounting — a force-kill, a
+ * `process.exit` from a signal path. Ink restores the primary buffer on unmount, which covers every
+ * ordinary exit, and `installCrashHandlers` covers an uncaught error; this is the remainder.
+ *
+ * Every screen that takes the alternate buffer arms this, so that the remainder is covered wherever the
+ * process happens to be when it goes: the workspace and the `cao ui` launcher alike (§2.4).
+ */
+export function armAltScreenRestore(streams?: TerminalStreams, hooks: ExitHooks = process): () => void {
+  const restore = (): void => (streams ? restoreTerminal(streams) : restoreTerminal());
+  markAltScreen(true);
+  hooks.once('exit', restore);
+  return () => {
+    markAltScreen(false);
+    hooks.removeListener('exit', restore);
+  };
 }
