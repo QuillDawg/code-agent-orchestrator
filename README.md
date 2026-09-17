@@ -764,7 +764,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 
 | Command | What it does |
 |---|---|
-| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
+| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
 | `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, plus the `cao run` overrides |
 | `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>`, `--verbose` |

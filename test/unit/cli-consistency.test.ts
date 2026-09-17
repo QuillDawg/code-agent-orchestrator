@@ -611,3 +611,62 @@ describe('the chords the docs promise', () => {
     }
   });
 });
+
+/**
+ * The CLI reference table of README.md, against the program it describes (§3.3).
+ *
+ * Most rows name the options worth naming and leave the rest to `--help`, which is the point of a summary.
+ * The three commands that can open the workspace are the exception: they share a set of options, an
+ * operator comparing the rows is comparing that set, and a row that is short by two is read as a command
+ * that does not take them. `--no-alt-screen` and `--theme` went missing from `cao run` that way.
+ */
+describe('the CLI reference table', () => {
+  /** A row of the table: the command it names, and the long options its prose mentions. */
+  function tableRows(text: string): { name: string; parts: string[]; flags: Set<string>; text: string }[] {
+    return text
+      .split(NL)
+      .map((line) => line.replace(String.fromCharCode(13), ''))
+      .filter((line) => line.startsWith('| `cao '))
+      .map((line) => {
+        const cells = line.split('|').map((cell) => cell.trim());
+        const name = cells[1]!.replace(/`/g, '').trim();
+        return { name, parts: name.split(' ').filter((token) => /^[a-z]+$/.test(token)).slice(1), flags: new Set(cells[2]!.match(/--[a-z][a-z-]*/g) ?? []), text: cells[2]! };
+      });
+  }
+
+  /**
+   * Every long option the named command answers, including its subcommands': one row covers a whole family
+   * (`cao task <task>` is `cao task show`, and one row covers `cao task stop` and `cao task restart`).
+   */
+  function longOptionsOf(parts: string[]): string[] {
+    let command: Command | undefined = buildProgram();
+    for (const part of parts) command = command?.commands.find((child) => child.name() === part);
+    expect(command, parts.join(' ')).toBeDefined();
+    const longs = (of: Command): string[] => [...of.options.map((option) => option.long).filter((long): long is string => Boolean(long)), ...of.commands.flatMap(longs)];
+    return [...new Set(longs(command!))];
+  }
+
+  it('names a real option of that command in every row', async () => {
+    const rows = tableRows(await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf8'));
+    expect(rows.length).toBeGreaterThan(14);
+    for (const row of rows) {
+      if (!row.parts.length) continue;
+      const real = longOptionsOf(row.parts);
+      for (const flag of row.flags) expect(real, `${row.name} has no ${flag}`).toContain(flag);
+    }
+  });
+
+  it('lists every option shared by the commands that open the workspace', async () => {
+    const rows = tableRows(await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf8'));
+    const opening = ['run', 'resume', 'ui'];
+    const shared = longOptionsOf(['run']).filter((long) => opening.every((name) => longOptionsOf([name]).includes(long)));
+    expect(shared).toEqual(expect.arrayContaining(['--no-tui', '--no-alt-screen', '--theme', '--repository', '--verbose']));
+    for (const name of opening) {
+      const row = rows.find((candidate) => candidate.parts.join(' ') === name);
+      expect(row, name).toBeDefined();
+      // A row may defer to another instead of repeating it; `cao resume` does, and says so in its prose.
+      const inherited = row!.text.includes('the `cao run` overrides') ? rows.find((candidate) => candidate.parts.join(' ') === 'run')!.flags : new Set<string>();
+      for (const flag of shared) expect([...row!.flags, ...inherited], `cao ${name} does not list ${flag}`).toContain(flag);
+    }
+  });
+});

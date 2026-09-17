@@ -551,6 +551,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   chord the workspace reads. It reads `Ctrl+C`, `Ctrl+P` and — in the answer field — `Ctrl+J`, and the
   transcript viewer adds `Ctrl+A`; the README said the opposite four lines below its own `Ctrl+P` entry. A
   test now checks both pages against the key table the workspace itself answers `?` from.
+- README.md's CLI reference lists `--no-alt-screen` and `--theme <name>` under `cao run`, which has
+  accepted both all along; the `cao ui` row listed them and the `cao run` row did not. A test now reads the
+  table and checks every option it names against the program, and checks that the three commands that can
+  open the workspace list every option they share.
 - [docs/agent-cli-integration.md](docs/agent-cli-integration.md) now has **one** outcome table instead of one
   per agent. It is generated from `src/runners/outcomes.ts`, carries a column for how each runner recognises
   every row, and is compared against the page by a test - two tables of the same situations were how the two
