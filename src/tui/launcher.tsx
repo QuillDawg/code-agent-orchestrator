@@ -67,6 +67,14 @@ export function Launcher(props: LauncherProps): React.JSX.Element {
   const [path, setPath] = useState<string | null>(null);
 
   useInput((input, key) => {
+    // §3.2 gives Ctrl+C a meaning everywhere in the workspace, and `workspaceRenderOptions` pins
+    // `exitOnCtrlC: false`, so Ink delivers it as a keystroke and no signal handler will ever see it. There
+    // is no run here to stop, so the honest meaning of an interrupt in a picker is the one Q has: leave
+    // without choosing. It reads before the path field, like the other chords a composer does not swallow.
+    if (key.ctrl && input === 'c') {
+      props.onChoose({ kind: 'quit' });
+      return;
+    }
     if (path !== null) {
       if (key.escape) setPath(null);
       else if (key.return) {

@@ -161,6 +161,29 @@ describe('the launcher', () => {
       tree.unmount();
     }
   });
+
+  // The launcher runs with `exitOnCtrlC: false` like the rest of `src/tui/`, and Ink holds stdin in raw
+  // mode, so Ctrl+C arrives here as a keystroke and never as a signal. Without a branch for it the picker
+  // would be the one screen in the workspace that cannot be interrupted (§3.2).
+  it('leaves on Ctrl+C, in the list and with the path field open', async () => {
+    const chosen: LauncherChoice[] = [];
+    const tree = renderTree(<Launcher runs={runs} workflows={['workflow.yaml']} now={Date.now()} onChoose={(c) => chosen.push(c)} />, { columns: 90, rows: 20 });
+    try {
+      await wait();
+      tree.write(KEYS.ctrlC);
+      await wait();
+      expect(chosen).toEqual([{ kind: 'quit' }]);
+
+      tree.write('p');
+      await wait();
+      expect(tree.lastText()).toContain('workflow path>');
+      tree.write(KEYS.ctrlC);
+      await wait();
+      expect(chosen[1]).toEqual({ kind: 'quit' });
+    } finally {
+      tree.unmount();
+    }
+  });
 });
 
 describe('a controller over a run nobody is executing', () => {

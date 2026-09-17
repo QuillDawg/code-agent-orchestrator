@@ -24,7 +24,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `cao diff` and `cao report` print — and offers the same resume actions as a run that has just ended. On a
   run another terminal owns it opens read-only and names the pid. With no run it lists the recent runs of
   the repository with their state, age and cost and offers the workflow files beside them; without a
-  terminal (piped, `CI`, `--no-tui`) it prints that list and exits 0, and `--json` prints it as JSON.
+  terminal (piped, `CI`, `--no-tui`) it prints that list and exits 0, and `--json` prints it as JSON. In
+  the picker `↑↓` choose, `Enter` opens, `P` takes a workflow path, and `Q`, `Esc` or `Ctrl+C` leaves
+  without choosing.
 - **A workspace on a run another terminal is executing.** Opening `cao ui <run>` on a run somebody else
   owns — or losing the run to another terminal while the workspace was idle — now gives a window that keeps
   up with it instead of a frozen picture with a banner over it. `workflow.json` and `live.json` are
