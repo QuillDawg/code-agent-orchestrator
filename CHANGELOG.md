@@ -351,6 +351,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **An approval gate whose decision is already recorded no longer asks for a human.** Resuming with
+  `cao resume --approve <gate>`, or approving from the workspace, still emitted `task.awaiting_approval`
+  before honouring the decision — so line output printed "approval required" for a gate that was about to
+  pass, and a minimised workspace rang the bell and pulled the screen back for nobody. The gate is
+  announced only when there is really a question to answer.
 - **`--emit` and `--no-emit` survive a resume from inside the workspace.** Only the first execution carried
   the flag: `S`, `R`, `>` and the rest built the next execution without it, so the decision fell back to
   `CAO_EMIT` and `~/.cao/config.json` and a run started `cao run --no-emit` by someone who had run

@@ -114,8 +114,13 @@ describe('resume', () => {
     expect((await schedule(run, new MockRunner()).scheduler.execute()).state).toBe('paused');
 
     await reconcileForResume(run, { approve: ['gate'] });
-    expect((await schedule(run, new MockRunner(), new MemoryRunStore(), true).scheduler.execute()).state).toBe('completed');
+    const resumed = schedule(run, new MockRunner(), new MemoryRunStore(), true);
+    expect((await resumed.scheduler.execute()).state).toBe('completed');
     expect(states(run)).toEqual({ gate: 'success', b: 'success' });
+    // And it is not announced: `task.awaiting_approval` is what fetches a human - the plain renderer's
+    // "approval required" line, and a minimised workspace reopening with a BELL - and this gate needs
+    // nobody. The first execution, which really did need one, emitted it.
+    expect(resumed.store.eventsOf('task.awaiting_approval')).toEqual([]);
 
     // Naming the gate on a later resume means asking the human again, so the old decision is dropped.
     await reconcileForResume(run, { selection: { only: ['gate'] } });
