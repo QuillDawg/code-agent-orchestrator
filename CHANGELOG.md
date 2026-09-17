@@ -243,6 +243,18 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   longer leaves the task list, Ctrl+L no longer opens a transcript, and Ctrl+O in the review view no longer
   hands a file to `$VISUAL`. Ctrl+C is the one chord the dashboard reads; Ctrl+A still jumps to the oldest
   line in the transcript viewer.
+- **A request file cannot put escape sequences on the terminal through its `pid` or its `source`.** A
+  request is structure-checked for its id and its kind and nothing else, so both fields arrived exactly as
+  another process wrote them - and both are shown to the operator, in the inbox log line and in the
+  "stopping workers" warning a `stop` produces. They now go through `sanitizeText` like every other piece
+  of text `cao` did not write itself, and a `pid` that is not a number is shown as `0` rather than as its
+  own text.
+- **A request the inbox refuses is answered once, even if its file will not go away.** `approve`, `reject`
+  and `answer` - and a `restart`, `edit` or `prompt` with no task or no text - are refused before the run
+  controller sees them, so they never reached the deduplication the controller keeps. Deleting the request
+  afterwards is best effort, so a file that could not be removed (a lock on Windows, a run directory that
+  has turned read-only) was re-read, re-answered and re-logged every 500 ms for the rest of the run. The
+  inbox watcher now remembers what it has answered, on the same bound the controller uses.
 - **A control command resent after the run has ended gets the answer it got the first time.** A sender that
   loses an acknowledgment and asks again — `cao stop`, or anything writing to the request inbox — was told
   "this run has ended" for a stop that had in fact been applied, and on the inbox path that answer

@@ -25,6 +25,8 @@ import {
   writeControlRequest,
 } from '../../src/persistence/requests.js';
 import { pathExists } from '../../src/util/fs.js';
+import { silentLogger } from '../../src/logging/logger.js';
+import { ESC } from '../../src/util/text.js';
 import { PROTOCOL_VERSION, type ControlAck, type RunPaths } from 'code-agent-orchestrator-protocol';
 
 const RUN_ID = '2026-01-01-001';
@@ -354,6 +356,72 @@ describe('the legacy stop.json escalation', () => {
       expect(kinds).toEqual(['stop', 'kill']);
       // A kill is not a second stop: the workers are not asked politely a second time.
       expect(stops).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  }, 20_000);
+
+  /**
+   * `requestProblem` validates the id and the kind and nothing else, so `pid` and `source` arrive exactly as
+   * another process wrote them - and both are put in front of the operator, in the watcher's log line and in
+   * the `beginShutdown` warning `onStop` produces. RULES.md: everything new that reaches a terminal goes
+   * through `sanitizeText`.
+   */
+  it('never lets a request put escape sequences on the terminal through pid or source', async () => {
+    const paths = await inbox();
+    const { controller } = recorder();
+    const lines: string[] = [];
+    const logger = { ...silentLogger, info: (m: string) => lines.push(m) };
+    const stops: StopRequest[] = [];
+    const dispose = watchStopRequests({ paths, runId: RUN_ID, intervalMs: 10, controller, logger, onStop: (r) => stops.push(r) });
+    try {
+      const id = controlRequest('stop').id;
+      const esc = ESC + '[2J' + ESC + '[H';
+      await put(paths, `${id}-stop.json`, { protocol: PROTOCOL_VERSION, id, kind: 'stop', requestedAt: 12_345, pid: `${esc}999`, source: `wiped${esc}` });
+      await waitFor(() => stops.length === 1);
+
+      expect(lines.join(' ')).not.toContain(ESC);
+      // A pid that is not a number is shown as the 0 the envelope already coerces it to, not as its text.
+      expect(lines[0]).toContain('(pid 0)');
+      expect(stops[0]!.source).toBe('wiped');
+      expect(stops[0]!.pid).toBe(0);
+      // A `requestedAt` that is not even a string falls back to now, exactly as the envelope's does.
+      expect(Number.isNaN(Date.parse(stops[0]!.requestedAt))).toBe(false);
+    } finally {
+      dispose();
+    }
+  }, 20_000);
+
+  /**
+   * A request the command union refuses is answered without the scheduler, so it never reaches
+   * `run.controls.seen` - and `deleteRequest` is best effort, so a file that will not go (a Windows lock, a
+   * read-only run directory) comes back on the next tick. Nothing in the scheduler stops that one, so the
+   * watcher keeps its own record of what it has answered.
+   */
+  it('answers a refused request once even when its file keeps coming back', async () => {
+    const paths = await inbox();
+    const { controller, kinds } = recorder();
+    const lines: string[] = [];
+    const logger = { ...silentLogger, info: (m: string) => lines.push(m) };
+    const dispose = watchStopRequests({ paths, runId: RUN_ID, intervalMs: 10, controller, logger, onStop: () => undefined });
+    try {
+      const request = controlRequest('approve', { taskId: 'a' });
+      const name = requestFileName(request);
+      await writeControlRequest(paths, RUN_ID, request);
+      await until(async () => (await readAck(paths, RUN_ID, request.id)) !== null);
+      const first = await readAck(paths, RUN_ID, request.id);
+      expect(first!.status).toBe('rejected');
+      expect(lines).toHaveLength(1);
+
+      // The file is back, byte for byte, which is what an undeletable one looks like to the next tick.
+      for (let i = 0; i < 3; i += 1) {
+        await put(paths, name, request);
+        await until(async () => !(await pathExists(path.join(paths.requestsDir(RUN_ID), name))));
+      }
+      expect(lines).toHaveLength(1);
+      expect(await readAck(paths, RUN_ID, request.id)).toEqual(first);
+      // And it still never reached the controller.
+      expect(kinds).toEqual([]);
     } finally {
       dispose();
     }

@@ -5,7 +5,7 @@ import type { RunController } from '../workflow/control/controller.js';
 import { commandForRequest, controlEnvelope, envelopeForRequest, runEndedReason } from '../workflow/control/commands.js';
 import type { ProcessManager } from './process-manager.js';
 import type { Logger } from '../logging/logger.js';
-import type { CapabilityToken, ControlRequest, RunPaths } from 'code-agent-orchestrator-protocol';
+import { CONTROL_SEEN_LIMIT, type CapabilityToken, type ControlRequest, type RunPaths } from 'code-agent-orchestrator-protocol';
 import {
   controlAck,
   controlRequest,
@@ -170,6 +170,23 @@ export async function clearPendingRequests(paths: RunPaths, runId: string, when:
 }
 
 /**
+ * A `StopRequest` that is safe to put in front of an operator.
+ *
+ * Every field here comes out of a file another process wrote, so none of it is trusted: `readPendingRequests`
+ * checks the id and the kind and nothing else, and `readStopRequest` parses `stop.json` without checking
+ * anything at all. `source` and `pid` both reach a terminal - the watcher's log line, and the `beginShutdown`
+ * warning through `onStop` - so a `"pid": "<escape sequence>"` would otherwise be drawn as one.
+ */
+function displayStopRequest(request: Partial<ControlRequest> | StopRequest, defaultSource: string): StopRequest {
+  const { requestedAt, pid, source } = request as { requestedAt?: unknown; pid?: unknown; source?: unknown };
+  return {
+    requestedAt: typeof requestedAt === 'string' ? requestedAt : nowIso(),
+    pid: typeof pid === 'number' && Number.isFinite(pid) ? pid : 0,
+    source: sanitizeText(typeof source === 'string' && source !== '' ? source : defaultSource),
+  };
+}
+
+/**
  * What the inbox watcher really acts on, and therefore what a run may advertise (§2.3). `edit` and `prompt`
  * are accepted from disk and answered, but the controller does not apply them yet, so they are not here:
  * §4.2.3's rule is that a run advertises what it actually does, not what it can parse.
@@ -214,10 +231,35 @@ export function watchStopRequests(opts: StopWatcherOptions): () => void {
   let timer: NodeJS.Timeout | undefined;
 
   /**
+   * Ids this watcher has already answered.
+   *
+   * The scheduler deduplicates on `run.controls.seen`, but only for commands that reach it: a request the
+   * command union refuses - `approve`, `reject`, `answer`, or a `restart` with no task - is answered here and
+   * never gets an entry there. Removing the request afterwards is best effort (a Windows lock on the file, a
+   * run directory that has turned read-only), and without this a file that will not go re-enters the inbox,
+   * is answered again and logged again on every tick for the rest of the run. Bounded like the scheduler's
+   * list, oldest first.
+   */
+  const answered = new Set<string>();
+  const remember = (id: string): void => {
+    answered.add(id);
+    for (const oldest of answered) {
+      if (answered.size <= CONTROL_SEEN_LIMIT) break;
+      answered.delete(oldest);
+    }
+  };
+
+  /**
    * One request, answered whatever the outcome (§2.3). The ack is on disk before the request file is
    * removed, so a crash in between leaves a request that is asked again rather than one nobody answered.
    */
   const apply = async (request: ControlRequest, requestFile?: string): Promise<void> => {
+    if (answered.has(request.id)) {
+      // Answered on an earlier tick and its ack is already on disk; the file is still here only because it
+      // could not be deleted. Try that again and say nothing more - see `answered`.
+      if (requestFile) await deleteRequest(requestFile);
+      return;
+    }
     const translation = commandForRequest(request);
     const ack = translation.ok
       ? await controller!.submit(translation.command, envelopeForRequest(request))
@@ -227,16 +269,19 @@ export function watchStopRequests(opts: StopWatcherOptions): () => void {
       // The kill escalation runs from a timer scheduled the instant the ack resolves, and awaiting a write
       // yields to it. Answer and consume the request before control leaves this function.
       writeAckSync(paths, runId, ack);
+      remember(request.id);
       if (requestFile) deleteRequestSync(requestFile);
     } else {
       await writeAck(paths, runId, ack);
+      remember(request.id);
       if (requestFile) await deleteRequest(requestFile);
     }
-    // `source` is free text written by another process, so it is display data like any other.
-    logger?.info(`inbox: ${request.kind} from ${sanitizeText(request.source ?? 'unknown')} (pid ${request.pid}) ${ack.status}${ack.reason ? `: ${sanitizeText(ack.reason)}` : ''}`);
+    // Everything the request carries is free text written by another process, so it is display data.
+    const shown = displayStopRequest(request, 'unknown');
+    logger?.info(`inbox: ${request.kind} from ${shown.source} (pid ${shown.pid}) ${ack.status}${ack.reason ? `: ${sanitizeText(ack.reason)}` : ''}`);
     if (translation.ok && translation.command.kind === 'stop' && ack.status === 'applied') {
       stopSeen = true;
-      opts.onStop({ requestedAt: request.requestedAt, pid: request.pid, source: request.source });
+      opts.onStop(shown);
     }
   };
 
@@ -251,8 +296,9 @@ export function watchStopRequests(opts: StopWatcherOptions): () => void {
     const request = (await readStopRequest(paths, runId)) ?? { requestedAt: nowIso(), pid: 0 };
     await clearStopRequest(paths, runId);
     if (stopped) return;
-    if (!controller) opts.onStop(request);
-    else await apply(controlRequest(stopSeen ? 'kill' : 'stop', { source: request.source ?? 'cao stop', pid: request.pid }));
+    const shown = displayStopRequest(request, 'cao stop');
+    if (!controller) opts.onStop(shown);
+    else await apply(controlRequest(stopSeen ? 'kill' : 'stop', { source: shown.source, pid: shown.pid }));
   };
 
   const tick = async (): Promise<void> => {
