@@ -1,11 +1,9 @@
-import readline from 'node:readline';
 import { prepareWorkflow, requireValid, createRuntime, detectRunnersForWorkflow, runnerReadinessError } from '../app.js';
 import { createRun } from '../../workflow/run-factory.js';
 import { FileRunStore } from '../../persistence/run-store.js';
 import { createNativeRunPaths } from '../../persistence/paths.js';
 import { formatDiagnostics } from '../../workflow/validator.js';
 import { warnLine } from '../../util/marks.js';
-import { glyph } from '../../util/glyphs.js';
 import { renderHeader, attachPlainRenderer, renderSummary } from '../render/plain.js';
 import { createInterruptController, clearPendingRequests, clearStopRequest, watchStopRequests, INBOX_REQUEST_KINDS } from '../../execution/signals.js';
 import { ConsoleLogger, type Logger } from '../../logging/logger.js';
@@ -14,11 +12,12 @@ import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflow
 import { planEmit } from '../emit.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { ConfigError, OrchestratorError, UsageError } from '../../util/errors.js';
+import { setCrashPersist } from '../crash.js';
+import { runWorkspaceSession, type WorkspaceSession } from '../workspace-session.js';
 import type { Runtime } from '../app.js';
+import type { SchedulerResult } from '../../workflow/scheduler.js';
 import type { WorkflowRun, PermissionMode, Interaction, InteractionAnswer } from 'code-agent-orchestrator-protocol';
 import { appendLine } from '../../util/fs.js';
-import { BELL } from '../../util/misc.js';
-import type { DashboardController } from '../../tui/app.js';
 
 export interface RunCommandOptions {
   dryRun?: boolean;
@@ -88,7 +87,7 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
   if (!lock.ok) throw new UsageError(`Run ${run.runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
   out(renderHeader({ workflow, runId: run.runId, runners, layers, verbose: opts.verbose }));
-  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme });
+  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme, repository: opts.repository });
 }
 
 export interface ExecuteOptions {
@@ -104,17 +103,54 @@ export interface ExecuteOptions {
   /** Passed through to the workspace; both are ignored on the `--no-tui` path, which mounts nothing. */
   altScreen?: boolean;
   theme?: string;
+  /** `--repository`, kept so the workspace can re-open the same store when it resumes the run (§2.4). */
+  repository?: string;
 }
 
-/** Shared by `run` and `resume`: wires renderer, signal handling and executes the scheduler. */
+/**
+ * Shared by `run` and `resume`: wires renderer, signal handling and executes the scheduler.
+ *
+ * Interactive and headless part company here and nowhere else. Headless is exactly what it was — one
+ * execution, then the documented tail lines and the exit code. Interactive hands over to the workspace
+ * session, which stays open after the run ends, may execute the run again, and returns the exit code of the
+ * last execution when the operator leaves (§2.4).
+ */
 export async function executeRun(opts: ExecuteOptions): Promise<number> {
+  if ((opts.tui ?? true) && isInteractive()) {
+    return runWorkspaceSession({
+      first: opts,
+      execute: executeOnce,
+      // Printed once the workspace has let the terminal go, so it lands in the shell's scrollback [D4].
+      writeTail: (run, result) => writeRunTail(run, result, { summary: true }),
+      repository: opts.repository,
+      altScreen: opts.altScreen,
+      theme: opts.theme,
+      verbose: opts.verbose,
+      activity: opts.activity,
+    });
+  }
+  const result = await executeOnce(opts);
+  writeRunTail(opts.run, result);
+  return result.exitCode;
+}
+
+/**
+ * One execution of one run, from wiring the runtime to the scheduler returning.
+ *
+ * With a `session` the workspace is already on screen and owns everything that outlives an execution — the
+ * Ink tree, the plain-output fallback, the exit code, the operator's next intention. Without one this is
+ * the headless path, unchanged: a plain renderer for the duration and nothing left behind.
+ */
+export async function executeOnce(opts: ExecuteOptions, session?: WorkspaceSession): Promise<SchedulerResult> {
   const { run } = opts;
   // §4.2.7, resolved before anything is printed and before the dashboard takes the screen. `announcement` is
   // undefined unless emit is on, and its absence is what keeps a run with emit off from touching `~/.cao`.
   // The inbox is wired below on every path this function takes, so the entry advertises it (§2.3, §4.2.3).
   const emit = await planEmit({ emit: opts.emit, emitFeed: opts.emitFeed, wired: { requests: true, requestKinds: INBOX_REQUEST_KINDS } });
-  for (const note of emit.notes) process.stdout.write(`${warnLine(note)}\n`);
-  const useTui = (opts.tui ?? true) && isInteractive();
+  for (const note of emit.notes) {
+    if (session) session.notify(note);
+    else process.stdout.write(`${warnLine(note)}\n`);
+  }
   const redactor = new Redactor(opts.secrets);
   // Through the layout accessor, not a hand-built string: the run directory is described in exactly one
   // place, and that place is the protocol package (spec §4.1, §6.4.1).
@@ -122,22 +158,18 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   const fileSink = (line: string): void => {
     void appendLine(logFile, line).catch(() => undefined);
   };
-  let dashboard: DashboardController | undefined;
   const logger: Logger = new ConsoleLogger({
     level: opts.verbose ? 'debug' : 'info',
     redactor,
     sink: (line) => {
       // Never write over an open dashboard frame; line mode gets the log on stderr as before.
-      if (!dashboard?.isOpen) process.stderr.write(`${line}\n`);
+      if (!session?.isOpen) process.stderr.write(`${line}\n`);
       fileSink(line);
     },
   });
 
-  const approvalHandler = useTui ? async (task: import('code-agent-orchestrator-protocol').ResolvedTask) => (dashboard ? dashboard.requestApproval(task) : ('defer' as const)) : undefined;
-  const interactionHandler = useTui
-    ? async (interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer> =>
-        dashboard ? dashboard.requestInteraction(interaction, signal) : { kind: 'deny', message: 'No dashboard is attached; finish with status needs_input if you cannot continue' }
-    : undefined;
+  const approvalHandler = session ? (task: import('code-agent-orchestrator-protocol').ResolvedTask) => session.requestApproval(task) : undefined;
+  const interactionHandler = session ? (interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer> => session.requestInteraction(interaction, signal) : undefined;
   const runtime: Runtime = createRuntime({ run, environment: opts.environment, secrets: opts.secrets, logger, verbose: opts.verbose, isResume: opts.isResume, approvalHandler, interactionHandler, emit: emit.announcement });
   const { scheduler, controller, bus, processManager, store } = runtime;
 
@@ -146,6 +178,8 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   // controller to exist first and the run controller needs somewhere to escalate to (§2.2).
   controller.setKillHandler(() => interrupt.forceKill());
   const disposeSignals = interrupt.install();
+  // A crash has no `finally`; this is the scheduler's only chance to write what it knows (§2.4).
+  setCrashPersist(() => controller.persistInterruptedSync());
   // A leftover request from the run that was stopped must not stop the one resuming it.
   await clearStopRequest(store.paths, run.runId);
   await clearPendingRequests(store.paths, run.runId);
@@ -160,88 +194,32 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   });
 
   let detachPlain: (() => void) | undefined;
-  const attachPlain = (): void => {
-    if (detachPlain) return;
-    detachPlain = attachPlainRenderer(bus, run, { verbose: opts.verbose, showActivity: opts.activity });
-  };
-  const detach = (): void => {
-    detachPlain?.();
-    detachPlain = undefined;
-  };
+  if (session) session.attach({ run, bus, controller, interrupt });
+  else detachPlain = attachPlainRenderer(bus, run, { verbose: opts.verbose, showActivity: opts.activity });
 
-  // While minimised, a raw-mode key listener lets D/Enter reopen the dashboard and Ctrl+C still interrupts.
-  let minimisedKeys: ((s: string, key: { name?: string; ctrl?: boolean }) => void) | undefined;
-  const stopMinimisedKeys = (): void => {
-    if (!minimisedKeys) return;
-    process.stdin.off('keypress', minimisedKeys);
-    minimisedKeys = undefined;
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-    }
-  };
-  const reopen = (): void => {
-    if (!dashboard || dashboard.isOpen) return;
-    stopMinimisedKeys();
-    detach();
-    dashboard.open();
-  };
-  const startMinimisedKeys = (): void => {
-    if (!process.stdin.isTTY || minimisedKeys) return;
-    readline.emitKeypressEvents(process.stdin);
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    minimisedKeys = (_s, key) => {
-      if (key.ctrl && key.name === 'c') interrupt.interrupt('Ctrl+C');
-      else if (key.name === 'd' || key.name === 'return') reopen();
-    };
-    process.stdin.on('keypress', minimisedKeys);
-  };
-
-  if (useTui) {
-    const { createDashboard } = await import('../../tui/app.js');
-    dashboard = createDashboard({
-      run,
-      bus,
-      controller,
-      onMinimise: () => {
-        process.stdout.write(`\nDashboard minimised ${glyph('dash')} the run continues. Press D to reopen, Ctrl+C to stop.\n`);
-        attachPlain();
-        startMinimisedKeys();
-      },
-      onInterrupt: () => interrupt.interrupt('Ctrl+C'),
-      altScreen: opts.altScreen,
-      theme: opts.theme,
-    });
-    // A request for a human reopens a minimised dashboard: switch the surfaces back.
-    bus.onAny((ev) => {
-      if ((ev.type === 'task.interaction.requested' || ev.type === 'task.awaiting_approval') && dashboard && !dashboard.isOpen) {
-        process.stdout.write(BELL);
-        reopen();
-      }
-    });
-    dashboard.open();
-  } else {
-    attachPlain();
-  }
-
-  let result;
   try {
-    result = await scheduler.execute();
+    return await scheduler.execute();
   } finally {
     disposeSignals();
     disposeStopWatcher();
+    setCrashPersist(undefined);
     await clearStopRequest(store.paths, run.runId);
     // The watcher stops on a tick boundary, so a request written in the half second after it would be left
     // in `requests/` with nobody to answer it and its sender would wait out the whole of `--wait` (§2.3).
     await clearPendingRequests(store.paths, run.runId, 'shutdown');
-    stopMinimisedKeys();
-    if (dashboard) {
-      await dashboard.finish();
-      detach();
-      process.stdout.write(`\n${renderSummary(run)}\n`);
-    }
+    detachPlain?.();
   }
+}
+
+/**
+ * What a run prints about itself once nothing is going to change it any more: the summary table, then the
+ * one line that says what to do next.
+ *
+ * Headless prints it as the process ends. The workspace prints it after it has left the alternate screen,
+ * so it lands in the scrollback of the shell the run was started from [D4].
+ */
+export function writeRunTail(run: WorkflowRun, result: SchedulerResult, opts: { summary?: boolean } = {}): void {
+  if (opts.summary) process.stdout.write(`\n${renderSummary(run)}\n`);
   if (result.state === 'paused') {
     const needs = pausedNeeds(run);
     process.stdout.write('\nWorkflow paused.\n');
@@ -259,5 +237,4 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
   } else if (result.state === 'failed') {
     process.stdout.write(`\nRun failed. Inspect with: cao status ${run.runId}   Retry with: cao resume ${run.runId}\n`);
   }
-  return result.exitCode;
 }

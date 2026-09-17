@@ -681,6 +681,14 @@ export class WorkflowScheduler {
       if (task.isApproval) {
         this.setState(state, 'awaiting_approval');
         this.bus.emit({ type: 'task.awaiting_approval', taskId: id, prompt: task.prompt });
+        // A decision already recorded on the task is the answer. `cao resume --approve <id>` writes one,
+        // and so does the workspace's Approve action, which is the same path (§2.4, [D36]); without this
+        // the gate asked again the moment the run resumed and the answer was silently thrown away.
+        // `reconcileForResume` clears it whenever the gate is meant to be asked afresh.
+        if (state.approval) {
+          this.wake.push({ kind: 'approval', taskId: id, decision: state.approval.decision, note: state.approval.note });
+          continue;
+        }
         if (this.approvalHandler) {
           this.pendingApprovals.add(id);
           void this.approvalHandler(task).then(

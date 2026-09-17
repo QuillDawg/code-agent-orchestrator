@@ -104,6 +104,37 @@ describe('resume', () => {
     expect(states(run)).toEqual({ a: 'success', gate: 'success', b: 'success' });
   });
 
+  // §2.4 needs this: "Approve / Reject (paused gates)" in the workspace is `cao resume --approve` through
+  // `startRuntime`, and the workspace's own approval handler defers, so a decision the scheduler only
+  // honours when a handler repeats it back would never be applied. It used to re-gate and pause again.
+  it('honours an approval recorded by --approve with no handler at all, and asks again for a re-run gate', async () => {
+    const GATE = 'name: t\ntasks:\n  - id: gate\n    type: approval\n    prompt: ok?\n  - id: b\n    prompt: p\n    dependsOn: [gate]\n';
+    const { workflow: wf } = await buildWorkflow(GATE, { gitRoot: process.cwd() });
+    const run = makeRun(wf);
+    expect((await schedule(run, new MockRunner()).scheduler.execute()).state).toBe('paused');
+
+    await reconcileForResume(run, { approve: ['gate'] });
+    expect((await schedule(run, new MockRunner(), new MemoryRunStore(), true).scheduler.execute()).state).toBe('completed');
+    expect(states(run)).toEqual({ gate: 'success', b: 'success' });
+
+    // Naming the gate on a later resume means asking the human again, so the old decision is dropped.
+    await reconcileForResume(run, { selection: { only: ['gate'] } });
+    expect(run.tasks.gate!.approval).toBeUndefined();
+    expect((await schedule(run, new MockRunner(), new MemoryRunStore(), true).scheduler.execute()).state).toBe('paused');
+    expect(run.tasks.gate!.state).toBe('awaiting_approval');
+  });
+
+  it('rejects a gate from --reject without a handler', async () => {
+    const GATE = 'name: t\ntasks:\n  - id: gate\n    type: approval\n    prompt: ok?\n  - id: b\n    prompt: p\n    dependsOn: [gate]\n';
+    const { workflow: wf } = await buildWorkflow(GATE, { gitRoot: process.cwd() });
+    const run = makeRun(wf);
+    await schedule(run, new MockRunner()).scheduler.execute();
+    await reconcileForResume(run, { reject: ['gate'] });
+    const res = await schedule(run, new MockRunner(), new MemoryRunStore(), true).scheduler.execute();
+    expect(res.state).toBe('failed');
+    expect(states(run)).toEqual({ gate: 'failed', b: 'cancelled' });
+  });
+
   it('answers a needs_input task by continuing the session that asked', async () => {
     const wf = await workflow();
     const run = makeRun(wf);

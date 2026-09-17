@@ -46,7 +46,10 @@ import { BELL } from '../util/misc.js';
 import { bar, contextRatio, formatCost, formatTokens } from './format.js';
 import { currentAttempt, elapsedCell } from './history.js';
 import {
+  ANSWER_DRAFT,
   attachStore,
+  createPresentationStore,
+  followRun,
   selectCursor,
   selectDraft,
   selectFocus,
@@ -66,11 +69,14 @@ import {
 import { reducedMotion, resolveTheme, type Theme } from './theme.js';
 import { windowOf } from './window.js';
 import { workspaceRenderOptions } from './render-options.js';
+import { markAltScreen, restoreTerminal } from './terminal.js';
+import type { ResumeRequest } from '../workflow/resume-request.js';
 import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
 import { workspaceLayout } from './workspace/layout.js';
-import { footerHints } from './workspace/keys.js';
+import { footerHints, QUIT_ANSWERS } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
-import { filterPalette, HelpPanel, Palette, Placeholder, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { AnswerField, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { endedActionFor, endedActions } from './workspace/ended.js';
 
 export interface DashboardOptions {
   run: WorkflowRun;
@@ -91,6 +97,16 @@ export interface DashboardOptions {
   theme?: string;
   /** Whether this process holds the run or is watching one another process owns (§2.1). */
   role?: WorkspaceRole;
+  /** The observer banner, naming the process that owns the run (§2.1, [D37]). */
+  banner?: string;
+  /**
+   * Leave the workspace. Given by the session that owns the Ink tree: on an ended run `Q` calls it at once,
+   * and "stop and quit" calls it alongside `onInterrupt` so the session leaves when the stop has landed
+   * [D5]. Without it `Q` falls back to minimising, which is what the workspace did before §2.4.
+   */
+  onQuit?: () => void;
+  /** Start another execution of this run (§2.4, [D36]); absent, and in observer mode, the actions are off. */
+  onResume?: (request: ResumeRequest) => void;
 }
 
 export interface DashboardController {
@@ -101,7 +117,22 @@ export interface DashboardController {
   readonly isOpen: boolean;
   requestApproval(task: ResolvedTask): Promise<{ decision: 'approved' | 'rejected'; note?: string } | 'defer'>;
   requestInteraction(interaction: Interaction, signal: AbortSignal): Promise<InteractionAnswer>;
-  /** The run ended: show the final frame, then unmount. */
+  /**
+   * Point the workspace at a new execution of the run (§2.4): a new scheduler, a new bus, the **same**
+   * presentation store — so the tab, the cursor and a half-typed search survive a resume.
+   */
+  attach(source: { run: WorkflowRun; bus: EventBus; controller: RunController }): void;
+  /** That execution ended: settle what the modal still holds and draw the ended state. Stays mounted. */
+  executionEnded(): void;
+  /** Who is driving, and the banner that says so (§2.1). */
+  setRole(role: WorkspaceRole, banner?: string): void;
+  /**
+   * Put a line in front of the operator that would otherwise have gone to stdout: a rejected action, a
+   * resume that could not start, a note from `startRuntime`. The workspace has the screen, so there is
+   * nowhere else for it to go (§2.4, "operational errors are notices inside the workspace").
+   */
+  notify(text: string): void;
+  /** The workspace is going away: settle what is queued, show the final frame, then unmount. */
   finish(): Promise<void>;
 }
 
@@ -111,6 +142,9 @@ export interface DashboardController {
  * (§3.2, [D40]). No key produces them any other way — a typed `O` and `Z` arrive as two separate reads.
  */
 const SHIFT_TAB_SS3 = 'OZ';
+
+/** What Ctrl+J is by the time `useInput` sees it: a line feed, named `enter`, with no `ctrl` flag (§3.2). */
+const LINE_FEED = '\n';
 
 function taskUsage(st: TaskRunState) {
   return addUsage(...st.attempts.map((a) => a.usage));
@@ -167,6 +201,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const paletteCursor = useStore(store, selectListCursor('palette'));
   const reportCursor = useStore(store, selectListCursor('report'));
   const helpCursor = useStore(store, selectListCursor('help'));
+  const quitCursor = useStore(store, selectListCursor('quit'));
+  const answerDraft = useStore(store, selectDraft(ANSWER_DRAFT));
 
   const [, setTick] = useState(0);
   const [pending, setPending] = useState<PendingItem | null>(props.shared.queue[0] ?? null);
@@ -228,13 +264,10 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     return () => clearInterval(timer);
   }, [active, motion]);
 
-  useEffect(() => {
-    if (props.finished) {
-      const t = setTimeout(() => exit(), 50);
-      return () => clearTimeout(t);
-    }
-    return undefined;
-  }, [props.finished, exit]);
+  // There is deliberately no "the run finished, so leave" effect here. Until §2.4 the workspace called
+  // `exit()` 50 ms after `finished` turned true, which is the whole reason a failed run could not be read:
+  // the screen with the failure on it was the screen that disappeared. The workspace now stays and offers
+  // the actions below; the session that mounted it decides when the process leaves.
 
   // An earlier attempt selected with [ / ] in the follow view: its transcript only exists on disk, because
   // the live buffer is bounded and shared by every attempt of the task. Undefined means "follow the worker".
@@ -303,6 +336,53 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   };
   const closeOverlay = (): void => store.getState().setOverlay({ kind: 'none' });
 
+  // ------------------------------------------------------------------ lifecycle (§2.4)
+  // The actions an ended run offers, and whether this process may run them: an observer has no lock to take
+  // and says so in a banner instead ([D36], [D37]).
+  const canResume = Boolean(props.onResume) && (props.role ?? 'owner') === 'owner';
+  const actions = useMemo(() => (props.finished && canResume ? endedActions(run, selected) : []), [props.finished, canResume, run, selected]);
+  const resume = (request: ResumeRequest): void => {
+    props.onResume?.(request);
+  };
+  const runAction = (action: { kind: string; taskId?: string }): void => {
+    if (action.kind === 'answer' && action.taskId) {
+      store.getState().setDraft(ANSWER_DRAFT, '');
+      store.getState().setOverlay({ kind: 'answer', taskId: action.taskId });
+      return;
+    }
+    if (action.kind === 'resume') resume({ kind: 'resume' });
+    else if (action.taskId) resume({ kind: action.kind as 'task' | 'from' | 'approve' | 'reject', taskId: action.taskId });
+  };
+  /**
+   * `Q`. On an ended run it leaves at once; while something is still executing it asks first, because the
+   * three answers mean three different things to a worker that is halfway through a task [D5].
+   */
+  const requestQuit = (): void => {
+    if (!props.onQuit) {
+      minimise();
+      return;
+    }
+    if (props.finished) {
+      props.onQuit();
+      return;
+    }
+    store.getState().setListCursor('quit', 0, QUIT_ANSWERS.length);
+    store.getState().setOverlay({ kind: 'quit' });
+  };
+  const answerQuit = (kind: 'stay' | 'stopAndQuit' | 'plain'): void => {
+    closeOverlay();
+    if (kind === 'stay') return;
+    if (kind === 'plain') {
+      minimise();
+      return;
+    }
+    // Stop, then leave: the session is already waiting on the scheduler, so the quit it records here is
+    // acted on the moment the run comes to a halt, with that run's exit code.
+    setNotice('Stopping the run, then leaving…');
+    onInterrupt();
+    props.onQuit?.();
+  };
+
   const paletteEntries: PaletteEntry[] = useMemo(() => {
     const entries: PaletteEntry[] = WORKSPACE_TABS.map((name) => ({
       id: `tab:${name}`,
@@ -310,12 +390,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       hint: 'tab',
       run: () => openTab(name),
     }));
+    for (const action of actions) {
+      entries.push({ id: `ended:${action.kind}:${action.taskId ?? ''}`, label: action.label, hint: action.key, run: () => runAction(action) });
+    }
     entries.push(
       { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
-      { id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) },
+      ...(props.finished ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
       { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
       { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
-      { id: 'action:minimise', label: 'Minimise the workspace', hint: 'Q', run: minimise },
+      { id: 'action:quit', label: props.finished ? 'Quit the workspace' : 'Quit: stay, stop and quit, or plain output', hint: 'Q', run: requestQuit },
     );
     for (const task of tasks) {
       entries.push({
@@ -332,7 +415,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     }
     return entries;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, run, selected, store]);
+  }, [tasks, run, selected, store, actions, props.finished]);
   const paletteMatches = useMemo(() => filterPalette(paletteEntries, paletteQuery), [paletteEntries, paletteQuery]);
 
   // ------------------------------------------------------------------ keys
@@ -342,7 +425,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
-      setNotice('Interrupting: stopping workers… (Ctrl+C again to force)');
+      // The workspace does not leave on Ctrl+C any more (§2.4): the run is asked to stop and this screen is
+      // where the operator reads how it went. A second one inside the hard deadline still forces and exits.
+      setNotice(props.finished ? 'The run has already ended. Q leaves with its exit code.' : 'Stopping the run; the workspace stays open. (Ctrl+C again to force)');
       onInterrupt();
     }
   });
@@ -370,6 +455,43 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     (input, key) => {
       if (!overlayOpen) return;
       const state = store.getState();
+      if (overlay.kind === 'quit') {
+        const at = state.cursors['quit'] ?? 0;
+        if (key.upArrow) state.moveListCursor('quit', -1, QUIT_ANSWERS.length);
+        else if (key.downArrow) state.moveListCursor('quit', 1, QUIT_ANSWERS.length);
+        else if (key.return) answerQuit(QUIT_ANSWERS[at]!.kind);
+        else if (key.escape) closeOverlay();
+        else {
+          const chosen = QUIT_ANSWERS.find((a) => a.key.toLowerCase() === input.toLowerCase());
+          if (chosen) answerQuit(chosen.kind);
+        }
+        return;
+      }
+      if (overlay.kind === 'answer') {
+        // [D15] and §3.2: inside a field every printable key is text, Ctrl+J is a newline and Enter sends.
+        const draft = state.drafts[ANSWER_DRAFT] ?? '';
+        if (key.escape) {
+          state.setDraft(ANSWER_DRAFT, '');
+          closeOverlay();
+        } else if (input === LINE_FEED) {
+          // Ctrl+J reaches `useInput` as a bare line feed named `enter`, not as `return` with `ctrl` set.
+          state.setDraft(ANSWER_DRAFT, `${draft}\n`);
+        } else if (key.return && draft.endsWith('\\')) {
+          // `\` then Enter, the newline every terminal can type (§3.2): the backslash becomes the newline.
+          state.setDraft(ANSWER_DRAFT, `${draft.slice(0, -1)}\n`);
+        } else if (key.return) {
+          const text = draft.trim();
+          if (!text) {
+            setNotice('Type an answer first, or press Esc to cancel.');
+            return;
+          }
+          closeOverlay();
+          state.setDraft(ANSWER_DRAFT, '');
+          resume({ kind: 'answer', taskId: overlay.taskId, text });
+        } else if (key.backspace || key.delete) state.setDraft(ANSWER_DRAFT, draft.slice(0, -1));
+        else if (input && !key.ctrl && !key.meta && !key.tab) state.setDraft(ANSWER_DRAFT, draft + input);
+        return;
+      }
       if (overlay.kind === 'help') {
         if (key.upArrow) state.moveListCursor('help', -1, 200);
         else if (key.downArrow) state.moveListCursor('help', 1, 200);
@@ -427,6 +549,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         else state.setCursor(Math.max(0, Math.min(store.getState().cursor + delta, visible.length - 1)));
       };
 
+      // An ended run's actions come first: `R` means "re-run this task through a fresh resume" rather than
+      // "restart it in the running scheduler", and there is no scheduler left to restart anything in.
+      const endedAction = actions.length && input ? endedActionFor(actions, input) : undefined;
+      if (endedAction) {
+        runAction(endedAction);
+        return;
+      }
+
       if (input === '?') state.setOverlay({ kind: 'help' });
       else if (input === '/') {
         state.setDraft(list === 'report' ? 'report-search' : 'search', '');
@@ -463,7 +593,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       else if (lower === 'c') openTab('changes');
       else if (lower === 'r') restart(selected);
       else if (lower === 'h') state.setOverlay({ kind: 'help' });
-      else if (lower === 'q') minimise();
+      else if (lower === 'q') requestQuit();
     },
     { isActive: inWorkspace && !(focus === 'main' && tab === 'changes') },
   );
@@ -600,6 +730,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             focused={focus === 'main'}
             runningGlyph={runningGlyph}
             peek={(taskId, entries) => controller.peek(taskId, entries)}
+            ended={props.finished ? { actions, banner: canResume ? undefined : props.banner, columns: layout.mainWidth } : undefined}
           />
         );
       case 'changes':
@@ -660,8 +791,19 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             {overlayOpen && overlay.kind !== 'search' ? (
               overlay.kind === 'palette' ? (
                 <Palette entries={paletteMatches} query={paletteQuery} cursor={paletteCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
+              ) : overlay.kind === 'quit' ? (
+                <QuitPrompt cursor={quitCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
+              ) : overlay.kind === 'answer' ? (
+                <AnswerField
+                  taskId={overlay.taskId}
+                  question={run.tasks[overlay.taskId]?.message ? sanitizeText(run.tasks[overlay.taskId]!.message!) : undefined}
+                  text={answerDraft}
+                  rows={layout.mainRows}
+                  columns={layout.mainWidth}
+                  theme={theme}
+                />
               ) : (
-                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} />
+                <HelpPanel focus={focus} tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} cursor={helpCursor} ended={actions} />
               )
             ) : (
               mainPanel()
@@ -670,7 +812,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         </Box>
       </Box>
       <Footer
-        hints={overlayOpen ? 'Esc close   ↑↓ move   Enter choose' : footerHints(focus, tab)}
+        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : 'Esc close   ↑↓ move   Enter choose') : footerHints(focus, tab, actions)}
         columns={columns}
         theme={theme}
         columnsShown={layout.footerColumns}
@@ -783,20 +925,18 @@ function UsageView({ run, theme, columns, rows, sort, header, headerRows }: Usag
 }
 
 /**
- * Leave the alternate screen if the process dies without unmounting — a crash, a force-kill. Ink restores
- * the primary buffer on unmount, which covers every ordinary exit; this covers the one where the error
- * message would otherwise be printed onto a screen that is about to disappear.
+ * Leave the alternate screen if the process dies without unmounting — a force-kill, `process.exit` from a
+ * signal path. Ink restores the primary buffer on unmount, which covers every ordinary exit, and
+ * `installCrashHandlers` covers an uncaught error; this is the remainder.
  */
 function armAltScreenRestore(): () => void {
-  const restore = (): void => {
-    try {
-      process.stdout.write('[?1049l[?25h');
-    } catch {
-      /* the stream is already gone; there is nothing left to restore */
-    }
-  };
+  const restore = (): void => restoreTerminal();
+  markAltScreen(true);
   process.once('exit', restore);
-  return () => process.removeListener('exit', restore);
+  return () => {
+    markAltScreen(false);
+    process.removeListener('exit', restore);
+  };
 }
 
 export function createDashboard(opts: DashboardOptions): DashboardController {
@@ -816,17 +956,24 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
   };
   let instance: Instance | undefined;
   let finished = false;
+  let closing = false;
   let seq = 0;
   let disarm: (() => void) | undefined;
 
-  // One store for the life of the workspace, fed from the bus: a store created per mount would lose the tab
-  // and the cursor every time the workspace was minimised and reopened.
-  const attached = attachStore(opts.bus, opts.controller);
+  // One store for the life of the workspace, fed from whichever execution is current: a store created per
+  // mount would lose the tab and the cursor every time the workspace was minimised and reopened, and a
+  // store created per execution would lose them every time an ended run was resumed (§2.4).
+  const store = createPresentationStore();
+  let current: DashboardOptions = opts;
+  let unfollow: () => void = followRun(store, opts.bus, opts.controller);
   const renderTree = opts.mount ?? render;
   const options = workspaceRenderOptions({ flag: opts.altScreen });
 
+  const element = (): React.JSX.Element => <DashboardApp {...current} shared={shared} finished={finished} store={store} />;
+  const refresh = (): void => instance?.rerender(element());
+
   const mount = (): Instance => {
-    const created = renderTree(<DashboardApp {...opts} shared={shared} finished={finished} store={attached.store} />, options);
+    const created = renderTree(element(), options);
     if (options.alternateScreen && process.stdout.isTTY) disarm ??= armAltScreenRestore();
     instance = created;
     return created;
@@ -843,17 +990,44 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
       return instance !== undefined;
     },
     open() {
-      if (instance || finished) return;
-      const current = mount();
-      void current.waitUntilExit().then(() => {
-        if (instance === current) instance = undefined;
+      // `finished` no longer bars a mount: an ended run is exactly what the workspace stays open for
+      // (§2.4). Only a workspace that is on its way out refuses to come back.
+      if (instance || closing) return;
+      const mounted = mount();
+      void mounted.waitUntilExit().then(() => {
+        if (instance === mounted) instance = undefined;
       });
     },
     close() {
       if (!instance) return;
-      const current = instance;
+      const mounted = instance;
       instance = undefined;
-      current.unmount();
+      mounted.unmount();
+    },
+    attach(source) {
+      unfollow();
+      current = { ...current, run: source.run, bus: source.bus, controller: source.controller };
+      unfollow = followRun(store, source.bus, source.controller);
+      finished = false;
+      refresh();
+    },
+    executionEnded() {
+      finished = true;
+      // A worker that was waiting on a human when the run stopped has nobody to answer it now; settle what
+      // is queued rather than leaving a modal in front of the ended state.
+      for (const item of shared.queue.splice(0)) {
+        if (item.kind === 'approval') item.resolve('defer');
+        else item.resolve({ kind: 'deny', message: 'The run ended' });
+      }
+      shared.notify();
+      refresh();
+    },
+    setRole(role, banner) {
+      current = { ...current, role, banner };
+      refresh();
+    },
+    notify(text) {
+      store.getState().setNotice(text);
     },
     requestApproval(task) {
       return new Promise((resolve) => enqueue({ kind: 'approval', id: `approval-${++seq}`, task, resolve }));
@@ -882,21 +1056,21 @@ export function createDashboard(opts: DashboardOptions): DashboardController {
       });
     },
     async finish() {
-      finished = true;
-      for (const item of shared.queue.splice(0)) {
-        if (item.kind === 'approval') item.resolve('defer');
-        else item.resolve({ kind: 'deny', message: 'The run ended' });
-      }
+      controller.executionEnded();
+      closing = true;
       if (!instance) {
-        attached.detach();
+        unfollow();
         disarm?.();
+        disarm = undefined;
         return;
       }
-      const current = instance;
-      current.rerender(<DashboardApp {...opts} shared={shared} finished store={attached.store} />);
-      await current.waitUntilExit().catch(() => undefined);
+      const mounted = instance;
+      // Unmount rather than waiting for the tree to leave by itself: since §2.4 nothing in the tree exits
+      // on `finished`, so a `waitUntilExit` on its own would never resolve.
       instance = undefined;
-      attached.detach();
+      mounted.unmount();
+      await mounted.waitUntilExit().catch(() => undefined);
+      unfollow();
       disarm?.();
       disarm = undefined;
     },

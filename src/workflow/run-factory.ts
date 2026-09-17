@@ -160,6 +160,9 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
         st.reason = undefined;
         st.message = undefined;
         st.result = undefined;
+        // Asking for an approval gate again means asking the human again: the scheduler honours a recorded
+        // decision rather than re-gating, so leaving the old one here would approve it without a word.
+        st.approval = undefined;
         st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
         rerun.push(id);
       }

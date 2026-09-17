@@ -1,8 +1,8 @@
 /** Application service layer shared by CLI commands: load → normalize → validate → wire runtime. */
 import { loadWorkflow, type LoadedWorkflow } from '../config/loader.js';
 import { normalizeWorkflow, type Diagnostic } from '../config/normalize.js';
-import { validateWorkflow, assertValid, type ValidationResult } from '../workflow/validator.js';
-import type { ResolvedWorkflow, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { validateWorkflow, assertValid, buildGraph, type ValidationResult } from '../workflow/validator.js';
+import type { PermissionMode, ResolvedWorkflow, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { FileRunStore } from '../persistence/run-store.js';
 import { ProcessManager } from '../execution/process-manager.js';
 import { RunnerRegistry } from '../runners/task-runner.js';
@@ -23,6 +23,10 @@ import { Redactor } from '../logging/redact.js';
 import { ConsoleLogger, type Logger } from '../logging/logger.js';
 import { Git } from '../workspace/git.js';
 import { WorkflowCompletionStore } from '../workflow/completion-store.js';
+import { reconcileForResume } from '../workflow/run-factory.js';
+import { OrchestratorError, UsageError } from '../util/errors.js';
+import { pathExists } from '../util/fs.js';
+import { openStore, parseList } from './util.js';
 
 export interface PreparedWorkflow {
   loaded: LoadedWorkflow;
@@ -140,6 +144,129 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
   });
   const controller = createRunController({ scheduler });
   return { store, processManager, runners, workspace, bus, scheduler, controller, logger, redactor };
+}
+
+/**
+ * The run is owned by a process that is still alive.
+ *
+ * A distinct type rather than a message, because the two callers need different things from it: `cao resume`
+ * prints it and stops, and the workspace flips to observer and names the pid in its banner (§2.1, [D36]).
+ */
+export class RunLockedError extends OrchestratorError {
+  readonly pid: number;
+  constructor(runId: string, pid: number, heartbeatAt: string) {
+    super(`Run ${runId} is owned by another orchestrator process (pid ${pid}, heartbeat ${heartbeatAt})`);
+    this.name = 'RunLockedError';
+    this.pid = pid;
+  }
+}
+
+export interface StartRuntimeOptions {
+  repository?: string;
+  retryFailed?: boolean;
+  approve?: string[];
+  reject?: string[];
+  input?: string;
+  task?: string[];
+  from?: string[];
+  maxConcurrency?: number;
+  permissionMode?: PermissionMode;
+  claudeCommand?: string;
+  verbose?: boolean;
+  /**
+   * Where the warnings this used to print go. `cao resume` writes them to stdout above the header; the
+   * workspace turns them into notices, because it has no stdout to write to while it holds the screen.
+   */
+  onNote?: (note: string) => void;
+}
+
+/** A run reconciled, locked and ready for `executeRun`, or a reason there is nothing to execute. */
+export type StartedRuntime =
+  | {
+      kind: 'ready';
+      run: WorkflowRun;
+      store: FileRunStore;
+      environment: Record<string, string>;
+      secrets: string[];
+      runners: RunnerDetection[];
+      layers: string[][];
+      /** Tasks `reconcileForResume` put back to pending, for the line `cao resume` prints. */
+      rerun: string[];
+    }
+  | { kind: 'nothing-to-do'; run: WorkflowRun; message: string };
+
+/**
+ * Everything between "resume this run" and "execute it": validate the arguments against the persisted run,
+ * reload the environment, probe the agents, take `lock.json`, and reconcile the run for another pass.
+ *
+ * `cao resume` is this plus a header and `executeRun`; every ended-state action in the workspace is this
+ * plus the same `executeRun` into the workspace that is already open (§2.4). Factored out so those two can
+ * never drift: an action that skipped one of these steps would leave the run owned by a process that then
+ * refused to execute it, or start a second orchestrator in a tree that already has one.
+ *
+ * Nothing here mutates anything before it is sure: a mistyped task id, a repository that has moved and an
+ * agent CLI that has gone missing are all discovered before the lock is taken.
+ */
+export async function startRuntime(runRef: string | undefined, opts: StartRuntimeOptions = {}): Promise<StartedRuntime> {
+  const note = opts.onNote ?? ((): void => undefined);
+  const store = await openStore(opts.repository);
+  const runId = await store.resolveRunId(runRef);
+  const run = await store.loadRun(runId);
+  // The stored workflow is what a resumed run executes, so the same overrides `cao run` accepts apply here.
+  applyWorkflowOverrides(run.workflow, { maxConcurrency: opts.maxConcurrency, permissionMode: opts.permissionMode, claudeCommand: opts.claudeCommand });
+
+  if (run.state === 'cancelled') throw new OrchestratorError(`Run ${runId} was cancelled and cannot be resumed`);
+  if (!(await pathExists(run.repositoryRoot))) throw new OrchestratorError(`Repository for run ${runId} no longer exists: ${run.repositoryRoot}`);
+
+  // Environment values are never persisted: reload them before auth/capability probes and execution.
+  let environment: Record<string, string> = {};
+  let secrets: string[] = [];
+  try {
+    const loaded = await loadWorkflow(run.configPath, { launchDirectory: run.launchDirectory, repository: run.repositoryRoot });
+    environment = loaded.environment;
+    secrets = loaded.secrets;
+  } catch (err) {
+    note(`Could not reload environment from ${run.configPath}: ${(err as Error).message}`);
+  }
+
+  // Everything that can be decided from the arguments and the persisted run is decided before the lock is
+  // taken: a mistyped --task must not leave the run owned by a process that then exits.
+  const only = parseList(opts.task);
+  const from = parseList(opts.from);
+  const input = opts.input !== undefined ? { taskId: only[0] ?? '', text: opts.input } : undefined;
+  if (input && !input.taskId) throw new UsageError('--input requires --task <id> to name the task that needs input');
+  if (input) {
+    // Answers are delivered one task at a time: an answer belongs to the question one worker asked, and
+    // pairing several of them with several --task values on one line is guesswork the operator cannot see.
+    if (only.length > 1) throw new UsageError(`--input answers one task at a time; name a single --task (got ${only.join(', ')}) and resume again for the next one`);
+    const target = run.tasks[input.taskId];
+    if (!target) throw new UsageError(`Run ${runId} has no task "${input.taskId}"`);
+    if (target.state !== 'needs_input') {
+      const waiting = Object.values(run.tasks).filter((t) => t.state === 'needs_input').map((t) => t.id);
+      const alternative = waiting.length ? ` Waiting for an answer: ${waiting.join(', ')}.` : ' No task in this run is waiting for an answer.';
+      throw new UsageError(`Task "${input.taskId}" is ${target.state}, not needs_input, so there is no question for --input to answer.${alternative}`);
+    }
+  }
+
+  // Probe workers before acquiring the run lock or killing/reclassifying orphaned attempts. A bad CLI
+  // should leave the persisted run and any recoverable worker exactly as they were.
+  const runners = await detectRunnersForWorkflow(run.workflow, environment);
+  const unavailable = runners.map((runner) => runnerReadinessError(runner)).find(Boolean);
+  if (unavailable) throw new OrchestratorError(unavailable);
+
+  const lock = await store.acquireLock(runId);
+  if (!lock.ok) throw new RunLockedError(runId, lock.lock.pid, lock.lock.heartbeatAt);
+
+  const selection = only.length || from.length ? { only: input ? [] : only, from } : undefined;
+  if (run.state === 'completed' && !selection) {
+    await store.releaseLock(runId);
+    return { kind: 'nothing-to-do', run, message: `Run ${runId} already completed. Use --task <id> or --from <id> to re-run specific tasks.` };
+  }
+
+  const reconciliation = await reconcileForResume(run, { retryFailed: opts.retryFailed, approve: parseList(opts.approve), reject: parseList(opts.reject), input, selection });
+  for (const n of reconciliation.notes) note(n);
+
+  return { kind: 'ready', run, store, environment, secrets, runners, layers: buildGraph(run.workflow).layers(), rerun: reconciliation.rerun };
 }
 
 export async function detectClaudeForWorkflow(workflow: ResolvedWorkflow): Promise<{ version?: string; command: string; found: boolean; error?: string }> {

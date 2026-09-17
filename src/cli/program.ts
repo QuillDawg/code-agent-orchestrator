@@ -2,6 +2,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { runCommand } from './commands/run.js';
 import { validateCommand } from './commands/validate.js';
 import { resumeCommand } from './commands/resume.js';
+import { uiCommand } from './commands/ui.js';
 import { statusCommand } from './commands/status.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
@@ -135,6 +136,19 @@ export function buildProgram(): Command {
     .action((run: string | undefined, opts) => exitWith(() => resumeCommand(run, opts)));
 
   program
+    .command('ui')
+    .description('Open the workspace on a run, or pick one')
+    .argument('[run]', 'run id, or a unique prefix of one (default: choose from the recent runs)')
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .option('--limit <n>', 'how many recent runs to offer', positiveInt)
+    .option('--json', 'the runs and the workflow files as JSON, without opening anything')
+    .option('--no-tui', 'print the list instead of opening the workspace')
+    .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
+    .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
+    .option('-v, --verbose', 'verbose output')
+    .action((run: string | undefined, opts) => exitWith(() => uiCommand(run, opts)));
+
+  program
     .command('stop')
     .description('Stop a run from another terminal')
     .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
@@ -250,6 +264,7 @@ export function buildProgram(): Command {
     run: ['cao run                                 # workflow.yaml in this directory', 'cao run workflows/ship.yaml --dry-run   # the plan, no agents', 'cao run --task implement-api --no-tui'],
     validate: ['cao validate', 'cao validate workflows/ship.yaml --json'],
     resume: ['cao resume                              # the latest run, retrying failures', 'cao resume 2026-09-04-002 --task review', 'cao resume --approve deploy'],
+    ui: ['cao ui                                  # pick a recent run, or start a workflow file', 'cao ui 002                              # open that run (observer if another terminal owns it)', 'cao ui --json                           # the same list, for a script'],
     stop: ['cao stop                                # ask the latest run to stop', 'cao stop 002 --wait 0                   # ask and return immediately'],
     status: ['cao status', 'cao status 002                          # run ids match by prefix', 'cao status --json'],
     list: ['cao list', 'cao list --limit 5'],

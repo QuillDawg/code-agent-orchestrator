@@ -581,13 +581,33 @@ bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny w
 their options; `T` types an answer. The worker continues the moment you answer. Set `hooks.onInputRequired`
 to be notified elsewhere.
 
+### The workspace stays open when the run ends
+
+Success, failure, a pause or a Ctrl+C: the workspace stays. The Overview leads with the outcome, the failed
+task and its failure category, the latest error line and how many attempts it took, and the logs, earlier
+attempts, diffs and the report stay where they were. Under it are the things you can do next, each of them
+a `cao resume` run from inside the workspace:
+
+`S` resume the run · `R` re-run the selected task · `>` resume from the selected task and everything
+downstream · `A` answer a task that asked a question, and resume with the answer · `A`/`X` approve or
+reject a paused approval gate · `Q` leave, returning the latest run's exit code.
+
+Each action validates first and takes the run lock again. Between them the workspace holds no lock, so
+another terminal may take the run; if one has, the workspace says so and the actions are off until it lets
+go. `cao ui <run>` opens the same workspace on a run that ended earlier — or on one another terminal is
+executing, read-only.
+
 <details>
 <summary><strong>Dashboard keys</strong></summary>
 
 `↑↓` select · `Enter` details · `F`/`L` follow a worker's transcript · `U` usage (tokens, context, cost,
 time in tools; `S` sorts by cost) · `C` review what each task changed · `R` restart a failed,
-blocked, cancelled or skipped task · `?`/`H` help · `Esc` back · `Q` minimise (the run continues;
-`D` reopens it) · `Ctrl+C` stop (twice to force).
+blocked, cancelled or skipped task · `?`/`H` help · `Esc` back · `Q` quit · `Ctrl+C` stop the run and
+stay here (again within 20 seconds to force and exit 130).
+
+`Q` while the run is going asks first: **stay**, **stop and quit**, or **continue in plain output** — the
+old minimise, where the run keeps printing lines and `D` or `Enter` reopens the workspace. On a run that
+has ended `Q` leaves at once, with that run's exit code.
 
 `Ctrl+C` is the only chord the dashboard reads; every other `Ctrl`+key is left to the terminal. Below 100
 columns the summary line, the help screen and the usage table use a compact layout so that no frame is
@@ -724,6 +744,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
 | `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, plus the `cao run` overrides |
+| `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>` |
 | `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
 | `cao status [run]` | Progress table, run directory and orchestrator pid. `--json` |
 | `cao list` | Runs of this repository, newest first. `--limit N`, `--json` |

@@ -19,6 +19,23 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   (`C`) is the Changes tab; `report.md` is the Report tab, rendered as markdown; and the transcript viewer
   (`F`) and the usage table (`U`) still open over the whole terminal. Session, Logs and Diagnostics are
   placeholders that say which stage fills them and what answers the same question today.
+- **`cao ui [run]`.** Opens the workspace on a run nobody is executing — the run directory answers every
+  read, so the logs, the earlier attempts, the diffs and `report.md` are the same ones `cao logs`,
+  `cao diff` and `cao report` print — and offers the same resume actions as a run that has just ended. On a
+  run another terminal owns it opens read-only and names the pid. With no run it lists the recent runs of
+  the repository with their state, age and cost and offers the workflow files beside them; without a
+  terminal (piped, `CI`, `--no-tui`) it prints that list and exits 0, and `--json` prints it as JSON.
+- **A run that has ended can be resumed from the workspace.** `S` resumes the run, `R` re-runs the selected
+  task, `>` resumes from it and everything downstream, `A` answers a task that ended asking a question and
+  resumes with the answer, and `A`/`X` approve or reject a paused approval gate. Each one is the
+  corresponding `cao resume`, validated the same way and through the same code path: it checks the
+  arguments against the persisted run, reloads the environment, probes the agent CLIs, takes `lock.json`
+  and reconciles, then builds a new scheduler into the screen that is already open — keeping the tab, the
+  cursor and anything half-typed. A failure is a notice rather than a lost session. Between executions the
+  workspace holds no lock; if another terminal takes the run meanwhile, the workspace says which pid has it
+  and the actions are disabled.
+- `cao list --json` gains `costUsd` per run, summed over every attempt that reported one. Additive; the
+  table is unchanged.
 - **Tab, `Ctrl+P`, `/` and `?`.** Tab and Shift+Tab move between the task list, the tabs and the panel
   (including the `Esc O Z` form of Shift+Tab that some Windows terminals send); `Ctrl+P` opens a command
   palette over every action and every task id, matched loosely; `/` narrows the focused list; `?` lists the
@@ -158,6 +175,21 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **The workspace stays open when the run ends.** `cao run` and `cao resume` used to leave 50 ms after the
+  run finished, which meant the screen showing a failure was the screen that disappeared. The workspace now
+  enters an **ended** state instead: the Overview leads with the outcome, the failed task and its failure
+  category, the latest error line and the attempt count, and the logs, earlier attempts, diffs and the
+  report stay reachable. Quitting returns the exit code of the latest execution, so a run that failed and
+  was then resumed to success from inside the workspace exits 0; a session that only looked at a run exits
+  0. Nothing changes without a terminal: `--no-tui`, a non-TTY, `CI` and `TERM=dumb` keep the line renderer,
+  the documented exit codes and the same tail output, and create no timer or listener they did not create
+  before.
+- **`Q` asks before it leaves, and `Ctrl+C` no longer closes the workspace.** `Q` used to minimise
+  immediately. While a run is going it now offers three answers — stay, stop and quit, or continue in plain
+  output (the old minimise: line output takes over and `D` or `Enter`, or anything that needs you, brings
+  the workspace back) — and on a run that has ended it leaves at once with that run's exit code. `Ctrl+C`
+  asks the run to stop and keeps the workspace on screen to read the result; a second one inside the
+  existing twenty-second hard deadline still kills the workers and exits 130.
 - **The workspace opens in the alternate screen.** `cao run` and `cao resume` used to draw the dashboard
   into the terminal's normal buffer, which left the run's frames in the scrollback and scrolled whatever
   was on screen before it away. The workspace now takes the alternate screen and gives the shell back
@@ -268,6 +300,16 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **`cao resume --approve <task>` no longer re-asks and pauses again.** The decision `--approve` and
+  `--reject` record on the task was only honoured if an approval handler happened to read it back, so a
+  headless resume re-gated the task and paused on the same question. The scheduler now applies a decision
+  that is already on the task, and `reconcileForResume` clears it when the gate is named for a re-run, so
+  asking for the gate again still asks the human. This is what makes the workspace's Approve and Reject
+  actions work at all.
+- **A crash leaves the terminal usable.** `installCrashHandlers` now leaves the alternate screen and drops
+  raw mode *before* it prints, so the stack trace lands in the scrollback of the shell the run was started
+  from instead of on a buffer that is about to disappear; it then gives the scheduler its one chance to
+  persist synchronously before exiting 70.
 - **Ctrl+C in the dashboard no longer opens the review view on its way out.** Ink reports Ctrl+C as the
   letter `c` with a modifier flag, and the dashboard matched on the letter alone: the last frame before the
   run stopped was a diff review, and the "Interrupting: stopping workers… (Ctrl+C again to force)" notice

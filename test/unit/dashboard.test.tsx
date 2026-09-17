@@ -1311,7 +1311,7 @@ describe('DashboardApp', () => {
     await wait();
     expect(interrupts).toBe(1);
     let frame = stripAnsi(lastFrame() ?? '');
-    expect(frame).toContain('Interrupting: stopping workers');
+    expect(frame).toContain('Stopping the run; the workspace stays open.');
     expect(frame).toContain('R restart');
     expect(frame).not.toContain('Enter hunks');
     // The same for the other chords a terminal habit produces: Ctrl+R must not restart, Ctrl+U must not
@@ -1343,7 +1343,7 @@ describe('DashboardApp', () => {
       // footer off a 24-row terminal, which is what the wide text used to do.
       expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
       for (const line of help.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
-      expect(help).toContain('stop the run (twice to force)');
+      expect(help).toContain('stop the run and stay here');
       expect(help).toContain('Transcript viewer (F)');
 
       tree.write(String.fromCharCode(27));

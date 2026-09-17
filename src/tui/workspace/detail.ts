@@ -10,7 +10,8 @@
  * attempt and interaction history, the result notes and the tail of the transcript.
  */
 import { type ResolvedTask, type TaskRunState, type TranscriptEntry, type WorkflowRun } from 'code-agent-orchestrator-protocol';
-import { STATE_LABEL, stateGlyph } from '../../workflow/states.js';
+import { STATE_LABEL, stateGlyph, summarize } from '../../workflow/states.js';
+import type { EndedAction } from './ended.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock, formatDuration } from '../../util/duration.js';
 import { firstLine } from '../../util/misc.js';
@@ -136,7 +137,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
  * The actions listed are the ones this build has. Editing a task and sending it a prompt are stage 2's, and
  * an action offered before it exists is worse than one that is not offered yet.
  */
-export function failureLines(run: WorkflowRun, theme: Theme): DetailLine[] {
+export function failureLines(run: WorkflowRun, theme: Theme, opts: { actions?: string | false } = {}): DetailLine[] {
   const failed = run.workflow.tasks
     .map((t) => ({ task: t, state: run.tasks[t.id] }))
     .filter((row): row is { task: ResolvedTask; state: TaskRunState } => row.state !== undefined && (row.state.state === 'failed' || row.state.state === 'blocked'));
@@ -145,10 +146,98 @@ export function failureLines(run: WorkflowRun, theme: Theme): DetailLine[] {
   const last = lead.state.attempts[lead.state.attempts.length - 1];
   const category = last?.outcome ? OUTCOME_LABEL[last.outcome] : lead.state.state === 'blocked' ? 'blocked' : 'failed';
   const error = firstLine(sanitizeText(last?.error ?? lead.state.message ?? ''));
+  const actions = opts.actions ?? '  R re-run    F open logs    C open diff';
   return [
     { text: theme.paint(`${glyph('error')} ${lead.task.id} ${category}`, 'danger') + `  after ${lead.state.attempts.length} attempt${lead.state.attempts.length === 1 ? '' : 's'}` + (failed.length > 1 ? `   (+${failed.length - 1} more failed)` : ''), bold: true },
     ...(error ? [{ text: `  ${error}`, dim: true }] : []),
-    { text: '  R re-run    F open logs    C open diff', dim: true },
+    ...(actions === false ? [] : [{ text: actions, dim: true }]),
     { text: ' ' },
   ];
+}
+
+/** What the run states are called on the ended line, matching the words the header and `cao status` use. */
+const RUN_OUTCOME: Record<string, string> = {
+  completed: 'Completed',
+  failed: 'Failed',
+  paused: 'Paused',
+  interrupted: 'Interrupted',
+  cancelled: 'Cancelled',
+  running: 'Running',
+  pending: 'Pending',
+};
+
+export interface EndedBlock {
+  /** The actions offered, already in the order [D36] lists them; empty in observer mode. */
+  actions: EndedAction[];
+  /** The observer banner naming the owning process, shown instead of the actions (§2.1). */
+  banner?: string;
+  /** Columns the panel has, so the action list wraps rather than losing its tail to a truncation. */
+  columns: number;
+}
+
+/** Break `text` on spaces so it fits `width`; the observer banner is a sentence, not a list. */
+function wrapPlain(text: string, width: number): string[] {
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > width) {
+    const space = rest.lastIndexOf(' ', width);
+    const cut = space > width / 2 ? space : width;
+    out.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+/**
+ * The actions as lines that fit `columns`.
+ *
+ * Wrapped rather than truncated, which is what every other line in the workspace does: a line of task
+ * names cut short still says what it is, but a list of actions cut short is a list of actions the operator
+ * cannot see and therefore does not have. On a narrow terminal that meant losing Approve and Reject, which
+ * are the only two things a paused run can be moved on with.
+ */
+export function actionLines(actions: EndedAction[], columns: number): string[] {
+  const width = Math.max(10, columns - 2);
+  const lines: string[] = [];
+  let current = '';
+  for (const action of actions) {
+    const cell = `${action.key} ${action.label}`;
+    if (current && current.length + 4 + cell.length > width) {
+      lines.push(current);
+      current = cell;
+    } else current = current ? `${current}    ${cell}` : cell;
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
+ * What the Overview leads with once the run has ended (§2.4, §3.1): the outcome, then the failure, then
+ * what can be done about it from right here.
+ *
+ * The outcome line exists because the header says the run state in three characters at the far right, and
+ * the first question after a run ends is not "what state" but "did it work, and what do I do now". The
+ * failure block below it is the same one a live run shows, minus its action line: the actions in an ended
+ * run are resumes, not restarts, so offering `R re-run` twice with two different meanings would be worse
+ * than offering it once.
+ */
+export function endedLines(run: WorkflowRun, theme: Theme, block: EndedBlock): DetailLine[] {
+  const summary = summarize(run);
+  const outcome = RUN_OUTCOME[run.state] ?? run.state;
+  const token = run.state === 'completed' ? 'success' : run.state === 'failed' ? 'danger' : 'warning';
+  const elapsed = run.startedAt && run.endedAt ? formatDuration(new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()) : '';
+  const parts = [
+    theme.paint(`Run ${outcome.toLowerCase()}`, token),
+    `${summary.success + summary.skipped}/${summary.total} done`,
+    ...(summary.failed + summary.blocked ? [`${summary.failed + summary.blocked} failed`] : []),
+    ...(elapsed ? [elapsed] : []),
+    ...(run.exitCode !== undefined ? [`exit ${run.exitCode}`] : []),
+  ];
+  const lines: DetailLine[] = [{ text: parts.join('   '), bold: true }];
+  lines.push(...failureLines(run, theme, { actions: false }).slice(0, -1));
+  if (block.banner) for (const line of wrapPlain(block.banner, Math.max(20, block.columns - 2))) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
+  else for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
+  lines.push({ text: ' ' });
+  return lines;
 }

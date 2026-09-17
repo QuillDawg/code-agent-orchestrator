@@ -53,10 +53,14 @@ export const FOCUS_PANELS = ['tasks', 'tabs', 'main'] as const satisfies readonl
 
 /**
  * What is open over the shell and holds the keys: the command palette, the search field of the focused
- * list, or the contextual help. Their text lives in `drafts`, so a half-typed query survives the panel
- * being re-rendered under it.
+ * list, the contextual help, the quit prompt [D5], or the field an answer to a `needs_input` task is typed
+ * into (§2.4). Their text lives in `drafts`, so a half-typed query or answer survives the panel being
+ * re-rendered under it.
  */
-export type Overlay = { kind: 'none' } | { kind: 'palette' } | { kind: 'search' } | { kind: 'help' };
+export type Overlay = { kind: 'none' } | { kind: 'palette' } | { kind: 'search' } | { kind: 'help' } | { kind: 'quit' } | { kind: 'answer'; taskId: string };
+
+/** The draft field the answer-and-resume form types into; one field, because one answer is sent at a time. */
+export const ANSWER_DRAFT = 'answer';
 
 /** The run as the screen last saw it, stamped so a subscriber can tell one coalesced update from the next. */
 export interface RunSnapshot {
@@ -178,14 +182,17 @@ export interface AttachedStore {
 }
 
 /**
- * Create a store and keep its snapshot current from `bus`.
+ * Keep `store`'s snapshot current from `bus`, and return the disposer that stops it.
  *
  * One snapshot is taken immediately, so a tree that mounts against the store has something to draw before
  * the first event; after that, events are coalesced on `COALESCE_MS` — the trailing edge, so the snapshot a
  * subscriber sees is the state after the burst rather than somewhere inside it.
+ *
+ * Separate from `attachStore` because a workspace outlives the run it was opened on (§2.4): resuming an
+ * ended run builds a new scheduler with a new bus, and the store it feeds has to be the *same* store, or
+ * the operator's tab, cursor and half-typed search are thrown away every time a run is restarted.
  */
-export function attachStore(bus: EventBus, scheduler: StoreRunSource, clock: Clock = systemClock): AttachedStore {
-  const store = createPresentationStore(clock);
+export function followRun(store: PresentationStore, bus: EventBus, scheduler: StoreRunSource, clock: Clock = systemClock): () => void {
   let timer: unknown;
   let detached = false;
 
@@ -202,16 +209,19 @@ export function attachStore(bus: EventBus, scheduler: StoreRunSource, clock: Clo
     }, COALESCE_MS);
   });
 
-  return {
-    store,
-    detach: () => {
-      if (detached) return;
-      detached = true;
-      off();
-      if (timer !== undefined) clock.clearTimeout(timer);
-      timer = undefined;
-    },
+  return () => {
+    if (detached) return;
+    detached = true;
+    off();
+    if (timer !== undefined) clock.clearTimeout(timer);
+    timer = undefined;
   };
+}
+
+/** A new store, following `bus` from now on. `followRun` for a store that already exists. */
+export function attachStore(bus: EventBus, scheduler: StoreRunSource, clock: Clock = systemClock): AttachedStore {
+  const store = createPresentationStore(clock);
+  return { store, detach: followRun(store, bus, scheduler, clock) };
 }
 
 /** Selectors. Kept next to the state they read so a view never reaches into the shape by hand. */

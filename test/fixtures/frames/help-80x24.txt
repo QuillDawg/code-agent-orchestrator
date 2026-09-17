@@ -13,8 +13,8 @@ Anywhere
   Tab / Shift+Tab  move between the task list, the tabs and the panel
   Ctrl+P           command palette: every action and every task id
   ?                the keys of whatever has focus
-  Q                minimise the workspace (the run continues; D reopens it)
-  Ctrl+C           stop the run (twice to force)
+  Q                quit: while a run is going it asks first; on an ended run it…
+  Ctrl+C           stop the run and stay here (again within ##s to force and ex…
 
 Transcript viewer (F)
   ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt

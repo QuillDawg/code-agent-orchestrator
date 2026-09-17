@@ -9,6 +9,7 @@ import {
   type EnrichedTaskResult,
   type WorkflowEvent,
   toInteractionRecord,
+  addUsage,
   type RunPaths,
 } from 'code-agent-orchestrator-protocol';
 import { createNativeRunPaths } from './paths.js';
@@ -33,6 +34,12 @@ export interface RunListEntry {
   endedAt?: string;
   repositoryRoot: string;
   progress: { total: number; done: number };
+  /**
+   * What the run cost, summed over every attempt, when any runner reported a cost. Additive and optional:
+   * `cao list --json` gains a field and an older reader ignores it (§2.7). The launcher of `cao ui` shows
+   * it beside the age, which is the question "which of these runs was the expensive one" (§3.1).
+   */
+  costUsd?: number;
 }
 
 export interface RunStore {
@@ -138,6 +145,7 @@ export class FileRunStore implements RunStore {
       const run = await readJsonIfExists<WorkflowRun>(this.paths.workflowFile(name)).catch(() => null);
       if (!run) continue;
       const states = Object.values(run.tasks);
+      const cost = addUsage(...states.flatMap((t) => t.attempts.map((a) => a.usage))).costUsd;
       entries.push({
         runId: run.runId,
         workflowName: run.workflowName,
@@ -149,6 +157,7 @@ export class FileRunStore implements RunStore {
           total: states.length,
           done: states.filter((t) => ['success', 'skipped'].includes(t.state)).length,
         },
+        ...(cost !== undefined ? { costUsd: cost } : {}),
       });
     }
     // Newest first: run ids are allocated per day, so a run created after midnight must not sort under yesterday's.

@@ -10,6 +10,7 @@
  * views it opens - and those keys have not changed.
  */
 import { TAB_LABEL, type FocusRegion, type WorkspaceTab } from '../store.js';
+import type { EndedAction } from './ended.js';
 
 export interface KeyHelp {
   keys: string;
@@ -28,9 +29,36 @@ export const GLOBAL_KEYS: KeyHelp[] = [
   { keys: 'Tab / Shift+Tab', what: 'move between the task list, the tabs and the panel' },
   { keys: 'Ctrl+P', what: 'command palette: every action and every task id' },
   { keys: '?', what: 'the keys of whatever has focus' },
-  { keys: 'Q', what: 'minimise the workspace (the run continues; D reopens it)' },
-  { keys: 'Ctrl+C', what: 'stop the run (twice to force)' },
+  { keys: 'Q', what: 'quit: while a run is going it asks first; on an ended run it leaves at once' },
+  { keys: 'Ctrl+C', what: 'stop the run and stay here (again within 20s to force and exit 130)' },
 ];
+
+/** What a quit request offers while execution is still running [D5]. */
+export type QuitAnswerKind = 'stay' | 'stopAndQuit' | 'plain';
+
+export interface QuitAnswer {
+  key: string;
+  kind: QuitAnswerKind;
+  label: string;
+  what: string;
+}
+
+export const QUIT_ANSWERS: QuitAnswer[] = [
+  { key: 'S', kind: 'stay', label: 'Stay', what: 'go back to the workspace; nothing changes' },
+  { key: 'Q', kind: 'stopAndQuit', label: 'Stop and quit', what: 'stop the workers, then leave with the run’s exit code' },
+  { key: 'P', kind: 'plain', label: 'Continue in plain output', what: 'the run carries on printing lines; D or Enter reopens this' },
+];
+
+/** The keys of the quit prompt, for `?`. */
+export const QUIT_KEYS: KeyHelp[] = [
+  ...QUIT_ANSWERS.map((answer) => ({ keys: answer.key, what: `${answer.label} — ${answer.what}` })),
+  { keys: '↑↓ / Enter', what: 'choose an answer    Esc stays' },
+];
+
+/** The ended-state actions as help rows (§2.4); empty while a run is still executing. */
+export function endedKeys(actions: EndedAction[]): KeyHelp[] {
+  return [...actions.map((action) => ({ keys: action.key, what: action.label, short: action.label })), { keys: 'Q', what: 'quit and return the run’s exit code', short: 'quit' }];
+}
 
 /** The transcript viewer, reached with `F` and shared with `cao logs --follow`. */
 export const VIEWER_KEYS: KeyHelp[] = [
@@ -106,8 +134,11 @@ const ALWAYS = ['Ctrl+P palette', '? help', 'Q minimise'];
  * The Changes panel draws its own key line at the bottom of itself - it has two levels and different keys in
  * each - so the footer stays out of its way and only names the chords that work everywhere.
  */
-export function footerHints(focus: FocusRegion, tab: WorkspaceTab): string {
-  if (focus === 'main' && tab === 'changes') return ALWAYS.join('   ');
+export function footerHints(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[]): string {
+  // An ended run's actions come first wherever they apply: they are the reason the workspace is still open
+  // (§2.4), and an operator looking for "how do I retry this" should not have to press `?` to find out.
+  const lead = ended?.length ? ended.map((action) => `${action.key} ${action.label}`) : [];
+  if (focus === 'main' && tab === 'changes') return [...lead, ...ALWAYS].join('   ');
   const panel = panelHelp(focus, tab).keys.map((help) => `${help.keys} ${help.short ?? help.what}`);
-  return [...panel, ...ALWAYS].join('   ');
+  return [...lead, ...panel, ...ALWAYS].join('   ');
 }

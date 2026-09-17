@@ -12,7 +12,8 @@ import { go as fuzzyGo } from 'fuzzysort';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { renderMarkdown } from '../markdown.js';
-import { GLOBAL_KEYS, PROMPT_KEYS, VIEWER_KEYS, panelHelp, type KeyHelp } from './keys.js';
+import { endedKeys, GLOBAL_KEYS, PROMPT_KEYS, QUIT_ANSWERS, VIEWER_KEYS, panelHelp, type KeyHelp } from './keys.js';
+import type { EndedAction } from './ended.js';
 import { TAB_LABEL, type FocusRegion, type WorkspaceTab } from '../store.js';
 import type { Theme } from '../theme.js';
 import { windowOf } from '../window.js';
@@ -171,12 +172,15 @@ export interface HelpPanelProps {
   columns: number;
   theme: Theme;
   cursor: number;
+  /** The ended-state actions, when the run has ended and this process may run them (§2.4). */
+  ended?: EndedAction[];
 }
 
 /** The help sections for the focused panel, most relevant first. */
-export function helpSections(focus: FocusRegion, tab: WorkspaceTab): Array<{ title: string; keys: KeyHelp[] }> {
+export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: EndedAction[]): Array<{ title: string; keys: KeyHelp[] }> {
   const panel = panelHelp(focus, tab);
   return [
+    ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} — the panel with the keys`, keys: panel.keys },
     { title: 'Anywhere', keys: GLOBAL_KEYS },
     { title: 'Transcript viewer (F)', keys: VIEWER_KEYS },
@@ -184,10 +188,10 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab): Array<{ tit
   ];
 }
 
-export function HelpPanel({ focus, tab, rows, columns, theme, cursor }: HelpPanelProps): React.JSX.Element {
-  const keyWidth = Math.min(22, Math.max(...helpSections(focus, tab).flatMap((s) => s.keys.map((k) => k.keys.length))));
+export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended }: HelpPanelProps): React.JSX.Element {
+  const keyWidth = Math.min(22, Math.max(...helpSections(focus, tab, ended).flatMap((s) => s.keys.map((k) => k.keys.length))));
   const lines: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
-  for (const section of helpSections(focus, tab)) {
+  for (const section of helpSections(focus, tab, ended)) {
     if (lines.length) lines.push({ text: ' ' });
     lines.push({ text: section.title, bold: true });
     for (const key of section.keys) lines.push({ text: `  ${key.keys.padEnd(keyWidth)}  ${key.what}`, dim: false });
@@ -201,6 +205,79 @@ export function HelpPanel({ focus, tab, rows, columns, theme, cursor }: HelpPane
         </Text>
       ))}
       <Text wrap="truncate-end">{theme.paint(`${slice.belowMarker ? `${slice.belowMarker}   ` : ''}↑↓ scroll   Esc close`, 'muted')}</Text>
+    </Box>
+  );
+}
+
+export interface QuitPromptProps {
+  cursor: number;
+  rows: number;
+  columns: number;
+  theme: Theme;
+}
+
+/**
+ * What `Q` asks while a run is still going [D5]: stay, stop and quit, or carry on in plain output.
+ *
+ * Three answers rather than two because the third is the old `Q` — the run keeps going and the screen gets
+ * out of the way — and taking it away would have broken the one workflow people already had for "let this
+ * finish while I do something else".
+ */
+export function QuitPrompt({ cursor, rows, columns, theme }: QuitPromptProps): React.JSX.Element {
+  const width = Math.max(20, Math.min(columns - 2, 72));
+  return (
+    <Box flexDirection="column" width={width} height={Math.min(rows, QUIT_ANSWERS.length + 3)} borderStyle="round" borderColor={theme.ink('border')}>
+      <Text bold wrap="truncate-end">
+        The run is still going. What now?
+      </Text>
+      {QUIT_ANSWERS.map((answer, i) => (
+        <Text key={answer.kind} wrap="truncate-end">
+          {i === cursor ? theme.paint(`${glyph('cursor')} `, 'accent') : '  '}
+          {theme.paint(answer.key, 'key')} {i === cursor ? theme.paint(answer.label, 'selection') : answer.label}
+          {theme.paint(`  ${answer.what}`, 'muted')}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+export interface AnswerFieldProps {
+  taskId: string;
+  /** What the worker asked, already sanitized by the caller. */
+  question?: string;
+  text: string;
+  rows: number;
+  columns: number;
+  theme: Theme;
+}
+
+/**
+ * The field an answer to a `needs_input` task is typed into before the run is resumed (§2.4).
+ *
+ * Deliberately the simplest thing that works: a buffer, `Ctrl+J` for a newline and `Enter` to send. The
+ * composer of §3.5 — history, `$EDITOR`, paste handling, per-task drafts — is stage 2's, and half of one
+ * here would be in its way.
+ */
+export function AnswerField({ taskId, question, text, rows, columns, theme }: AnswerFieldProps): React.JSX.Element {
+  const width = Math.max(20, Math.min(columns - 2, 88));
+  const questionRows = question ? 2 : 0;
+  const lines = text.split('\n');
+  const body = lines.slice(-Math.max(1, rows - 4 - questionRows));
+  return (
+    <Box flexDirection="column" width={width} borderStyle="round" borderColor={theme.ink('border')}>
+      <Text bold wrap="truncate-end">
+        Answer {taskId} and resume
+      </Text>
+      {question ? (
+        <Text wrap="truncate-end">{theme.paint(truncateVisible(question, width - 2), 'muted')}</Text>
+      ) : null}
+      {body.map((line, i) => (
+        <Text key={i} wrap="truncate-end">
+          {line}
+          {i === body.length - 1 ? theme.paint(glyph('barFull'), 'accent') : ''}
+        </Text>
+      ))}
+      <Text wrap="truncate-end">{theme.paint('Enter send and resume   Ctrl+J newline   Esc cancel', 'muted')}</Text>
     </Box>
   );
 }
