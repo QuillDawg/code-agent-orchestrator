@@ -15,7 +15,7 @@ import { windowOf, scrollbarColumn } from '../../src/tui/window.js';
 import { workspaceLayout, footerColumnsFor } from '../../src/tui/workspace/layout.js';
 import { alwaysHints, footerHints, panelHelp, globalKeys, viewerKeys, type KeyMode } from '../../src/tui/workspace/keys.js';
 import { filterPalette, helpSections, PLACEHOLDER_TEXT, reportLines, wrapLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
-import { attentionBadge, fitCells, headerRowsFor } from '../../src/tui/workspace/chrome.js';
+import { attentionBadge, fitCells, headerRowsFor, progressSegments } from '../../src/tui/workspace/chrome.js';
 import { trimToRows } from '../../src/tui/workspace/overview.js';
 import { resolveTheme, reducedMotion, isThemeName, THEME_NAMES } from '../../src/tui/theme.js';
 import { altScreenEnabled, readUserConfig, BASE_RENDER_OPTIONS, workspaceRenderOptions } from '../../src/tui/render-options.js';
@@ -110,6 +110,25 @@ describe('workspace layout', () => {
     expect(footerColumnsFor(120)).toEqual(['shortcuts', 'quota', 'freshness']);
     expect(footerColumnsFor(80)).toEqual(['shortcuts', 'quota']);
     expect(footerColumnsFor(50)).toEqual(['shortcuts']);
+  });
+
+  it('gives a bar cell to every count that is not zero', () => {
+    // Rounding alone gave a 200-task run with three done and one failed an entirely empty bar: 3/200 of 20
+    // cells rounds to nothing, and so does 1/200 — the two facts the bar exists to show.
+    expect(progressSegments([3, 1, 3], 200, 20)).toEqual([1, 1, 1]);
+    expect(progressSegments([0, 0, 0], 200, 20)).toEqual([0, 0, 0]);
+    // A whole run of successes fills it, and the three together never overflow the width.
+    expect(progressSegments([200, 0, 0], 200, 20)).toEqual([20, 0, 0]);
+    for (const counts of [
+      [9, 9, 9],
+      [1, 1, 18],
+      [7, 7, 6],
+      [1, 0, 1],
+    ]) {
+      const segments = progressSegments(counts, 20, 10);
+      expect(segments.reduce((a, n) => a + n, 0), `${counts} overflowed`).toBeLessThanOrEqual(10);
+      for (const [i, n] of counts.entries()) expect(segments[i]! > 0, `${counts} lost ${n}`).toBe(n > 0);
+    }
   });
 
   it('gives the header its third row only when something is waiting for a human', () => {

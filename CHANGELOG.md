@@ -349,6 +349,17 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **The header's progress bar shows progress on a big run.** Each segment was rounded from its share of the
+  width, so a two-hundred-task run with three done and one failed drew twenty empty cells — the two facts the
+  bar exists to show. A count that is not zero is worth at least one cell now, and the largest segment gives
+  cells back when the three together no longer fit.
+- **The failure block no longer offers `R` under a task the cursor is not on.** While a run is still going
+  `R`, `F` and `C` act on the *selected* task, but the block naming the failed one listed them underneath it
+  whatever was selected — so on a run that failed on its third task, `R` restarted the first without a word.
+  The line now says where the failed task is (`↑↓ to <id>, then R re-run …`) until the cursor is on it.
+- **The usage table keeps its header on a long run.** The `N more` marker was not in the view's row budget,
+  so a run too long to fit made the tree one row taller than the terminal and Ink took the row back out of
+  the first child — the workflow name and run id at the top.
 - **`CAO_ASCII=1` reaches the whole workspace.** The state marks, the spinner and the bars already had ASCII
   forms, but the arrows a key is named after (`↑↓`, `←→`), the header's `·`, the `↳` under an attempt, the
   `±` file counter, the em dashes and the bullets and rules of the rendered report were spelled out in

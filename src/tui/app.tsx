@@ -1042,7 +1042,10 @@ function UsageView({ run, theme, columns, rows, sort, header, headerRows }: Usag
   if (sort === 'cost') list.sort((a, b) => (b.u.costUsd ?? 0) - (a.u.costUsd ?? 0));
   // Header, blank, column headings, blank, total, two legend lines, the footer hint: what is left is rows.
   const legend = narrow ? ['Context = tokens in the session window'] : ['Cache r/w = tokens read from / written to the prompt cache', 'Time = duration the agent reported   Tools = time spent inside tool calls'];
-  const budget = Math.max(1, rows - headerRows - 5 - legend.length);
+  const fits = Math.max(1, rows - headerRows - 5 - legend.length);
+  // The `N more` marker is a row like any other. Unreserved, the tree was one row taller than the terminal
+  // on any run that did not fit, and Yoga took the row back out of the first child - the header's own title.
+  const budget = Math.max(1, list.length > fits ? fits - 1 : fits);
   const slice = windowOf(list, 0, budget, { anchor: 0 });
 
   return (

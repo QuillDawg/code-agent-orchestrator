@@ -300,6 +300,50 @@ describe('navigation', () => {
     }
   });
 
+  it('does not offer R, F and C under a failed task while the cursor is on another one', async () => {
+    // `R`, `F` and `C` act on the *selected* task, and while a run is going the selection is wherever the
+    // operator left it — so a run that failed on its third task offered "R re-run" under the name of that
+    // task and restarted the first one instead, without a word.
+    const tree = mount(runWith(['implement-parser', 'implement-renderer', 'review']), size);
+    try {
+      await wait();
+      expect(tree.lastText()).toContain('implement-renderer failed');
+      expect(tree.lastText()).toContain('to implement-renderer, then R re-run');
+      expect(tree.lastText()).not.toContain('  R re-run    F open logs');
+      // On the failed task itself the keys do what the line says, so the line is the plain one again.
+      tree.write(KEYS.down);
+      await wait();
+      expect(tree.lastText()).toContain('R re-run    F open logs    C open diff');
+      fits(tree, size);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('keeps the usage view inside the terminal, header and all', async () => {
+    // The `N more` marker was not in the view's row budget, so on a run too long to fit the tree was one
+    // row taller than the terminal and Yoga took the row out of the first child: the header's own title.
+    const many = Array.from({ length: 60 }, (_, i) => `fan-out-${String(i + 1).padStart(3, '0')}`);
+    for (const small of [
+      { columns: 80, rows: 24 },
+      { columns: 120, rows: 40 },
+    ]) {
+      const tree = mount(runWith(many), small);
+      try {
+        await wait();
+        tree.write('u');
+        await wait(80);
+        const frame = tree.lastText();
+        expect(frame).toContain('S sort by cost');
+        expect(frame, `${small.columns}x${small.rows} lost the header`).toContain('stack-upgrade');
+        expect(frame).toContain('more');
+        fits(tree, small);
+      } finally {
+        tree.unmount();
+      }
+    }
+  });
+
   it('means the same thing by Q in the Changes tab as in every other panel', async () => {
     // The review view was a screen of its own, where `Q` meant "back to the dashboard". As a panel of the
     // workspace that made `Q` the only key with two meanings on one screen: back to the task list here,

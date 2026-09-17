@@ -69,7 +69,7 @@ export function Overview(props: OverviewProps): React.JSX.Element {
   // The budget, in the order the blocks matter: the failure block leads, the table gets about half of what
   // is left, and the detail takes the rest. Every one of them is capped against the rows actually left, so
   // the panel adds up to `rows` on a terminal too small for all three rather than running past the bottom.
-  const failure = (props.observer ? observerLines(run, theme, props.observer) : props.ended ? endedLines(run, theme, props.ended) : failureLines(run, theme)).slice(0, Math.max(0, rows - 1));
+  const failure = (props.observer ? observerLines(run, theme, props.observer) : props.ended ? endedLines(run, theme, props.ended) : failureLines(run, theme, { selected: tasks[cursor]?.id })).slice(0, Math.max(0, rows - 1));
   const afterFailure = Math.max(0, rows - failure.length);
   const tableRows = Math.min(tasks.length, Math.max(0, Math.min(afterFailure, Math.max(3, Math.floor(afterFailure / 2)))));
   const slice = windowOf(tasks, cursor, tableRows);

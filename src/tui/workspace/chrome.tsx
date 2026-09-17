@@ -38,6 +38,27 @@ export function attentionBadge(state: TaskRunState | undefined): string {
   return ' ';
 }
 
+/**
+ * How many cells of a `width`-wide bar each count gets.
+ *
+ * Rounding alone gave a 200-task run with three tasks done an entirely empty bar: 3/200 of 20 cells rounds
+ * to nothing, and so does the one that failed. A count that is not zero is worth at least one cell — that is
+ * the whole point of the bar — so each is rounded up to one and the largest gives cells back if the three
+ * together no longer fit.
+ */
+export function progressSegments(counts: readonly number[], total: number, width: number): number[] {
+  const segments = counts.map((n) => (n <= 0 ? 0 : Math.max(1, Math.round((n / Math.max(1, total)) * width))));
+  let used = segments.reduce((a, n) => a + n, 0);
+  while (used > width) {
+    let biggest = 0;
+    for (let i = 1; i < segments.length; i += 1) if (segments[i]! > segments[biggest]!) biggest = i;
+    if (segments[biggest]! <= 0) break;
+    segments[biggest] = segments[biggest]! - 1;
+    used -= 1;
+  }
+  return segments;
+}
+
 /** How many rows the header needs this frame, so the layout can be computed before it is drawn. */
 export function headerRowsFor(run: WorkflowRun): number {
   return waitingTasks(run).length > 0 ? 3 : 2;
@@ -76,15 +97,14 @@ export function Header({ run, theme, columns, now, role, badge, attention }: Hea
   const usage = addUsage(...run.workflow.tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
 
   const width = narrow ? 10 : 20;
-  const seg = (n: number): number => Math.round((n / Math.max(1, summary.total)) * width);
   const failed = summary.failed + summary.blocked + summary.cancelled;
-  const used = seg(summary.success) + seg(failed) + seg(running + waiting);
+  const segments = progressSegments([summary.success, failed, running + waiting], summary.total, width);
   const full = glyph('barFull');
   const bar =
-    theme.paint(full.repeat(seg(summary.success)), 'success') +
-    theme.paint(full.repeat(seg(failed)), 'danger') +
-    theme.paint(full.repeat(seg(running + waiting)), 'info') +
-    theme.paint(glyph('barEmpty').repeat(Math.max(0, width - used)), 'muted');
+    theme.paint(full.repeat(segments[0]!), 'success') +
+    theme.paint(full.repeat(segments[1]!), 'danger') +
+    theme.paint(full.repeat(segments[2]!), 'info') +
+    theme.paint(glyph('barEmpty').repeat(Math.max(0, width - segments.reduce((a, n) => a + n, 0))), 'muted');
 
   return (
     <Box flexDirection="column">

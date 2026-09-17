@@ -171,14 +171,18 @@ export function leadTaskId(run: WorkflowRun): string | undefined {
  * The actions listed are the ones this build has. Editing a task and sending it a prompt are stage 2's, and
  * an action offered before it exists is worse than one that is not offered yet.
  */
-export function failureLines(run: WorkflowRun, theme: Theme, opts: { actions?: string | false } = {}): DetailLine[] {
+export function failureLines(run: WorkflowRun, theme: Theme, opts: { actions?: string | false; selected?: string } = {}): DetailLine[] {
   const failed = failedTasks(run);
   if (failed.length === 0) return [];
   const lead = failed[0]!;
   const last = lead.state.attempts[lead.state.attempts.length - 1];
   const category = last?.outcome ? OUTCOME_LABEL[last.outcome] : lead.state.state === 'blocked' ? 'blocked' : 'failed';
   const error = firstLine(sanitizeText(last?.error ?? lead.state.message ?? ''));
-  const actions = opts.actions ?? '  R re-run    F open logs    C open diff';
+  // `R`, `F` and `C` act on the *selected* task, and while a run is still going the selection is wherever
+  // the operator left it. The block used to offer them under the name of the failed task whatever was
+  // selected, so on a run that failed on its seventh task `R` restarted the first one without a word.
+  const onLead = opts.selected === undefined || opts.selected === lead.task.id;
+  const actions = opts.actions ?? (onLead ? '  R re-run    F open logs    C open diff' : `  ${glyph('up')}${glyph('down')} to ${lead.task.id}, then R re-run   F open logs   C open diff`);
   return [
     { text: theme.paint(`${glyph('error')} ${lead.task.id} ${category}`, 'danger') + `  after ${lead.state.attempts.length} attempt${lead.state.attempts.length === 1 ? '' : 's'}` + (failed.length > 1 ? `   (+${failed.length - 1} more failed)` : ''), bold: true },
     ...(error ? [{ text: `  ${error}`, dim: true }] : []),

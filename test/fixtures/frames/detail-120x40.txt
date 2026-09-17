@@ -3,7 +3,7 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
 [Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
 Tasks #/#                            ✗ implement-renderer failed  after # attempt
 ▶ ✓ implement-par… claude|opus-#  █    exit code #
-  ✗ implement-ren… codex|gpt-#-… !█    R re-run    F open logs    C open diff
+  ✗ implement-ren… codex|gpt-#-… !█    ↑↓ to implement-renderer, then R re-run   F open logs   C open diff
   ○ review-and-me… claude         █
                                      ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
                                        ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit co…
