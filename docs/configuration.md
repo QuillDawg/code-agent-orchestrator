@@ -459,24 +459,31 @@ Redaction matches key names and known token shapes, so it cannot vet free-form c
 
 ## User-level configuration: `~/.cao/config.json`
 
-Everything above is workflow YAML, scoped to one repository. One setting lives outside any workflow
-and any repository instead, because it is a decision about *this user, on this machine* — whether
-`cao` announces its runs so a desktop app can see them:
+Everything above is workflow YAML, scoped to one repository. A few settings live outside any workflow
+and any repository instead, because they are decisions about *this user, on this machine*: whether
+`cao` announces its runs so a desktop app can see them, and whether the interactive workspace takes
+the terminal's alternate screen:
 
 ```jsonc
 // ~/.cao/config.json
 {
   "protocol": 1,
   "emit": true,          // set by `cao emit enable` / `cao emit disable`; never edit this by hand
-  "retainDays": 14        // how long an announced run's pointer is kept after it ends
+  "retainDays": 14,       // how long an announced run's pointer is kept after it ends
+  "altScreen": false      // off draws the workspace in the normal buffer instead of the alternate
+                          // screen, like --no-alt-screen or CAO_ALT_SCREEN=0; read only if this file
+                          // already exists, so a cao with emit off still never touches ~/.cao
 }
 ```
 
 Unknown keys are preserved when `cao` rewrites this file, so an older and a newer `cao` on the same
 machine can share it without one silently dropping what the other wrote.
 
-Nothing here is read by `cao run` unless announcing is already relevant to that invocation, and
-`cao` never creates or writes this file except through `cao emit enable` / `cao emit disable`. The
-full precedence between this file, `--emit`/`--no-emit` and `CAO_EMIT`, what "announcing" actually
-writes, and how to diagnose a desktop app that shows nothing, are in
-[docs/desktop.md](desktop.md).
+Nothing here is read by `cao run` unless announcing or the alternate screen is already relevant to
+that invocation, and `cao` never creates or writes this file except through `cao emit enable` /
+`cao emit disable`. The full precedence between this file, `--emit`/`--no-emit` and `CAO_EMIT`, what
+"announcing" actually writes, and how to diagnose a desktop app that shows nothing, are in
+[docs/desktop.md](desktop.md). The alternate-screen precedence (`--no-alt-screen` flag, then
+`CAO_ALT_SCREEN`, then this file's `altScreen`, then the default of on) and the rest of the
+workspace's CLI flags and environment variables are in the [README](../README.md#environment-variables)
+and [docs/capabilities.md](capabilities.md#watching-a-run).

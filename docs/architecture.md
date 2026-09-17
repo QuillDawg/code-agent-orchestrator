@@ -24,31 +24,57 @@
 ```
 src/
   bin.ts, index.ts            CLI entry / library exports
-  cli/                        commander program, commands/ (run, validate, resume, stop, status, list, logs, peek, task, diff, report, clean, doctor)
-    app.ts                    service layer: prepareWorkflow(), createRuntime()
+  cli/                        commander program, commands/ (run, validate, resume, ui, stop, status, list, logs, peek, task,
+                              task-control (`task stop|restart`), diff, report, clean, doctor, emit)
+    app.ts                    service layer: prepareWorkflow(), createRuntime(), startRuntime() (the prepared runtime shared by
+                              `cao resume` and a workspace action, so the two cannot validate a resume differently)
+    ownership.ts              the owner/observer classifier: `readOrchestrator`'s answer turned into self/owned/abandoned/ended,
+                              and the header badge, the observer banner and the cross-process refusal sentence, all built from it
+    workspace-session.ts      owns the Ink tree across however many executions one `cao run`/`resume`/`ui` session runs, the
+                              plain-output fallback, the operator's quit/interrupt intentions, and the exit code
     crash.ts                  process-level unhandledRejection / uncaughtException handlers, exit 70
     color.ts, util.ts         colour mode (--color/NO_COLOR/FORCE_COLOR), run and task reference resolution, tables, time formats
     render/plain.ts           non-TTY line renderer, startup header, summary
     render/diff.ts            reads a captured diff.patch: section lookup by path (git's quoting undone), stat and colour
   config/                     schema.ts (zod), loader.ts (YAML, repository/launch dir, env), normalize.ts (defaults, templates, foreach, DAG rules)
   workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts
-    control/                  commands.ts (the ControlCommand union and its envelope), controller.ts (RunController: the only way anything outside workflow/ changes execution state)
+    control/                  commands.ts (the ControlCommand union and its envelope), controller.ts (RunController: the only way
+                              anything outside workflow/ changes execution state), observer.ts (watches a run another process
+                              owns: polls workflow.json + live.json into the same presentation store, sends stop/kill/restart
+                              through the request inbox and shows the ack), detached.ts (a read-only RunController over a run
+                              directory nobody is executing, refusing every command with a reason; what `cao ui` reads a
+                              finished or another-terminal's run through), local.ts (a per-run map of in-process controllers, so
+                              `cao task stop|restart` reaches the owning process directly when it is this one instead of writing
+                              a request to itself)
   runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
   conditions/evaluator.ts     safe `when` expression grammar
   templates/engine.ts         safe {{path}} substitution
   workspace/                  git.ts (explicit git wrapper), workspace-manager.ts (shared + git worktree strategies, merge-back), diff.ts (tree snapshots through a throwaway index, diff.patch/diff.json capture)
-  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl), requests.ts (reads and writes the request inbox: requests/<ULID>-<kind>.json, requests/acks/<ULID>.json, requests/rejected/; the CLI-side sendControlRequest is declared here too, unused so far)
+  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl), requests.ts (reads and writes the request inbox: requests/<ULID>-<kind>.json, requests/acks/<ULID>.json, requests/rejected/; the CLI-side sendControlRequest, called by `cao task stop|restart` from another terminal and by the workspace observer's S/K/R), registry.ts (the user-level `~/.cao` registry: an announced run's pointer entry, and `readConfig`/`writeConfig` over `~/.cao/config.json`'s `protocol`/`emit`/`retainDays` keys; `tui/render-options.ts` reads the same file's `altScreen` key separately)
   events/event-bus.ts         typed synchronous event bus
   logging/                    logger.ts, redact.ts
-  tui/                        app.tsx (Ink dashboard: table, detail, usage, help), viewer.tsx (follow view, shared with `cao logs --follow`),
+  tui/                        app.tsx (the persistent workspace shell: header, sidebar, tabbed main panel, footer, all fed by the
+                              zustand store in store.ts), launcher.tsx (`cao ui` with no run: pick a recent run or a workflow file
+                              to start), viewer.tsx (follow view, shared with `cao logs --follow`), theme.ts (the colour token
+                              table; `default`/`mono` today), render-options.ts (resolves the alternate-screen setting:
+                              `--no-alt-screen` flag, `CAO_ALT_SCREEN` env, `~/.cao/config.json`'s `altScreen`, then the default),
+                              window.ts (windowing shared by the sidebar, tables, the review list and the picker)
+    workspace/                 chrome.tsx (header, sidebar, tab bar, footer), overview.tsx (the Overview tab: the ended-run and
+                              observer lead lines, the task table, the selected task's detail block), detail.ts (a task's detail
+                              block, and the ended-run and observer lead lines above it), ended.ts (the ended-run actions —
+                              resume run, re-run task, resume from task, answer and resume, approve/reject), observer.ts (the
+                              observer's stop/kill/restart controls, sent as requests), panels.tsx (Session, Logs, Changes,
+                              Report and Diagnostics tabs, the command palette, the quit prompt), keys.ts (every key the
+                              workspace answers, written down once so the footer and `?` cannot drift apart), layout.ts (row
+                              budgets and the 80x24 compact-layout thresholds)
                               dashboard/ (modal.tsx for permission prompts, questions and approvals; review.tsx + files.ts + editor.ts for the
-                              `C` review view; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
+                              Changes tab; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
                               by `cao task` and the detail view), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
                               surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
-                              package), logs.tsx, follow.ts (file tailer), store.ts (zustand store for presentation state — view,
-                              focus, cursor, notice and a coalesced run snapshot; not wired into app.tsx yet)
+                              package), logs.tsx, follow.ts (file tailer), store.ts (the zustand store the workspace is fed from: the
+                              run snapshot, the focused tab and panel, per-list cursors, drafts, notices and overlays)
   util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
                               instruction the scheduler appends to deny messages, and the helpers that take it back off for an
                               operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,
@@ -69,7 +95,8 @@ test/
 
 The run directory a run writes is documented in
 [capabilities.md](capabilities.md#where-the-truth-lives) — `workflow.json`, `events.jsonl`, `live.json`,
-`lock.json`, `stop.json`, `report.md`, and per attempt `prompt.md`, `attempt.json`, `diff.patch`,
+`lock.json`, `stop.json`, `report.md`, `requests/<ULID>-<kind>.json` with `requests/acks/<ULID>.json` and
+`requests/rejected/` beside them, and per attempt `prompt.md`, `attempt.json`, `diff.patch`,
 `diff.json`, `stdout.log`, `stderr.log` and the attempt's own `events.jsonl`.
 
 ## Key abstractions
@@ -86,6 +113,8 @@ The run directory a run writes is documented in
 | `EventBus` | `WorkflowEvent` union consumed by persistence, renderers and the dashboard |
 | `ProcessManager` | every child process the orchestrator spawns: registry, output capture, timeouts, tree termination |
 | `RunController` | `submit(command, envelope) → ControlAck`; the single door through which the TUI and the CLI stop, kill, restart or cancel. Deduplicated by envelope id, refused when the state it was built on has moved on, and applied inside the scheduler loop |
+| Ownership classifier (`cli/ownership.ts`) | `self` \| `owned` \| `abandoned` \| `ended`, decided the way `cao status` already decides it (`lock.json`, then `live.json` and its heartbeat); the one source for the workspace's badge, its observer banner and a cross-process refusal sentence |
+| Observer (`workflow/control/observer.ts`) | watches a run another live process owns: polls `workflow.json` + `live.json` on the existing 500 ms tick into the presentation store, follows transcripts through `tui/follow.ts`, and sends `stop`/`kill`/`restart` through the request inbox instead of taking the lock |
 
 ## State machines
 

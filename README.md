@@ -574,12 +574,16 @@ Deeper reading: [docs/architecture.md](docs/architecture.md) and
 
 ## Watching a run
 
-`cao run` opens a live terminal dashboard. Every row is a worker: its state, agent and model, elapsed time,
-cost, context size, and an **activity column** showing the tool, command or line of prose it is on right
-now. After 30 seconds of silence the cell gains `… 2m idle`, so a thinking worker is distinguishable from a
-stuck one.
+`cao run` opens a persistent terminal workspace: a header (repository, run id, workflow, run state, elapsed,
+concurrency, owner/observer badge), a sidebar task list, a tabbed main panel — **Overview · Session · Logs ·
+Changes · Report · Diagnostics** — and a footer with the keys of whatever has focus. The Overview leads with
+the run's outcome, then a task table (state, elapsed, agent, context size, cost, changed files, and an
+**activity column** showing the tool, command or line of prose a worker is on right now — after 30 seconds
+of silence the cell gains `… 2m idle`, so a thinking worker is distinguishable from a stuck one), then the
+selected task's full detail. Session and Logs are placeholders in this beta; each says what to use instead
+(`F` for the transcript, `cao task <id>`, `cao logs`) until they arrive.
 
-When a worker needs you, a prompt appears in the dashboard (it reopens itself if minimised, and the terminal
+When a worker needs you, a prompt appears in the workspace (it reopens itself if minimised, and the terminal
 bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny with a reason. Questions list
 their options; `T` types an answer. The worker continues the moment you answer. Set `hooks.onInputRequired`
 to be notified elsewhere.
@@ -604,26 +608,37 @@ goes, the badge says `abandoned · resume?` and the resume actions come back. `c
 workspace on a run that ended earlier, or on one another terminal is executing.
 
 <details>
-<summary><strong>Dashboard keys</strong></summary>
+<summary><strong>Workspace keys</strong></summary>
 
-`↑↓` select · `Enter` details · `F`/`L` follow a worker's transcript · `U` usage (tokens, context, cost,
-time in tools; `S` sorts by cost) · `C` review what each task changed · `R` restart a failed,
-blocked, cancelled or skipped task · `?`/`H` help · `Esc` back · `Q` quit · `Ctrl+C` stop the run and
-stay here (again within 20 seconds to force and exit 130).
+`Tab`/`Shift+Tab` move between the task list, the tab bar and the panel · arrows, `PgUp`/`PgDn` and
+`Home`/`End` navigate whatever has focus · `Enter` opens it · `Esc` closes a dialog or steps back ·
+`Ctrl+P` opens a command palette over every action and every task id · `/` searches the focused list or
+the report · `?` lists the keys of whatever has focus, plus the ones that work anywhere · `Q` quits ·
+`Ctrl+C` stops the run and stays here (again within 20 seconds to force and exit 130).
+
+In the task list: `↑↓` select · `Enter` open the task in the panel · `F`/`L` follow its transcript · `R`
+restart a failed, blocked, cancelled or skipped task. In the tab bar: `←→` choose a tab, `Enter` opens it
+and focuses its panel. In the Overview: `↑↓` (plus `PgUp`/`PgDn`, `Home`/`End`) move the task table · `F`/`L`
+follow the selected task · `R` restart it · `U` usage (tokens, context, cost, time in tools; `S` sorts by
+cost), full-screen · `C` jump to the Changes tab.
 
 `Q` while the run is going asks first: **stay**, **stop and quit**, or **continue in plain output** — the
 old minimise, where the run keeps printing lines and `D` or `Enter` reopens the workspace. On a run that
-has ended `Q` leaves at once, with that run's exit code.
+has ended `Q` leaves at once, with that run's exit code; watching another terminal's run `Q` just closes
+the window. See [above](#the-workspace-stays-open-when-the-run-ends) for the ended-run actions (`S` `R`
+`>` `A` `X`) and the observer's controls (`S` `K` `R`).
 
-`Ctrl+C` is the only chord the dashboard reads; every other `Ctrl`+key is left to the terminal. Below 100
-columns the summary line, the help screen and the usage table use a compact layout so that no frame is
-wider or taller than the terminal it is drawn in. The usage table drops its cache, turns, time and tools
-columns there; `cao task <id>` still reports all of them.
+`Ctrl+C` is the only chord the workspace itself reads; every other `Ctrl`+key is left to the terminal.
+Below 100 columns the sidebar collapses to a one-line task strip, and the footer gives up its freshness
+chip first, then its quota chip, then the focused panel's own keys — `? help` and the way out survive
+last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than
+the terminal it is drawn in; the usage table drops its cache, turns, time and tools columns there,
+`cao task <id>` still reports all of them.
 
 </details>
 
 <details>
-<summary><strong>Transcript viewer keys</strong> (<code>F</code> in the dashboard, or <code>cao logs --follow</code>)</summary>
+<summary><strong>Transcript viewer keys</strong> (<code>F</code> in the workspace, or <code>cao logs --follow</code>)</summary>
 
 `←`/`→` or `Tab` switch tasks · `1`-`9` jump to one · `P` task picker · `[`/`]` switch attempts ·
 `↑↓`/`PgUp`/`PgDn` scroll · `g` oldest line · `Shift+G` newest line and follow again · `t` expand tool
@@ -636,7 +651,7 @@ so the whole transcript is reachable.
 </details>
 
 <details>
-<summary><strong>Review keys</strong> (<code>C</code> in the dashboard)</summary>
+<summary><strong>Review keys</strong> (the Changes tab, <code>C</code> from the Overview)</summary>
 
 The list shows every task's files with `A`/`M`/`D`/`R` and `+N -M`. `↑↓`, `PgUp`/`PgDn`, `g`/`G` move ·
 `Enter` opens that file's hunks · `O` opens it in `$VISUAL`/`$EDITOR` · `Esc`/`Q` back. In the hunk pane:
@@ -750,7 +765,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
 | `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, plus the `cao run` overrides |
-| `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>` |
+| `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>`, `--verbose` |
 | `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
 | `cao status [run]` | Progress table, run directory and orchestrator pid. `--json` |
 | `cao list` | Runs of this repository, newest first. `--limit N`, `--json` |
