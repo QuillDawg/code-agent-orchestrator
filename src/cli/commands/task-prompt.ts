@@ -130,7 +130,7 @@ export async function taskPromptCommand(refs: string[], opts: TaskPromptOptions)
     // `hasChannel: false` is the literal truth for a run nothing is executing, and it is what makes the
     // matrix answer `stopAndContinue` for a task the run directory still says is `running` — a task whose
     // orchestrator has gone. Say so rather than pretending its worker is there to be stopped.
-    const chosen = selectPromptMode(state, { hasChannel: false, requested });
+    const chosen = selectPromptMode(state, { hasChannel: false, requested, source: 'cli' });
     if (chosen.mode !== 'followUp') {
       const why =
         chosen.reason ??

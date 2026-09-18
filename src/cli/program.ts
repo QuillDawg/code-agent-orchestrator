@@ -175,7 +175,7 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
   },
   'task prompt': {
     examples: [
-      'cao task prompt review --message "also update the changelog"',
+      'cao task prompt review --message "also update the changelog"   # the run picks the mode and says which',
       'cao task prompt review --file notes.md --steer',
       'cao task prompt 002 review --message "try again with -O2" --stop-and-continue',
       'cao task prompt review --message "start over from the spec" --fresh-session',
@@ -482,6 +482,18 @@ export function buildProgram(): Command {
     .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
     .option('--no-tui', 'plain output when the message has to resume the run to reach the task')
     .option('--repository <dir>', 'repository containing .orchestrator')
+    // Three mode flags read like a choice that has to be made before anything can be sent; it is the
+    // opposite. Said here rather than three times over in the option list.
+    .addHelpText(
+      'after',
+      [
+        '',
+        'The three mode flags are optional. With none of them the run picks the one the task allows -',
+        'steer a worker with a live channel, stop and continue one without, start a stopped task again -',
+        'and the answer names it: "Steer: ...", "Stop and continue: ...", "Follow-up: ...". Naming a mode',
+        'the task does not allow is refused rather than quietly turned into the other one.',
+      ].join('\n'),
+    )
     .action((refs: string[] | undefined, opts) => exitWith(() => taskPromptCommand(refs ?? [], opts)));
 
   task

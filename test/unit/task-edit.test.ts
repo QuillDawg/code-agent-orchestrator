@@ -245,6 +245,46 @@ describe('editing a running task (§5 row 6)', () => {
     await execution;
   });
 
+  /**
+   * The other half of §3.4's "running **or waiting**" row, which had no test at all.
+   *
+   * A waiting task is a worker blocked on a human, and the human has walked over to the editor instead of
+   * answering. Stopping it has to settle the request first `[D22]`, or the worker never reads its abort and
+   * the operator is left with a prompt on screen for a task that is being replaced.
+   */
+  it('stops a task that is waiting on a human, settling what it asked before the edit restarts it', async () => {
+    // Attempt 1 asks and waits; attempt 2 - the one the edit starts - just runs, so anything still pending
+    // afterwards is the request the edit was supposed to settle.
+    const runner = new MockRunner()
+      .when('a', [{ kind: 'interact', interaction: { title: 'Bash: rm -rf build' }, then: { kind: 'hang' } }, { kind: 'hang' }])
+      .when('b', { kind: 'hang' });
+    // A handler that never answers is a human who has walked to the editor instead: without one the
+    // scheduler denies for the worker and the task never waits at all.
+    const h = harness(await wf(PAIR), runner, { interactionHandler: () => new Promise<never>(() => undefined) });
+    const execution = h.scheduler.execute();
+    await waitFor(() => h.run.tasks.a!.state === 'waiting' && Boolean(h.run.tasks.a!.pendingInteraction));
+
+    const refused = await h.controller.submit({ kind: 'edit', taskId: 'a', changes: { prompt: 'the revised prompt' }, restart: false }, tui());
+    expect(refused.status).toBe('rejected');
+    expect(refused.reason).toContain('waiting for you');
+    expect(refused.reason).toContain('--restart');
+    expect(h.run.tasks.a!.state).toBe('waiting');
+
+    const ack = await h.controller.submit({ kind: 'edit', taskId: 'a', changes: { prompt: 'the revised prompt' }, restart: true }, tui());
+    expect(ack.status).toBe('applied');
+
+    await waitFor(() => h.run.tasks.a!.attempts.length === 2);
+    // Nothing is left asking for a human who has moved on, and the answer is a denial rather than a silence.
+    expect(h.run.tasks.a!.pendingInteraction).toBeUndefined();
+    expect(runner.calls[0]!.answers?.[0]).toMatchObject({ kind: 'deny' });
+    expect(h.run.tasks.a!.attempts[0]!.outcome).toBe('cancelled');
+    expect(h.store.prompts.get('a#2')).toContain('the revised prompt');
+    expect(h.run.tasks.a!.revisions![0]).toMatchObject({ number: 1, appliedToAttempt: 2 });
+
+    await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
+    await execution;
+  });
+
   it('refuses a running task an edit did not ask to restart, and says how to ask', async () => {
     const runner = new MockRunner().when('a', { kind: 'hang' }).when('b', { kind: 'hang' });
     const h = harness(await wf(PAIR), runner);

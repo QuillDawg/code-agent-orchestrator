@@ -516,6 +516,20 @@ describe('cao task subcommands [D6]', () => {
     // The precedence rule is the surprising part, so the help for `task` has to state it.
     expect(helpAt(100, ['task'])).toContain('cao task show stop');
   });
+
+  /**
+   * `cao task prompt` with no mode flag (§3.5).
+   *
+   * Three mode flags in an option list read like a choice that has to be made before anything can be sent,
+   * and the help said nothing to the contrary: it is the opposite, and the run's answer names what it did.
+   */
+  it('says in the help that the mode flags are optional and that the answer names the mode', () => {
+    expect(parseCli(['task', 'prompt', 'review', '--message', 'x']).options.steer).toBeUndefined();
+    const help = helpAt(100, ['task', 'prompt']);
+    expect(help).toContain('The three mode flags are optional');
+    expect(help).toContain('the run picks the one the task allows');
+    for (const mode of ['Steer:', 'Stop and continue:', 'Follow-up:']) expect(help, mode).toContain(mode);
+  });
 });
 
 describe('cao doctor probes are opt-in [D32]', () => {

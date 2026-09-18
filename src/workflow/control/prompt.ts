@@ -10,7 +10,7 @@
  * does not offer it.
  */
 import { ACTIVE_TASK_STATES, TERMINAL_TASK_STATES } from 'code-agent-orchestrator-protocol';
-import type { PromptDelivery, PromptDeliveryMode, TaskAttempt, TaskRunState, TaskState } from 'code-agent-orchestrator-protocol';
+import type { ControlSource, PromptDelivery, PromptDeliveryMode, TaskAttempt, TaskRunState, TaskState } from 'code-agent-orchestrator-protocol';
 import type { SteerResult } from '../../runners/task-runner.js';
 import { ulid } from '../../util/ulid.js';
 import { nowIso } from '../../util/misc.js';
@@ -121,6 +121,25 @@ export const MODE_LABEL: Record<PromptDeliveryMode, string> = {
   stopAndContinue: 'stop and continue',
 };
 
+/** The flag that names each mode on the command line. */
+const MODE_FLAG: Record<PromptDeliveryMode, string> = {
+  steer: '--steer',
+  followUp: '--follow-up',
+  stopAndContinue: '--stop-and-continue',
+};
+
+/**
+ * A refusal that points at another mode names the flag for it — but only where there is a command line.
+ *
+ * `cao task prompt` and a request file both come from something that typed flags, and naming the one to type
+ * next is the whole of the answer. The composer has no flags: it chose the mode itself from the row it drew,
+ * and it is refused only when the task moved between the frame and the submit. "Send it a follow-up instead
+ * (--follow-up)" told that operator to type something that is not a thing they can type.
+ */
+const flagsFor = (source?: ControlSource): boolean => source !== 'tui' && source !== 'desktop';
+
+const instead = (mode: PromptDeliveryMode, flags: boolean): string => (flags ? `${MODE_LABEL[mode]} (${MODE_FLAG[mode]})` : MODE_LABEL[mode]);
+
 /**
  * The mode to use, or the sentence to refuse with (§3.5).
  *
@@ -129,23 +148,24 @@ export const MODE_LABEL: Record<PromptDeliveryMode, string> = {
  * thing done to a different attempt, and doing it silently is how an operator loses a session they meant to
  * continue.
  */
-export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolean; requested?: PromptDeliveryMode }): PromptRow {
+export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolean; requested?: PromptDeliveryMode; source?: ControlSource }): PromptRow {
   const row = promptRow(state, opts.hasChannel);
   if (!opts.requested || !row.mode || row.mode === opts.requested) return row;
+  const flags = flagsFor(opts.source);
   if (opts.requested === 'steer') {
     return {
       reason:
         state.state === 'running'
-          ? `The worker running "${state.id}" has no channel to steer through: this agent and transport cannot be spoken to mid-turn. Stop it and continue with the message instead (--stop-and-continue).`
-          : `Task "${state.id}" is ${state.state}, so there is no live turn to steer. Send it a follow-up instead (--follow-up), which starts a new attempt.`,
+          ? `The worker running "${state.id}" has no channel to steer through: this agent and transport cannot be spoken to mid-turn. Send it as a ${instead('stopAndContinue', flags)} instead, which stops the worker and starts the task again with your message.`
+          : `Task "${state.id}" is ${state.state}, so there is no live turn to steer. Send it a ${instead('followUp', flags)} instead, which starts a new attempt.`,
     };
   }
   if (opts.requested === 'stopAndContinue' && row.mode === 'followUp') {
-    return { reason: `Task "${state.id}" is ${state.state} and has no worker to stop. Send it a follow-up instead (--follow-up).` };
+    return { reason: `Task "${state.id}" is ${state.state} and has no worker to stop. Send it a ${instead('followUp', flags)} instead.` };
   }
   if (opts.requested === 'followUp' && (row.mode === 'steer' || row.mode === 'stopAndContinue')) {
     return {
-      reason: `Task "${state.id}" is still running, so a follow-up has no attempt to start. ${row.mode === 'steer' ? 'Steer it (--steer)' : 'Stop it and continue (--stop-and-continue)'}, or stop it first.`,
+      reason: `Task "${state.id}" is still running, so a follow-up has no attempt to start. Send it as a ${instead(row.mode, flags)} instead, or stop it first.`,
     };
   }
   return { reason: `Task "${state.id}" is ${state.state}; ${MODE_LABEL[opts.requested]} does not apply to it.` };

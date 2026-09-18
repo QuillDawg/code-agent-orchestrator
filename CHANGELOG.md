@@ -430,6 +430,13 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   message still sitting at `queued`. A **Sent to this task** section now prints each one with its time,
   source, mode, state, the attempt that carried it and the first line of the text, with a rejected steer's
   reason underneath.
+- **`cao task prompt --help` says the mode flags are optional.** Three of them in an option list read like a
+  choice that has to be made before anything can be sent; it is the opposite, and the help now says so and
+  shows what the answer looks like.
+- **A refusal that points at another mode names a flag only where there is a command line to type it on.**
+  The composer picks its own mode from the row it drew and is refused only when the task moves between the
+  frame and the send — where "send it a follow-up instead (`--follow-up`)" named something that surface
+  cannot type. A message from `cao task prompt` or from another terminal still gets the flag.
 - **A message sent to a running task no longer announces itself as "task manually restarted from
   dashboard".** All three routes that start a task again — `cao task restart`, the restart half of an edit,
   and the stop-and-continue row of §3.5 — shared one sentence, which named the wrong action for two of them

@@ -71,6 +71,25 @@ describe('which mode the §3.5 matrix offers', () => {
     expect(selectPromptMode(stateIn('failed'), { hasChannel: false, requested: 'followUp' }).mode).toBe('followUp');
     expect(MODE_LABEL.stopAndContinue).toBe('stop and continue');
   });
+
+  /**
+   * The composer has no flags. It picks the mode from the row it drew and is refused only when the task
+   * moved between the frame and the submit — where "send it a follow-up instead (--follow-up)" told the
+   * operator to type something their surface cannot type.
+   */
+  it('names the other mode without a flag when the sender has no command line', () => {
+    const tui = (state: TaskRunState, requested: 'steer' | 'followUp' | 'stopAndContinue', hasChannel = false) =>
+      selectPromptMode(state, { hasChannel, requested, source: 'tui' }).reason!;
+
+    expect(tui(stateIn('failed'), 'steer')).toContain('Send it a follow-up instead');
+    expect(tui(stateIn('failed'), 'stopAndContinue')).toContain('Send it a follow-up instead.');
+    expect(tui(stateIn('running'), 'followUp', true)).toContain('Send it as a steer instead');
+    for (const reason of [tui(stateIn('failed'), 'steer'), tui(stateIn('running'), 'steer'), tui(stateIn('running'), 'followUp', true)]) {
+      expect(reason).not.toContain('--');
+    }
+    // A request file is another terminal's command line, so it keeps the flag.
+    expect(selectPromptMode(stateIn('failed'), { hasChannel: false, requested: 'steer', source: 'inbox' }).reason).toContain('--follow-up');
+  });
 });
 
 // ---------------------------------------------------------------------------- the session check `[D25]`

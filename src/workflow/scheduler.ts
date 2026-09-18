@@ -1478,7 +1478,9 @@ export class WorkflowScheduler {
     if (!state || !task) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
     const entry = this.inflight.get(taskId);
     const channel = entry?.kind === 'task' ? entry.channel : undefined;
-    const chosen = selectPromptMode(state, { hasChannel: Boolean(channel), requested: command.mode });
+    // The sender's own surface decides how the refusal offers the other mode: a flag to type, or the name
+    // of the mode for a composer that has no flags to type.
+    const chosen = selectPromptMode(state, { hasChannel: Boolean(channel), requested: command.mode, source: envelope.source });
     if (!chosen.mode) return { status: 'rejected', reason: chosen.reason ?? steerRejection(state, Boolean(channel))! };
     if (chosen.mode === 'steer') return this.decideSteer(command, envelope, state, entry!.attempt, channel!);
     return this.decideFollowUp(command, envelope, task, state, chosen.mode === 'stopAndContinue');
