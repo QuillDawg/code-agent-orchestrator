@@ -6,8 +6,7 @@ Tasks #/#                            Tasks — the panel with the keys
   ✗ implement-ren… codex|gpt-#-… !█    Enter            open the selected task in the panel
   ○ review-and-me… claude         █    F / L            follow the task's live transcript
                                        R                restart a failed, blocked, cancelled or skipped task
-                                       E                edit an unfinished task's prompt, agent, model, effort, timeout,
-                                                        retries or budget
+                                       E                edit an unfinished task (prompt, agent, model, limits)
                                        /                search the task list
 
                                      Anywhere
@@ -19,12 +18,9 @@ Tasks #/#                            Tasks — the panel with the keys
 
                                      The task editor (E)
                                        ↑↓               move between the fields; Enter on the last one goes to Save
-                                       Ctrl+O           write the prompt in $VISUAL / $EDITOR; the workspace waits for
-                                                        it
-                                       Ctrl+J           a newline in the prompt (a trailing backslash then Enter does
-                                                        the same)
-                                       Enter            Save; a running or waiting task is asked about before it is
-                                                        stopped
+                                       Ctrl+O           write the prompt in $VISUAL / $EDITOR
+                                       Ctrl+J           a newline (a trailing backslash then Enter does the same)
+                                       Enter            Save; a running or waiting task is asked about first
                                        Esc              close the form; nothing is sent
 
                                      Transcript viewer (F)
@@ -36,5 +32,9 @@ Tasks #/#                            Tasks — the panel with the keys
 
                                      When a worker needs you
                                        Y / A / N / R    allow, allow for the rest of the task, deny, deny with a reason
-                                     ▼ # more   ↑↓ scroll   Esc close
+                                       #-# / ↑↓ Enter   choose an answer    T type one    N decline
+                                     ↑↓ scroll   Esc close
+
+
+
 Esc close   ↑↓ move   Enter choose   quota: stage #   updated #s ago

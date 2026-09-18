@@ -7,8 +7,7 @@ Tasks — the panel with the keys
   Enter            open the selected task in the panel
   F / L            follow the task's live transcript
   R                restart a failed, blocked, cancelled or skipped task
-  E                edit an unfinished task's prompt, agent, model, effort,
-                   timeout, retries or budget
+  E                edit an unfinished task (prompt, agent, model, limits)
   /                search the task list
 
 Anywhere
@@ -20,5 +19,6 @@ Anywhere
 
 The task editor (E)
   ↑↓               move between the fields; Enter on the last one goes to Save
+  Ctrl+O           write the prompt in $VISUAL / $EDITOR
 ▼ ## more   ↑↓ scroll   Esc close
 Esc close   ↑↓ move   Enter choose   quota: stage #

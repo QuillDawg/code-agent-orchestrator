@@ -119,9 +119,9 @@ export function viewerKeys(): KeyHelp[] {
 export function editKeys(): KeyHelp[] {
   return [
     { keys: `${UD()}`, what: 'move between the fields; Enter on the last one goes to Save' },
-    { keys: 'Ctrl+O', what: 'write the prompt in $VISUAL / $EDITOR; the workspace waits for it' },
-    { keys: 'Ctrl+J', what: 'a newline in the prompt (a trailing backslash then Enter does the same)' },
-    { keys: 'Enter', what: 'Save; a running or waiting task is asked about before it is stopped' },
+    { keys: 'Ctrl+O', what: 'write the prompt in $VISUAL / $EDITOR' },
+    { keys: 'Ctrl+J', what: 'a newline (a trailing backslash then Enter does the same)' },
+    { keys: 'Enter', what: 'Save; a running or waiting task is asked about first' },
     { keys: 'Esc', what: 'close the form; nothing is sent' },
   ];
 }
@@ -139,7 +139,7 @@ const taskListKeys = (): KeyHelp[] => [
   { keys: 'Enter', what: 'open the selected task in the panel', short: 'open' },
   { keys: 'F / L', what: "follow the task's live transcript", short: 'follow' },
   { keys: 'R', what: 'restart a failed, blocked, cancelled or skipped task', short: 'restart' },
-  { keys: 'E', what: "edit an unfinished task's prompt, agent, model, effort, timeout, retries or budget", short: 'edit' },
+  { keys: 'E', what: "edit an unfinished task (prompt, agent, model, limits)", short: 'edit' },
   { keys: '/', what: 'search the task list', short: 'search' },
 ];
 
@@ -187,8 +187,9 @@ const sessionKeys = (): KeyHelp[] => [
 export function composerKeys(): KeyHelp[] {
   return [
     { keys: 'Enter', what: 'send the message', short: 'send' },
-    { keys: 'Ctrl+J', what: 'a newline (a trailing backslash then Enter does the same; Shift+Enter where the terminal reports it)' },
-    { keys: 'Ctrl+O', what: 'write the message in $VISUAL / $EDITOR; the workspace waits for it' },
+    { keys: 'Ctrl+J', what: 'a newline (Shift+Enter too, where the terminal reports it)' },
+    { keys: 'Ctrl+O', what: 'write the message in $VISUAL / $EDITOR' },
+    { keys: 'Ctrl+F', what: 'Start a fresh session rather than resume the one it reported' },
     { keys: `Ctrl+Z / Ctrl+W`, what: 'undo the last edit / delete the word before the cursor' },
     { keys: `${LR()} / ${UD()} / Home / End`, what: 'move the cursor; Ctrl with an arrow moves by word' },
     { keys: 'Esc', what: 'close the composer; the draft is kept until you quit' },

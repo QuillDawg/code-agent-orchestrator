@@ -220,6 +220,29 @@ describe('dashboard frames', () => {
   }
 
   /**
+   * `?` is the panel an operator opens *because* something surprised them, and the last section of it is
+   * the one that says what to press when a worker is waiting on them. At 120x40 - the size this project
+   * calls a normal terminal - all of it has to be on screen without a scroll: the help gained the task
+   * editor's block and quietly pushed that last section off the bottom, where an operator who did not know
+   * it was there had no reason to go looking.
+   */
+  it('shows the whole of the help at 120x40, with nothing left below the fold', async () => {
+    const tree = renderTree(element, { columns: 120, rows: 40 });
+    try {
+      await wait();
+      tree.write('?');
+      await wait();
+      await tree.waitFor((frame) => frame.includes('the panel with the keys'));
+      const frame = normalise(tree.lastText());
+      expect(frame).toContain('When a worker needs you');
+      expect(frame).toContain('choose an answer');
+      expect(frame, 'the help scrolls at 120x40').not.toMatch(/more {3}/);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  /**
    * §2.5: the frame is sized to `useWindowSize()`, which is the hook that subscribes to the terminal's
    * `resize`. Read through `useStdout()` instead, a new size only reaches the layout when something else
    * happens to re-render - the spinner, once a second while nothing is in flight - and until then the
