@@ -17,6 +17,8 @@ import { silentLogger } from '../../src/logging/logger.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
 import { controlEnvelope } from '../../src/workflow/control/commands.js';
+import { controlRequest, readAck, writeControlRequest } from '../../src/persistence/requests.js';
+import { INBOX_REQUEST_KINDS, watchStopRequests } from '../../src/execution/signals.js';
 import { parseTranscriptLine, type PromptDelivery, type TranscriptEntry, type WorkflowEvent } from 'code-agent-orchestrator-protocol';
 import { tmpGitRepo, gitAvailable, waitFor, FAKE_CLAUDE, FAKE_CODEX } from '../helpers/index.js';
 
@@ -157,6 +159,46 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
 
     await runtime.controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli'));
     await finished;
+  }, 40_000);
+
+  it('takes a prompt request another process wrote and writes the ack back to it', async () => {
+    const repo = await tmpGitRepo('cao-prompt-inbox-');
+    const configPath = path.join(repo, 'workflow.yaml');
+    await fs.writeFile(configPath, CLAUDE_YAML, 'utf8');
+    const prepared = await prepareWorkflow(configPath, { launchDirectory: repo, claudeCommand: FAKE_CLAUDE });
+    requireValid(prepared);
+    const store = new FileRunStore(prepared.workflow.repositoryRoot);
+    const created = await createRun(store, { workflow: prepared.workflow, rawConfig: prepared.loaded.raw, selection: {} });
+    const runtime = createRuntime({
+      run: created,
+      environment: { FAKE_CLAUDE_MODE: 'steer', FAKE_CLAUDE_STEER_WAIT_MS: '10000' },
+      secrets: [],
+      logger: silentLogger,
+      interactionHandler: async () => ({ kind: 'deny', message: 'no' }),
+    });
+    // The inbox `cao run` starts (§2.3): this is the whole path a second terminal's request takes.
+    const unwatch = watchStopRequests({ paths: store.paths, runId: created.runId, controller: runtime.controller, onStop: () => undefined });
+    const finished = runtime.scheduler.execute();
+    try {
+      await waitFor(() => created.tasks['a']?.state === 'running' && Boolean(created.tasks['a']?.attempts[0]?.sessionId));
+
+      const request = controlRequest('prompt', { taskId: 'a', text: MESSAGE, mode: 'steer', source: 'another cao' });
+      await writeControlRequest(store.paths, created.runId, request);
+      let ack: Awaited<ReturnType<typeof readAck>> = null;
+      await waitFor(() => {
+        void readAck(store.paths, created.runId, request.id).then((a) => (ack = a));
+        return ack !== null;
+      }, 10_000);
+      expect(ack).toMatchObject({ id: request.id, status: expect.stringMatching(/accepted|applied/) });
+
+      await waitFor(() => (created.tasks['a']!.attempts[0]!.prompts?.length ?? 0) > 0);
+      expect(created.tasks['a']!.attempts[0]!.prompts![0]).toMatchObject({ source: 'inbox', mode: 'steer', text: MESSAGE });
+      // A run started by this `cao` advertises the kind, or the second terminal would not have offered it.
+      expect(INBOX_REQUEST_KINDS).toContain('prompt');
+    } finally {
+      unwatch();
+      await finished;
+    }
   }, 40_000);
 
   it('refuses a follow-up to a task that has already succeeded, which is immutable', async () => {
