@@ -39,15 +39,23 @@ const DELIVERY_STATE: Record<PromptDelivery['state'], { label: string; token: Th
   failed: { label: 'failed', token: 'danger' },
 };
 
-/** One row of the delivery list: time, mode, state, reason, and the first line of what was said. */
+/**
+ * One row of the delivery list: time, mode, state, the first line of what was said, and why where there
+ * is a why (§3.5).
+ *
+ * The message comes before the reason, and never instead of it. A queued or rejected delivery used to
+ * show the reason alone, which is the one state where an operator most needs to know *which* of the
+ * messages they sent is the one being talked about - `cao task show` has always put both on the row.
+ */
 export function deliveryLine(delivery: PromptDelivery, width: number): string {
   const first = sanitizeText(delivery.text).split('\n')[0] ?? '';
   const parts = [
     formatClock(delivery.at),
     MODE_LABEL[delivery.mode],
     DELIVERY_STATE[delivery.state].label,
-    delivery.reason ? sanitizeText(delivery.reason) : first,
-  ];
+    first,
+    delivery.reason ? `${glyph('dash')} ${sanitizeText(delivery.reason)}` : undefined,
+  ].filter((p): p is string => p !== undefined && p !== '');
   return truncateVisible(parts.join('  '), width);
 }
 

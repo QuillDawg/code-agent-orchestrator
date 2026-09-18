@@ -346,4 +346,27 @@ describe('the composer in the Session panel (§3.5)', () => {
       m.tree.unmount();
     }
   });
+
+  it('keeps the message on the row of a delivery that has a reason as well', async () => {
+    // A queued or rejected delivery is exactly where an operator needs to know *which* of the messages they
+    // sent is the one being talked about, and the reason used to take the row for itself.
+    const m = await mountWorkspace((run) => {
+      running(run);
+      run.tasks['implement-api']!.attempts[0]!.prompts = [
+        {
+          id: 'p1', at: new Date().toISOString(), source: 'tui', mode: 'steer', transport: 'codex-app-server',
+          state: 'rejected', text: 'mind the lockfile', reason: 'no active turn to steer',
+        },
+      ];
+    }, { steerable: true });
+    try {
+      await openSession(m.tree);
+      const frame = m.frame();
+      expect(frame).toContain('mind the lockfile');
+      expect(frame).toContain('no active turn to steer');
+      expect(frame).toContain('rejected');
+    } finally {
+      m.tree.unmount();
+    }
+  });
 });
