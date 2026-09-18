@@ -552,6 +552,40 @@ describe('an edit with no owner, and the resume that picks it up (§3.4)', () =>
     await execution;
   });
 
+  it('carries a follow-up into the edited attempt, but never into the old session `[D27]`', async () => {
+    // The two halves of `[D27]` pull in opposite directions here, and only one of them may win: the message
+    // still reaches the worker (in the *new* prompt, as an answer), and the session it was going to continue
+    // does not. A resume that reused `old-session` would be continuing a conversation about the prompt the
+    // operator has just replaced, which is the one thing an edit must not do.
+    const { repo, store, runId } = await offlineRun();
+    const edited = await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, prompt: 'the replacement prompt' }));
+    expect(edited.code).toBe(0);
+
+    const saved = await store.loadRun(runId);
+    expect(editPendingOnTask(saved.tasks.a!)).toBe(true);
+    await reconcileForResume(saved, { selection: { only: ['a'] }, followUp: { taskId: 'a', text: 'and use the cache', source: 'cli' } });
+    // The follow-up on its own would resume the session the task reported; the pending edit is what stops it.
+    expect(saved.tasks.a!.resumeSessionId).toBe('old-session');
+
+    const resumed = harness(saved.workflow, new MockRunner().when('b', { kind: 'hang' }), { run: saved, isResume: true });
+    const execution = resumed.scheduler.execute();
+    await waitFor(() => resumed.run.tasks.a!.attempts.length === 2);
+    const second = resumed.run.tasks.a!.attempts[1]!;
+
+    expect(second.resumedSessionId).toBeUndefined();
+    // ...and the message is still an answer, not a retry: the attempt says so, the delivery records which
+    // attempt carried it, and the prompt has both the new text and the operator's words.
+    expect(second.triggeredBy).toBe('user_input');
+    expect(resumed.run.tasks.a!.followUps![0]).toMatchObject({ state: 'delivered', carriedByAttempt: 2 });
+    expect(resumed.store.prompts.get('a#2')).toContain('the replacement prompt');
+    expect(resumed.store.prompts.get('a#2')).toContain('and use the cache');
+    // The old attempt keeps the session it ran (§3.4).
+    expect(resumed.run.tasks.a!.attempts[0]!.sessionId).toBe('old-session');
+
+    await resumed.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
+    await execution;
+  });
+
   it('refuses --restart with no owner and names the resume instead', async () => {
     const { repo, runId } = await offlineRun();
     await expect(taskEditCommand([runId, 'a'], { repository: repo, prompt: 'x', restart: true })).rejects.toThrow(/no worker to restart/);

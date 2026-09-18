@@ -914,7 +914,13 @@ export class WorkflowScheduler {
     // A follow-up waiting to be carried is what makes this attempt an answer rather than a retry (§3.5).
     // `cao resume --input` queues one too, so the question-answering case and the general one are one path
     // and cannot drift: `queueFollowUp` already decided which session this attempt should continue.
-    const followUps = editPending ? [] : pendingFollowUps(state);
+    //
+    // An edit does not un-send the operator's message: it still rides in the prompt under `# User Input`,
+    // is still marked delivered below, and this attempt is still the answer to it. What the edit takes away
+    // is only the *session* it would have continued, which is `resumable` below. Treating the message as
+    // not carried instead left a delivery marked `delivered` with no `user` transcript entry beside it and
+    // an attempt labelled `retry`.
+    const followUps = pendingFollowUps(state);
     const answering = followUps.length > 0;
     const resumable = !editPending && (lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering);
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
