@@ -430,6 +430,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   message still sitting at `queued`. A **Sent to this task** section now prints each one with its time,
   source, mode, state, the attempt that carried it and the first line of the text, with a rejected steer's
   reason underneath.
+- **The answer from `cao task prompt` on a run nobody is executing reads like every other one.** It was the
+  one ack written by the command rather than by the run, and it had drifted: "Continuing "review" with your
+  message" where the run says "Follow-up: starting "review" again with your message". Both now come from one
+  sentence.
 - **An edit's answer names a field the way the flag and the history name it.** `--budget` was acknowledged
   as `maxBudgetUsd`, a name that appears nowhere an operator can type or read; the acks now use the same
   labels the revision history and the editor's form use. The `task.edited` event keeps the wire names.

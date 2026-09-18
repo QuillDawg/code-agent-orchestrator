@@ -171,6 +171,23 @@ export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolea
   return { reason: `Task "${state.id}" is ${state.state}; ${MODE_LABEL[opts.requested]} does not apply to it.` };
 }
 
+/**
+ * The ack for a message that becomes the task's **next attempt** (§3.5): the follow-up and stop-and-continue
+ * rows, from the run that takes it and from `cao task prompt` with nobody executing the run.
+ *
+ * One function for both, because they are one sentence an operator reads in two places and the offline one
+ * had already drifted: it said "Continuing ..." where the live one said "Starting ... again", and it was the
+ * only answer to a prompt that did not name the mode it had chosen.
+ */
+export function followUpAck(taskId: string, mode: PromptDeliveryMode, sessionId?: string): string {
+  const continues = sessionId
+    ? `Its next attempt continues session ${sessionId}.`
+    : 'Its next attempt starts a fresh session with your message in the prompt.';
+  return mode === 'stopAndContinue'
+    ? `Stop and continue: stopping the worker of "${taskId}" and starting it again with your message. ${continues}`
+    : `Follow-up: starting "${taskId}" again with your message. ${continues}`;
+}
+
 /** How each transport is named in a sentence an operator reads; `none` has no name because it is not one. */
 export const TRANSPORT_LABEL: Record<PromptDelivery['transport'], string | undefined> = {
   'claude-stream': "Claude's open stdin",

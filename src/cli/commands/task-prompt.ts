@@ -20,7 +20,7 @@ import { ownershipOf } from '../ownership.js';
 import { controlEnvelope } from '../../workflow/control/commands.js';
 import { localController } from '../../workflow/control/local.js';
 import { controlRequest, sendControlRequest, DEFAULT_ACK_WAIT_SECONDS } from '../../persistence/requests.js';
-import { MODE_LABEL, promptRow, selectPromptMode } from '../../workflow/control/prompt.js';
+import { followUpAck, MODE_LABEL, promptRow, selectPromptMode } from '../../workflow/control/prompt.js';
 import { checkFollowUpSession } from '../../workflow/control/follow-up.js';
 import { detectSessionPresence } from '../../runners/sessions.js';
 import { resumeCommand } from './resume.js';
@@ -143,9 +143,9 @@ export async function taskPromptCommand(refs: string[], opts: TaskPromptOptions)
       out(`${mark('error')} rejected ${sanitizeText(session.rejection)}`);
       return 2;
     }
-    out(
-      `${mark('ok')} Continuing "${taskId}" with your message. ${session.sessionId ? `Its next attempt continues session ${session.sessionId}.` : 'Its next attempt starts a fresh session with your message in the prompt.'}`,
-    );
+    // The run's own sentence, so the answer to a prompt reads the same whether an orchestrator took it or
+    // this command did with nobody at the wheel (§3.5).
+    out(`${mark('ok')} ${followUpAck(taskId, 'followUp', session.sessionId)}`);
     // The resume is the delivery. Written through `startRuntime` like every other resume, so the follow-up
     // lands in `workflow.json` inside the same lock that executes it and never on its own.
     return resumeCommand(runId, {

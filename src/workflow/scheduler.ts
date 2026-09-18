@@ -82,7 +82,7 @@ import {
   restartPlanFor,
   type AgentReadiness,
 } from './control/edit.js';
-import { applyDelivery, deliveryReason, findDelivery, newDelivery, recordDelivery, selectPromptMode, steerRejection } from './control/prompt.js';
+import { applyDelivery, deliveryReason, findDelivery, followUpAck, newDelivery, recordDelivery, selectPromptMode, steerRejection } from './control/prompt.js';
 import {
   checkFollowUpSession,
   followUpText,
@@ -1570,15 +1570,10 @@ export class WorkflowScheduler {
     const session = await checkFollowUpSession(task, state, { probe: this.sessionProbe, freshSession: command.freshSession === true });
     if (session.rejection) return { status: 'rejected', reason: session.rejection };
 
-    const continues = session.sessionId
-      ? `Its next attempt continues session ${session.sessionId}.`
-      : 'Its next attempt starts a fresh session with your message in the prompt.';
     // Named, not implied: a caller that gave no mode flag has to be told which row of the matrix answered
     // it, because "stopped its worker and started a new attempt" and "queued into the turn it is running"
     // are very different things to have done to an hour of work (§3.5).
-    const reason = stopFirst
-      ? `Stop and continue: stopping the worker of "${taskId}" and starting it again with your message. ${continues}`
-      : `Follow-up: starting "${taskId}" again with your message. ${continues}`;
+    const reason = followUpAck(taskId, mode, session.sessionId);
 
     return {
       status: 'accepted',

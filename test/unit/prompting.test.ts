@@ -13,7 +13,7 @@ import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { createRunController, type RunController } from '../../src/workflow/control/controller.js';
 import { controlEnvelope } from '../../src/workflow/control/commands.js';
-import { promptRow, selectPromptMode, MODE_LABEL } from '../../src/workflow/control/prompt.js';
+import { followUpAck, promptRow, selectPromptMode, MODE_LABEL } from '../../src/workflow/control/prompt.js';
 import { adoptLegacyFollowUp, checkFollowUpSession, followUpText, pendingFollowUps, queueFollowUp, resumableSessionId } from '../../src/workflow/control/follow-up.js';
 import { reconcileForResume } from '../../src/workflow/run-factory.js';
 import { detectSessionPresence, unknownSessionPresence, type SessionProbe } from '../../src/runners/sessions.js';
@@ -89,6 +89,22 @@ describe('which mode the §3.5 matrix offers', () => {
     }
     // A request file is another terminal's command line, so it keeps the flag.
     expect(selectPromptMode(stateIn('failed'), { hasChannel: false, requested: 'steer', source: 'inbox' }).reason).toContain('--follow-up');
+  });
+});
+
+/**
+ * The ack for a message that becomes the next attempt (§3.5).
+ *
+ * One function, because the run writes it when it takes the message and `cao task prompt` writes it when
+ * nobody is executing the run - and the offline one had already drifted into different words and was the
+ * only answer to a prompt that did not name the mode it chose.
+ */
+describe('what a task is told it is about to do with a message', () => {
+  it('names the mode and the session, in the same words from the run and from the command', () => {
+    expect(followUpAck('a', 'followUp', 's-1')).toBe('Follow-up: starting "a" again with your message. Its next attempt continues session s-1.');
+    expect(followUpAck('a', 'followUp')).toContain('starts a fresh session with your message in the prompt');
+    expect(followUpAck('a', 'stopAndContinue', 's-1')).toContain('Stop and continue: stopping the worker of "a"');
+    for (const mode of ['followUp', 'stopAndContinue'] as const) expect(followUpAck('a', mode), mode).toMatch(/^(Follow-up|Stop and continue): /);
   });
 });
 
