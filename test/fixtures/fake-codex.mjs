@@ -19,7 +19,8 @@
  *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
  *   app-server only: approval | approval-always | approval-decline | file-approval | two-approvals |
  *                    steer (holds the turn open for a `turn/steer`; FAKE_CODEX_STEER selects a refusal:
- *                    no-turn | review | compact | empty-input | schema, and FAKE_CODEX_STEER_WAIT_MS
+ *                    no-turn | review | compact | empty-input | schema, or `wedged` to take the request
+ *                    and never answer it, and FAKE_CODEX_STEER_WAIT_MS
  *                    bounds how long the turn waits) |
  *                    question |
  *                    question-multi | question-recovers | question-then-resume | unknown-request |
@@ -424,6 +425,9 @@ rl.on('line', (raw) => {
     else if (!activeTurnId) emit({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } });
     else if (expected !== activeTurnId) emit({ id: message.id, error: { code: -32600, message: `expected active turn id ${expected} but found ${activeTurnId}` } });
     else if (!text) emit({ id: message.id, error: { code: -32600, message: 'input must not be empty' } });
+    // A server that takes the request and never answers it (§3.5, and the bound `CALL_TIMEOUT_MS` puts on
+    // how long that may hold up the scheduler's loop). Not a refusal: nothing is emitted at all.
+    else if (steerMode === 'wedged') process.stderr.write(`steer-swallowed${String.fromCharCode(10)}`);
     else if (STEER_REJECTIONS[steerMode]) {
       emit({
         id: message.id,

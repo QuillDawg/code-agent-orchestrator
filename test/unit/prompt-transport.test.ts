@@ -50,6 +50,7 @@ async function steerThrough(
   extraEnv: Record<string, string> = {},
   taskBits: Partial<ResolvedTask> = {},
   resumeSessionId?: string,
+  runnerBits: { callTimeoutMs?: number } = {},
 ): Promise<Steered> {
   clearDetectionCache();
   clearCodexDetectionCache();
@@ -87,7 +88,7 @@ async function steerThrough(
   const runner =
     agent === 'claude'
       ? new ClaudeRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CLAUDE } })
-      : new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX } });
+      : new CodexRunner({ processManager: new ProcessManager(), defaults: { command: FAKE_CODEX }, ...runnerBits });
   const outcome = await runner.run(
     {
       runId: 'r1',
@@ -242,6 +243,26 @@ describe('Codex app-server: turn/steer', () => {
 
     expect(run.sent[0]).toMatchObject({ transport: 'codex-app-server', state: 'rejected', reason: expect.stringMatching(expected) });
     // A refused message never reached the worker, so nothing pretends it did.
+    expect(run.entries.some((e) => e.kind === 'user')).toBe(false);
+  });
+
+  it('gives up on a server that takes the message and never answers, rather than holding the run', async () => {
+    // The waiter is the scheduler's single loop (§2.2): `decideSteer` awaits this answer between two of the
+    // loop's events, so an app-server that never replies used to freeze every other task's launch and the
+    // stop until the attempt's own timeout killed it. 300 ms here for what is 30 s in production.
+    const run = await steerThrough(
+      'codex',
+      'steer',
+      ['focus on the tests'],
+      { FAKE_CODEX_STEER: 'wedged', FAKE_CODEX_STEER_WAIT_MS: '2000' },
+      appServer,
+      undefined,
+      { callTimeoutMs: 300 },
+    );
+
+    expect(run.stderr).toContain('steer-swallowed');
+    expect(run.sent[0]).toMatchObject({ transport: 'codex-app-server', state: 'rejected', reason: expect.stringMatching(/did not answer turn\/steer within/) });
+    // Nothing pretends the worker took it, and the attempt itself carries on to its own end.
     expect(run.entries.some((e) => e.kind === 'user')).toBe(false);
   });
 

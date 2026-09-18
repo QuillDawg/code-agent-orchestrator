@@ -28,6 +28,8 @@ export interface CodexAppServerOptions {
   command: string;
   options: CodexOptions;
   bufferLines: number;
+  /** See `CALL_TIMEOUT_MS`. Injected only so a test can drive the timeout without waiting for it. */
+  callTimeoutMs?: number;
 }
 
 interface JsonObject extends Record<string, unknown> {
@@ -60,6 +62,16 @@ const MAX_OUTPUT_CHARS = 2000;
 
 /** Which of `PromptDelivery.transport` this runner speaks (§2.6, §3.5). */
 const CODEX_APP_SERVER_TRANSPORT = 'codex-app-server' as const;
+
+/**
+ * How long a request whose answer somebody is waiting on may take before it is called unanswered.
+ *
+ * Only `turn/steer` waits, and its waiter is the scheduler's single loop (§2.2): `decideSteer` awaits the
+ * answer between two of the loop's events, so this is really a bound on how long one wedged app-server may
+ * hold up every other task's launch, every `attempt_done` and the stop. A steer is a local round trip over
+ * a pipe; a server that has not answered in 30 s is wedged, not busy. Nothing reads it from a workflow.
+ */
+export const CALL_TIMEOUT_MS = 30_000;
 
 /**
  * The app-server command line. The security envelope travels in the `thread/start` params rather than in
@@ -185,9 +197,21 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   const call = (method: string, params: JsonObject): Promise<JsonObject> =>
     new Promise<JsonObject>((resolve) => {
       const id = nextId++;
-      responders.set(id, resolve);
+      // Bounded: see `CALL_TIMEOUT_MS`. Without this a wedged server froze the whole run, not just its own
+      // attempt, and only the attempt's `timeoutMs` ever ended it.
+      const limit = config.callTimeoutMs ?? CALL_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        if (!responders.delete(id)) return;
+        resolve({ error: { message: `the Codex app-server did not answer ${method} within ${Math.round(limit / 1000)}s` } });
+      }, limit);
+      if (typeof timer.unref === 'function') timer.unref();
+      responders.set(id, (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
       if (request(id, method, params)) return;
-      responders.delete(id);
+      if (!responders.delete(id)) return;
+      clearTimeout(timer);
       resolve({ error: { message: 'the Codex app-server is no longer reading its input' } });
     });
   const retryOverloaded = (message: JsonObject): boolean => {

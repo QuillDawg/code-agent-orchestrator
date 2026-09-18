@@ -35,6 +35,8 @@ export interface CodexRunnerOptions {
   processManager: ProcessManager;
   defaults?: CodexOptions;
   bufferLines?: number;
+  /** See `CALL_TIMEOUT_MS`; injected only so a test can drive the timeout without waiting for it. */
+  callTimeoutMs?: number;
 }
 
 const ENV_TO_STRIP = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_CHILD_SESSION'];
@@ -81,6 +83,7 @@ export class CodexRunner implements TaskRunner {
   private readonly pm: ProcessManager;
   private readonly defaults: CodexOptions;
   private readonly bufferLines: number;
+  private readonly callTimeoutMs: number | undefined;
   /** Tasks whose run-log notice has already been written; the limit belongs to the task, not the attempt. */
   private readonly noticed = new Set<string>();
 
@@ -88,6 +91,7 @@ export class CodexRunner implements TaskRunner {
     this.pm = opts.processManager;
     this.defaults = opts.defaults ?? {};
     this.bufferLines = opts.bufferLines ?? 500;
+    this.callTimeoutMs = opts.callTimeoutMs;
   }
 
   /** See ClaudeRunner.preflight: one check per configured command, before the run starts. */
@@ -116,7 +120,7 @@ export class CodexRunner implements TaskRunner {
     if (!detection.found) return { kind: 'error', outcome: 'crash', message: `Codex CLI not found (${detection.command}): ${detection.error ?? 'unknown error'}` };
     if (input.signal.aborted) return { kind: 'error', outcome: 'cancelled', message: 'cancelled before start' };
     if ((options.transport ?? 'exec') === 'appServer') {
-      return runCodexAppServer({ processManager: this.pm, command: detection.command, options, bufferLines: this.bufferLines }, input, hooks);
+      return runCodexAppServer({ processManager: this.pm, command: detection.command, options, bufferLines: this.bufferLines, callTimeoutMs: this.callTimeoutMs }, input, hooks);
     }
 
     await ensureDir(input.attemptDir);
