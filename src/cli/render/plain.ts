@@ -94,6 +94,11 @@ export function attachPlainRenderer(bus: EventBus, run: WorkflowRun, opts: Plain
         write(`${stamp()}   ${ev.taskId}  ${paint(firstLine(text), ev.answer.kind === 'deny' ? 'red' : 'green', color)} (${ev.source})`);
         break;
       }
+      case 'task.edited':
+        // The fields, never their values (§2.6): this line is the same summary the run log records, and a
+        // prompt printed into a headless log is the work itself, not a summary of it.
+        write(`${stamp()} ${glyph('retry')} ${ev.taskId}  edited (revision ${ev.revision}): ${ev.fields.join(', ')}`);
+        break;
       case 'task.merging':
         write(`${stamp()} ${glyph('merge')} ${ev.taskId}  merge conflict on ${ev.branch}; starting agent merge-resolution session`);
         break;

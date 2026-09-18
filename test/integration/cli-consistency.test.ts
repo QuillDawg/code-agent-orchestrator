@@ -28,6 +28,7 @@ import { statusCommand } from '../../src/cli/commands/status.js';
 import { stopCommand } from '../../src/cli/commands/stop.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { taskControlCommand } from '../../src/cli/commands/task-control.js';
+import { taskEditCommand } from '../../src/cli/commands/task-edit.js';
 import { diffCommand } from '../../src/cli/commands/diff.js';
 import { emitCommand } from '../../src/cli/commands/emit.js';
 import { entryFile, registryKey } from '../../src/persistence/registry.js';
@@ -510,13 +511,13 @@ describe('the request inbox, from another process', () => {
       expect(acks.map((a) => a.status).sort()).toEqual(['applied', 'rejected']);
       expect((await store.loadRun(runId)).state).toBe('interrupted');
 
-      // §2.3, §4.2.3 — the entry advertises exactly the four the inbox really acts on, and `cao emit status`
+      // §2.3, §4.2.3 — the entry advertises exactly the kinds the inbox really acts on, and `cao emit status`
       // answers the same question for someone whose request is having no effect.
       const entry = JSON.parse(await fs.readFile(entryFile(registryKey(repo, runId), home), 'utf8')) as { capabilities: string[] };
-      expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
+      expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit']);
       process.env.CAO_HOME = home;
       const status = await captureCli(() => emitCommand('status', { json: true }));
-      expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart']);
+      expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit']);
     } finally {
       orchestrator.kill();
       await orchestrator.catch(() => undefined);
@@ -560,6 +561,77 @@ describe('the request inbox, from another process', () => {
 
       // The owner has gone with the run: there is nothing to ask, and saying so beats a request nobody reads.
       await expect(taskControlCommand('restart', [runId, 'a'], { repository: repo })).rejects.toThrow(/No orchestrator owns run/);
+    } finally {
+      orchestrator.kill();
+      await orchestrator.catch(() => undefined);
+    }
+  }, 180_000);
+
+  /**
+   * `cao task edit` across the process boundary, and then with nobody at the wheel (spec §3.4).
+   *
+   * The same round trip as the stop above, with the one thing an edit adds: when the request is answered the
+   * revision is in the owner's `workflow.json`, and the attempt that follows it runs the new prompt. The
+   * second half is the offline path - the run has ended, so the edit goes straight into the file and waits
+   * for a resume, which is the only route `--restart` is refused on.
+   */
+  it('cao task edit reaches the owner, then writes straight into the run once that owner is gone', async () => {
+    const repo = await tmpGitRepo('cao-task-edit-');
+    const env = { CAO_CLAUDE_COMMAND: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_DELAY_MS: '4000' };
+    await writeWorkflow(repo, PAIR);
+
+    const orchestrator = cao(['run', 'workflow.yaml', '--no-tui'], { cwd: repo, env, reject: false });
+    let runId = '';
+    try {
+      const store = new FileRunStore(repo);
+      const paths = createNativeRunPaths(repo);
+      await until(async () => {
+        runId = (await store.listRuns().catch(() => []))[0]?.runId ?? '';
+        return runId !== '' && (await pathExists(paths.lockFile(runId)));
+      }, 30_000);
+      await until(async () => (await store.readLive(runId))?.tasks['a']?.state === 'running', 30_000);
+
+      // Rejected first, and the worker is still running when it is: validation comes before anything stops.
+      const bad = await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, timeout: 'soon', restart: true }));
+      expect(bad.code).toBe(2);
+      expect(bad.stdout).toContain('Invalid duration');
+      expect((await store.readLive(runId))?.tasks['a']?.state).toBe('running');
+
+      const edited = await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, prompt: 'the second-terminal prompt', restart: true }));
+      expect(edited.code).toBe(0);
+      expect(edited.stdout).toMatch(new RegExp(`sent to pid ${orchestrator.pid}`));
+      expect(edited.stdout).toContain('applied');
+      expect(edited.stdout).toContain('fresh session');
+
+      // Stop the run once the restarted attempt is under way, so `a` ends unfinished: the offline half below
+      // is about a run that has something left to do, which is the only kind a resume has a use for.
+      await until(async () => ((await store.readLive(runId))?.tasks['a']?.attempt ?? 0) >= 2, 30_000);
+      await cao(['stop', runId], { cwd: repo, env, reject: false });
+      await orchestrator;
+      const finished = await store.loadRun(runId);
+      const state = finished.tasks['a']!;
+      expect(state.state).not.toBe('success');
+      expect(state.revisions).toHaveLength(1);
+      expect(state.revisions![0]).toMatchObject({ number: 1, source: 'inbox', appliedToAttempt: 2 });
+      expect(finished.workflow.tasks.find((t) => t.id === 'a')!.prompt).toBe('the second-terminal prompt');
+      expect(await fs.readFile(path.join(paths.attemptDir(runId, 'a', 2), 'prompt.md'), 'utf8')).toContain('the second-terminal prompt');
+      // The first attempt is exactly as it was, which is the whole of "nothing is discarded silently".
+      expect(await fs.readFile(path.join(paths.attemptDir(runId, 'a', 1), 'prompt.md'), 'utf8')).not.toContain('the second-terminal prompt');
+      // The run log has the summary and not the text (§2.6).
+      const events = await fs.readFile(paths.eventsFile(runId), 'utf8');
+      expect(events).toContain('"type":"task.edited"');
+      expect(events).not.toContain('the second-terminal prompt');
+
+      // Nobody owns the run now, so the edit is written into it and the resume is named.
+      await expect(taskEditCommand([runId, 'a'], { repository: repo, prompt: 'x', restart: true })).rejects.toThrow(/no worker to restart/);
+      const offline = await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, retries: 3 }));
+      expect(offline.code).toBe(0);
+      expect(offline.stdout).toContain('as revision 2: retries');
+      expect(offline.stdout).toContain(`cao resume ${runId}`);
+      const after = await store.loadRun(runId);
+      expect(after.workflow.tasks.find((t) => t.id === 'a')!.retry.attempts).toBe(3);
+      expect(after.tasks['a']!.revisions).toHaveLength(2);
+      expect(after.tasks['a']!.revisions![1]!.source).toBe('cli');
     } finally {
       orchestrator.kill();
       await orchestrator.catch(() => undefined);

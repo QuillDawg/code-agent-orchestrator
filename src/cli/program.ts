@@ -9,6 +9,7 @@ import { logsCommand } from './commands/logs.js';
 import { peekCommand } from './commands/peek.js';
 import { taskCommand } from './commands/task.js';
 import { taskControlCommand } from './commands/task-control.js';
+import { taskEditCommand } from './commands/task-edit.js';
 import { diffCommand } from './commands/diff.js';
 import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
@@ -41,6 +42,13 @@ function positiveInt(value: string): number {
 function nonNegativeInt(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) throw new InvalidArgumentError('must be zero or a positive integer');
+  return n;
+}
+
+/** A budget in dollars: not an integer, and zero would mean "stop before the first token" (§3.4). */
+function positiveNumber(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) throw new InvalidArgumentError('must be an amount above zero');
   return n;
 }
 
@@ -140,6 +148,7 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
       'cao task show edit                      # the task called "edit", not a subcommand',
       'cao task stop review                    # cancel the attempt it is running',
       'cao task restart review                 # run a finished, unsuccessful task again',
+      'cao task edit review --model claude-opus-5   # change what it will run with',
     ],
     exits: '0 done  2 usage error, or a control the run refused',
   },
@@ -153,6 +162,14 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
       'cao task stop 002 review --wait 0       # write the request and return',
     ],
     exits: '0 applied, accepted, or still queued when the wait elapsed  2 refused, no owner, or usage error',
+  },
+  'task edit': {
+    examples: [
+      'cao task edit review --prompt-file new-prompt.md   # the resolved prompt, context still automatic',
+      'cao task edit review --retries 3 --timeout 90m',
+      'cao task edit 002 review --model claude-opus-5 --restart   # stop it, apply, start it again',
+    ],
+    exits: '0 applied  2 rejected, no such run or task, or usage error',
   },
   'task restart': {
     examples: ['cao task restart review', 'cao task restart 002 review --wait 60'],
@@ -401,7 +418,7 @@ export function buildProgram(): Command {
   // is reached through `cao task show <name>` - which the help below says in as many words.
   const task = program
     .command('task')
-    .description('Show one task, or steer it: show (default) | stop | restart')
+    .description('Show one task, or steer it: show (default) | stop | restart | edit')
     .addHelpText(
       'after',
       [
@@ -412,7 +429,8 @@ export function buildProgram(): Command {
         '',
         'stop and restart reach the orchestrator that owns the run: in this process when it owns it,',
         'otherwise through a request file that process answers. With no owner they are a usage error',
-        'naming "cao resume".',
+        'naming "cao resume". edit takes the same three routes and adds a fourth: with no owner it writes',
+        'the revision into the run and tells you which resume picks it up.',
       ].join('\n'),
     );
 
@@ -439,6 +457,23 @@ export function buildProgram(): Command {
     .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
     .option('--repository <dir>', 'repository containing .orchestrator')
     .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('restart', refs ?? [], opts)));
+
+  task
+    .command('edit')
+    .description("Change an unfinished task's prompt, agent, model, effort, timeout, retries or budget")
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--prompt <text>', 'the resolved prompt; the context section is still added automatically')
+    .option('--prompt-file <path>', 'read the prompt from a file instead')
+    .option('--agent <name>', 'claude or codex')
+    .option('--model <id>', 'model id for this task')
+    .option('--effort <level>', 'none, minimal, low, medium, high, xhigh or max')
+    .option('--timeout <duration>', 'per-attempt timeout, e.g. 90m or 1h30m')
+    .option('--retries <n>', 'retries after the first attempt (0-20)', nonNegativeInt)
+    .option('--budget <usd>', 'claude.maxBudgetUsd for this task (Claude only)', positiveNumber)
+    .option('--restart', 'stop the task if it is running, apply the edit, then start it again')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskEditCommand(refs ?? [], opts)));
 
   // ------------------------------------------------------------------------------------ Diagnostics
   program.commandsGroup(COMMAND_GROUPS.diagnostics);

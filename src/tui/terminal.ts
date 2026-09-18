@@ -13,6 +13,8 @@
 
 /** Leave the alternate screen, and show the cursor Ink hid. */
 export const LEAVE_ALT_SCREEN = '[?1049l';
+/** Take it again, for a workspace coming back from an editor that owned the terminal (§3.4). */
+export const ENTER_ALT_SCREEN = '[?1049h';
 export const SHOW_CURSOR = '[?25h';
 
 /** The minimum of `process` this module touches, so a test can hand it a double. */
@@ -76,4 +78,45 @@ export function armAltScreenRestore(streams?: TerminalStreams, hooks: ExitHooks 
     markAltScreen(false);
     hooks.removeListener('exit', restore);
   };
+}
+
+/**
+ * Hand the terminal to something that needs to own it, then take it back (spec §3.4).
+ *
+ * `Ctrl+O` in the task editor opens `$VISUAL`/`$EDITOR` on the prompt, and a terminal editor cannot share a
+ * screen with Ink: vim would draw into a buffer Ink repaints eight times a second. So the workspace steps
+ * out of the way properly — out of raw mode, off the alternate screen, cursor visible — runs the action with
+ * the terminal to itself, and puts everything back exactly as it found it.
+ *
+ * `finally` rather than `then`, and every step best effort: an editor that crashes must not leave the
+ * operator in a raw-mode terminal with no cursor, which is a shell nobody can type into.
+ */
+export async function suspendTerminal<T>(action: () => Promise<T> | T, streams: TerminalStreams = process as unknown as TerminalStreams): Promise<T> {
+  const wasAlt = altScreenIsActive();
+  const setRawMode = streams.stdin?.isTTY ? streams.stdin.setRawMode?.bind(streams.stdin) : undefined;
+  try {
+    setRawMode?.(false);
+  } catch {
+    /* not a TTY any more; there is nothing to hand over */
+  }
+  try {
+    streams.stdout.write(`${wasAlt ? LEAVE_ALT_SCREEN : ''}${SHOW_CURSOR}`);
+  } catch {
+    /* same */
+  }
+  try {
+    return await action();
+  } finally {
+    try {
+      if (wasAlt) streams.stdout.write(ENTER_ALT_SCREEN);
+    } catch {
+      /* the stream is gone; the process is on its way out anyway */
+    }
+    try {
+      setRawMode?.(true);
+    } catch {
+      /* same */
+    }
+    markAltScreen(wasAlt);
+  }
 }

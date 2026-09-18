@@ -203,6 +203,24 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 - A test parses every `Examples:` block in the CLI's own help and every fenced `cao …` line in `README.md`
   and `docs/capabilities.md`, and puts each of them through the parser. An example that names an option or
   a command this `cao` does not have now fails the suite instead of being found by a reader.
+- **Editing an unfinished task.** `cao task edit [run] <task>` and the workspace's `E` change a task's
+  prompt, agent, model, effort, timeout, retries and budget (`claude.maxBudgetUsd`, Claude only) without
+  stopping the run or touching the workflow file. What is edited is the *resolved* prompt — defaults,
+  templates and `foreach` already applied — and the automatic context section is still prepended at launch
+  and shown read-only beneath it. **Validation comes first**: the edited task goes through the same
+  validator `cao validate` prints, and a rejection costs a running attempt nothing. `pending`, `ready`,
+  `failed`, `blocked`, `cancelled` and `needs_input` tasks are edited in place; a running or waiting one
+  needs `--restart` (the workspace asks), which stops the worker, applies the edit and starts the task
+  again **from a fresh session** — the previous attempt keeps its prompt, transcript, usage, diff and
+  session id. A succeeded task, a skipped one, an approval gate, a task merging back and a task whose
+  dependent has already run are refused with a sentence naming `cao run <workflow> --from <task>`. Each
+  edit appends a revision to the run (`cao task show` prints the history under Attempts, and each attempt
+  records the revision it ran), and the run log gets a `task.edited` summary naming the fields and never
+  their values. With nobody executing the run the edit is written straight into it and the resume that
+  picks it up is named; `--restart` is refused there. In the workspace, `E` opens a form over the selected
+  task with one row per field, the validator's message inline, `Ctrl+O` to write the prompt in
+  `$VISUAL`/`$EDITOR`, and a warning before a `retry.resetWorkspace` restart throws uncommitted work away.
+  A run started by this `cao` now advertises `edit` among its capabilities.
 
 ### Changed
 

@@ -21,4 +21,4 @@ PID:          ####   Session: sess-abc###
 
 Latest activity
   ##:## $ npm test
-↑↓ select   F / L follow   R restart   Ctrl+P palette   ? help   Q quit
+↑↓ select   F / L follow   R restart   E edit   Ctrl+P palette   ? help   Q quit

@@ -115,6 +115,17 @@ export function viewerKeys(): KeyHelp[] {
   ];
 }
 
+/** The task editor `E` opens (§3.4). */
+export function editKeys(): KeyHelp[] {
+  return [
+    { keys: `${UD()}`, what: 'move between the fields; Enter on the last one goes to Save' },
+    { keys: 'Ctrl+O', what: 'write the prompt in $VISUAL / $EDITOR; the workspace waits for it' },
+    { keys: 'Ctrl+J', what: 'a newline in the prompt (a trailing backslash then Enter does the same)' },
+    { keys: 'Enter', what: 'Save; a running or waiting task is asked about before it is stopped' },
+    { keys: 'Esc', what: 'close the form; nothing is sent' },
+  ];
+}
+
 /** The prompt that opens by itself when a worker needs a human. */
 export function promptKeys(): KeyHelp[] {
   return [
@@ -128,6 +139,7 @@ const taskListKeys = (): KeyHelp[] => [
   { keys: 'Enter', what: 'open the selected task in the panel', short: 'open' },
   { keys: 'F / L', what: "follow the task's live transcript", short: 'follow' },
   { keys: 'R', what: 'restart a failed, blocked, cancelled or skipped task', short: 'restart' },
+  { keys: 'E', what: "edit an unfinished task's prompt, agent, model, effort, timeout, retries or budget", short: 'edit' },
   { keys: '/', what: 'search the task list', short: 'search' },
 ];
 
@@ -140,6 +152,7 @@ const overviewKeys = (): KeyHelp[] => [
   { keys: UD(), what: 'move through the task table; PgUp/PgDn and Home/End too', short: 'select' },
   { keys: 'F / L', what: "follow the selected task's transcript", short: 'follow' },
   { keys: 'R', what: 'restart the selected task', short: 'restart' },
+  { keys: 'E', what: 'edit the selected task; a running one is stopped and started again', short: 'edit' },
   { keys: 'U', what: 'usage per task: tokens, context, cost, time in tools', short: 'usage' },
   { keys: 'C', what: 'the Changes tab: what each task changed', short: 'changes' },
 ];
@@ -158,10 +171,16 @@ const reportKeys = (): KeyHelp[] => [
 
 const placeholderKeys = (): KeyHelp[] => [{ keys: LR(), what: 'another tab; this one is not filled in yet', short: 'tab' }];
 
+/** What the Session tab answers today: the editor, and the rest of it in stage 2's prompting task. */
+const sessionKeys = (): KeyHelp[] => [
+  { keys: 'E', what: 'edit the selected task (the form opens over this panel)', short: 'edit' },
+  { keys: LR(), what: 'another tab; the transcript and the composer are not filled in yet', short: 'tab' },
+];
+
 const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
   ({
     overview: overviewKeys,
-    session: placeholderKeys,
+    session: sessionKeys,
     logs: placeholderKeys,
     changes: changesKeys,
     report: reportKeys,

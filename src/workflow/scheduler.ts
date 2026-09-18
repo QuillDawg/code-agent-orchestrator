@@ -68,6 +68,18 @@ import { silentLogger } from '../logging/logger.js';
 import type { WorkflowCompletionStore } from './completion-store.js';
 import { readJsonIfExists } from '../util/fs.js';
 import { commandTaskId, revisionCount, runEndedReason, type ControlCommand, type ControlEnvelope } from './control/commands.js';
+import {
+  applyEdit,
+  decideEdit,
+  dependentRejection,
+  detectAgentReadiness,
+  editPendingOnTask,
+  editRejection,
+  markRevisionsApplied,
+  resetWorkspaceNote,
+  restartPlanFor,
+  type AgentReadiness,
+} from './control/edit.js';
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
 
@@ -127,6 +139,11 @@ export interface SchedulerDeps {
    * byte-identical to the release before it (§5.9).
    */
   emit?: EmitAnnouncement;
+  /**
+   * Whether the CLI an edited task would launch is installed and capable (§3.4). Injected so a test never
+   * shells out; the default probes the agent exactly as `cao run` does before the first token.
+   */
+  agentReadiness?: AgentReadiness;
 }
 
 /** spec.md §4.2.3 — what this run announces about itself. */
@@ -314,6 +331,12 @@ export class WorkflowScheduler {
    * remembers to end it as `cancelled` instead of retrying it once the `finalized` wake lands.
    */
   private readonly cancelRequests = new Set<string>();
+  /**
+   * Tasks whose cancellation is the first half of an edit-and-restart (§3.4, `[D22]`): the abort has gone
+   * out, and the restart is owed the moment the worker's death lands as a `cancelled` task. Kept apart from
+   * `cancelRequests` because a plain `cao task stop` must not start anything again.
+   */
+  private readonly restartAfterCancel = new Set<string>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
   private retryTimer: unknown;
   private liveTimer: unknown;
@@ -322,6 +345,7 @@ export class WorkflowScheduler {
   private heartbeatTimer: unknown;
   private finished = false;
   private readonly emit?: EmitAnnouncement;
+  private readonly agentReadiness: AgentReadiness;
   /** Registry writes are serialized so a heartbeat can never land on top of the terminal entry (§4.2.4). */
   private announceChain: Promise<void> = Promise.resolve();
   private announcing = false;
@@ -343,6 +367,7 @@ export class WorkflowScheduler {
     this.isResume = deps.isResume ?? false;
     this.completion = deps.completion;
     this.emit = deps.emit;
+    this.agentReadiness = deps.agentReadiness ?? detectAgentReadiness(deps.environment);
     this.taskDefs = new Map(this.workflow.tasks.map((t) => [t.id, t]));
     this.graph = new TaskGraph(this.workflow.tasks.map((t) => ({ id: t.id, dependsOn: t.dependsOn, docIndex: t.docIndex })));
     const layers = this.graph.layers();
@@ -802,8 +827,12 @@ export class WorkflowScheduler {
     // same goes for a session that finished its turn without the completion object: it is asked for just that.
     // An answer to a question the worker asked is the same conversation continuing too: `cao resume --input`
     // continues the session that asked rather than paying for the whole task again.
-    const answering = Boolean(state.userInput) && lastAttempt?.outcome === 'needs_input';
-    const resumable = lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering;
+    // ...unless the task has been edited since that session ran [D27]: the worker would be continuing a
+    // conversation about the prompt the operator has just replaced, which is the one thing an edit must not
+    // do. The previous attempt keeps its own `sessionId`; this attempt simply does not reuse it.
+    const editPending = editPendingOnTask(state);
+    const answering = Boolean(state.userInput) && lastAttempt?.outcome === 'needs_input' && !editPending;
+    const resumable = !editPending && (lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering);
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
     const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
     state.resumeSessionId = undefined;
@@ -820,6 +849,10 @@ export class WorkflowScheduler {
         : 'initial';
     const attempt: TaskAttempt = { number, kind: 'task', triggeredBy, startedAt: nowIso(), cwd: task.workingDirectory };
     if (resumeSessionId) attempt.resumedSessionId = resumeSessionId;
+    // Which revision of the task this attempt is running (§2.6), and where each edit landed, recorded before
+    // the worker starts so a crash mid-attempt still leaves a run that knows what it was told to do.
+    const revision = markRevisionsApplied(state, number);
+    if (revision !== undefined) attempt.revision = revision;
     state.attempts.push(attempt);
     state.currentAttempt = number;
     state.retryNotBefore = undefined;
@@ -1154,6 +1187,8 @@ export class WorkflowScheduler {
     if (!this.stop || (this.stop.mode === 'wait' && mode === 'cancel') || cause === 'signal') {
       this.stop = { mode, cause };
     }
+    // A run that is stopping starts nothing again, including the task half-way through an edit-and-restart.
+    this.restartAfterCancel.clear();
     if (mode === 'cancel') for (const e of this.inflight.values()) e.abort.abort();
     // Whatever the stop mode, nothing may still be asking the operator who just stopped the run: with
     // `wait` the worker is left to finish its turn, and a denial is what lets it.
@@ -1185,7 +1220,7 @@ export class WorkflowScheduler {
       w.settle(prior);
       return;
     }
-    const decision = this.decideControl(command, envelope);
+    const decision = await this.decideControl(command, envelope);
     const ack = this.recordControl(envelope, decision.status, decision.reason);
     // Persist-before-act, as everywhere else in this loop: the command is answered on disk before it changes
     // anything, so a crash in the middle leaves a run that knows what it was told rather than one that did it
@@ -1211,7 +1246,7 @@ export class WorkflowScheduler {
    * What one command does to this run, decided against the state as it is right now - which is why this runs
    * inside the loop and not at the point of submission.
    */
-  private decideControl(command: ControlCommand, envelope: ControlEnvelope): ControlDecision {
+  private async decideControl(command: ControlCommand, envelope: ControlEnvelope): Promise<ControlDecision> {
     const stale = this.staleness(command, envelope);
     if (stale) return { status: 'rejected', reason: stale };
     switch (command.kind) {
@@ -1230,7 +1265,7 @@ export class WorkflowScheduler {
       case 'cancelTask':
         return this.decideCancelTask(command.taskId);
       case 'edit':
-        return { status: 'rejected', reason: `Editing a task is not available until stage 2 of the v2 beta. Stop the run, change "${command.taskId}" in the workflow file, and start a new run.` };
+        return this.decideEdit(command, envelope);
       case 'prompt':
         return { status: 'rejected', reason: `Prompting a task is not available until stage 2 of the v2 beta. Answer "${command.taskId}" in the terminal that owns this run.` };
       case 'approve':
@@ -1327,6 +1362,114 @@ export class WorkflowScheduler {
       return { status: 'rejected', reason: `Task "${taskId}" already finished as ${state.state}, so there is nothing to cancel.` };
     }
     return { status: 'rejected', reason: `Task "${taskId}" is ${state.state} and has no attempt running, so there is nothing to cancel.` };
+  }
+
+  /**
+   * `edit` (§3.4): validate, then stop, then record, then restart - in that order and never another.
+   *
+   * Validation is first because everything after it is destructive: an invalid model must not cost an
+   * operator the hour of work a running attempt represents. The revision is written before the restart for
+   * the same reason `handleControl` persists the ack before applying it - an attempt that starts must
+   * already be able to say which revision it is running.
+   */
+  private async decideEdit(command: Extract<ControlCommand, { kind: 'edit' }>, envelope: ControlEnvelope): Promise<ControlDecision> {
+    const { taskId, restart } = command;
+    const state = this.run.tasks[taskId];
+    const task = this.taskDefs.get(taskId);
+    if (!state || !task) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+
+    const rejection = editRejection(task, state, restart);
+    if (rejection) return { status: 'rejected', reason: rejection };
+    // Merge-back is the one window where the task's own attempt has ended but its workspace has not: the
+    // tree is being merged right now, and an edit that restarted the task would race that merge.
+    if (this.pendingMerges.has(taskId) || this.inflight.get(taskId)?.kind === 'merge') {
+      return { status: 'rejected', reason: `"${taskId}" is merging its work back into the shared tree; it cannot be edited until that has finished.` };
+    }
+    const attempt = this.inflight.get(taskId) ? state.attempts.find((a) => a.number === this.inflight.get(taskId)!.attempt) : undefined;
+    if (attempt?.endedAt) {
+      return { status: 'rejected', reason: `Attempt ${attempt.number} of "${taskId}" has ended and is being finalized; edit it once the task is showing as finished.` };
+    }
+    const blocked = dependentRejection(this.run, taskId, this.graph.descendants(taskId));
+    if (blocked) return { status: 'rejected', reason: blocked };
+
+    const decided = await decideEdit(this.workflow, task, command.changes, {
+      knownRunners: this.runners.names(),
+      gitAvailable: Boolean(this.workflow.gitRoot),
+      readiness: this.agentReadiness,
+    });
+    if (!decided.ok) return { status: 'rejected', reason: decided.reason };
+    const plan = decided.plan;
+
+    const wanted = restartPlanFor(state);
+    const restarting = restart && (wanted === 'cancelAndRestart' || wanted === 'restart');
+    const note = [
+      ...plan.warnings,
+      ...(resetWorkspaceNote(plan.task, restarting) ? [resetWorkspaceNote(plan.task, restarting)!] : []),
+    ];
+    if (plan.fields.length === 0) {
+      // Every named field already holds the value asked for. Nothing is recorded - a revision that changed
+      // nothing is noise in a history whose whole job is to say what changed - but a restart still happens,
+      // because the operator asked for one and refusing it here would be a second, silent decision.
+      return {
+        status: 'applied',
+        reason: `"${taskId}" already has those values, so nothing was changed.${restarting ? ' It is being started again.' : ''}`,
+        apply: restarting ? () => this.restartAfterEdit(taskId, wanted) : undefined,
+      };
+    }
+
+    const reason = [
+      `Edited "${taskId}": ${plan.fields.join(', ')}.`,
+      wanted === 'cancelAndRestart' && restart
+        ? 'Its worker is being stopped and the task starts again from a fresh session.'
+        : restarting
+          ? 'It is being started again from a fresh session.'
+          : wanted === 'notStarted'
+            ? 'It has not started yet, so it will run with the new settings when it does.'
+            : wanted === 'paused'
+              ? `The run is paused on it; "cao resume ${this.run.runId}" picks the edit up.`
+              : `Restart it with "cao task restart ${taskId}" when you want it to run again.`,
+      ...note,
+    ].join(' ');
+
+    return {
+      status: 'applied',
+      reason,
+      apply: async () => {
+        // Stop first, record second, restart third (§3.4). The cancel is delivered here rather than through
+        // `decideCancelTask` because this is one command with one ack: a second ack for the stop would be a
+        // second answer to a request that only asked once.
+        if (restarting && wanted === 'cancelAndRestart') this.cancelForEdit(taskId);
+        const revision = applyEdit(task, state, plan, { source: envelope.source, pid: envelope.pid, at: nowIso(), note: note.length ? note.join(' ') : undefined });
+        // A restart after an edit always starts a fresh session [D27]; the previous attempt keeps its own.
+        state.resumeSessionId = undefined;
+        this.bus.emit({ type: 'task.edited', taskId, revision: revision.number, fields: plan.fields });
+        await this.persist();
+        if (restarting) await this.restartAfterEdit(taskId, wanted);
+      },
+    };
+  }
+
+  /** Abort the worker of a task being edited, denying whatever it was asking a human first `[D22]`. */
+  private cancelForEdit(taskId: string): void {
+    const entry = this.inflight.get(taskId);
+    if (!entry) return;
+    this.cancelRequests.add(taskId);
+    this.restartAfterCancel.add(taskId);
+    this.settleTaskInteractions(taskId, 'The task was edited and is being started again');
+    entry.abort.abort(new Error(`task "${taskId}" was edited and restarted`));
+  }
+
+  /**
+   * The restart half of an edit. A task whose worker is still dying cannot be restarted yet, so the request
+   * is left with `restartAfterCancel` and honoured by `applyAttemptOutcome` the moment the task lands as
+   * `cancelled` - the same place a plain `cancelTask` finishes.
+   */
+  private async restartAfterEdit(taskId: string, wanted: ReturnType<typeof restartPlanFor>): Promise<void> {
+    if (wanted === 'cancelAndRestart') {
+      this.restartAfterCancel.add(taskId);
+      return;
+    }
+    await this.applyRestart(taskId);
   }
 
   private async handleApproval(taskId: string, decision: 'approved' | 'rejected', note?: string): Promise<void> {
@@ -1560,6 +1703,10 @@ export class WorkflowScheduler {
   private async applyAttemptOutcome(task: ResolvedTask, state: TaskRunState, attempt: TaskAttempt, result: TaskResult | undefined, fin?: FinalizeResult): Promise<void> {
     await this.applyOutcome(task, state, attempt, result, fin);
     await this.applyPendingCancel(task, state, attempt);
+    // The second half of an edit-and-restart (§3.4): the worker the edit stopped has finished dying, so the
+    // task is in a state a restart can act on. One command, one ack - the ack was written when the edit was
+    // taken, and this is the rest of what it promised.
+    if (this.restartAfterCancel.delete(task.id) && state.state === 'cancelled') await this.applyRestart(task.id);
   }
 
   /**

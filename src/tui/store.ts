@@ -57,10 +57,26 @@ export const FOCUS_PANELS = ['tasks', 'tabs', 'main'] as const satisfies readonl
  * into (§2.4). Their text lives in `drafts`, so a half-typed query or answer survives the panel being
  * re-rendered under it.
  */
-export type Overlay = { kind: 'none' } | { kind: 'palette' } | { kind: 'search' } | { kind: 'help' } | { kind: 'quit' } | { kind: 'answer'; taskId: string };
+export type Overlay =
+  | { kind: 'none' }
+  | { kind: 'palette' }
+  | { kind: 'search' }
+  | { kind: 'help' }
+  | { kind: 'quit' }
+  | { kind: 'answer'; taskId: string }
+  /** The task editor (§3.4); `confirmRestart` is the "restart now?" question Save asks a running task. */
+  | { kind: 'edit'; taskId: string; confirmRestart?: boolean };
 
 /** The draft field the answer-and-resume form types into; one field, because one answer is sent at a time. */
 export const ANSWER_DRAFT = 'answer';
+
+/**
+ * Replace several drafts at once. The task editor opens with one draft per editable field (§3.4), and
+ * setting them one at a time would render the form seven times against six half-filled states.
+ */
+export const setDrafts = (store: PresentationStore, drafts: Record<string, string>): void => {
+  store.setState({ drafts: { ...store.getState().drafts, ...drafts } });
+};
 
 /**
  * One control this window sent, and what came back (§2.2, §2.3).
@@ -270,6 +286,7 @@ export const selectListCursor =
   (list: string) =>
   (s: PresentationState): number =>
     s.cursors[list] ?? 0;
+export const selectDrafts = (s: PresentationState): Record<string, string> => s.drafts;
 export const selectFocus = (s: PresentationState): FocusRegion => s.focus;
 export const selectCursor = (s: PresentationState): number => s.cursor;
 export const selectNotice = (s: PresentationState): string | null => s.notice;

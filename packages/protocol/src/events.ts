@@ -2,6 +2,7 @@ import type { AttemptOutcome, RunSummary, TaskReason, WorkspaceInfo } from './ru
 import type { RunnerUsage, TaskResult } from './result.js';
 import type { TranscriptEntry, FileOp } from './transcript.js';
 import type { Interaction, InteractionAnswer, InteractionAnswerSource } from './interaction.js';
+import type { TaskEditField } from './requests.js';
 
 export interface EventMeta {
   seq: number;
@@ -46,6 +47,11 @@ export type WorkflowEventBody =
   | { type: 'task.cancelled'; taskId: string; attempt?: number; reason: TaskReason }
   | { type: 'task.awaiting_approval'; taskId: string; prompt: string }
   | { type: 'task.needs_input'; taskId: string; summary: string }
+  /**
+   * An edit was applied to an unfinished task (spec §2.6, §3.4). **Names the fields, never their values**:
+   * the run log carries summaries, and a prompt is the one field whose value is the work itself.
+   */
+  | { type: 'task.edited'; taskId: string; revision: number; fields: TaskEditField[] }
   | { type: 'task.merging'; taskId: string; branch: string; into: string }
   | { type: 'task.merged'; taskId: string; branch: string; into: string; sha: string }
   | { type: 'hook.started'; hook: string; command: string; taskId?: string }

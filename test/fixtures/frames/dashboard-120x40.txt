@@ -37,4 +37,4 @@ Tasks #/#                            ✗ implement-renderer failed  after # atte
 
 
 
-↑↓ select   Enter open   F / L follow   R restart   / search   Ctrl+P palette   ? help   Q quit   quota: stage #
+↑↓ select   Enter open   F / L follow   R restart   E edit   / search   Ctrl+P palette   ? help   Q quit

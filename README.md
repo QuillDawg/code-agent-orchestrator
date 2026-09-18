@@ -580,8 +580,10 @@ Changes · Report · Diagnostics** — and a footer with the keys of whatever ha
 the run's outcome, then a task table (state, elapsed, agent, context size, cost, changed files, and an
 **activity column** showing the tool, command or line of prose a worker is on right now — after 30 seconds
 of silence the cell gains `… 2m idle`, so a thinking worker is distinguishable from a stuck one), then the
-selected task's full detail. Session and Logs are placeholders in this beta; each says what to use instead
-(`F` for the transcript, `cao task <id>`, `cao logs`) until they arrive.
+selected task's full detail. `E` on any unfinished task opens the editor described under
+[Editing an unfinished task](#editing-an-unfinished-task). The rest of Session, and Logs, are placeholders
+in this beta; each says what to use instead (`F` for the transcript, `cao task <id>`, `cao logs`) until they
+arrive.
 
 When a worker needs you, a prompt appears in the workspace (it reopens itself if minimised, and the terminal
 bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny with a reason. Questions list
@@ -618,10 +620,10 @@ the report · `?` lists the keys of whatever has focus, plus the ones that work 
 `Ctrl+C` stops the run and stays here (again within 20 seconds to force and exit 130).
 
 In the task list: `↑↓` select · `Enter` open the task in the panel · `F`/`L` follow its transcript · `R`
-restart a failed, blocked, cancelled or skipped task. In the tab bar: `←→` choose a tab, `Enter` opens it
-and focuses its panel. In the Overview: `↑↓` (plus `PgUp`/`PgDn`, `Home`/`End`) move the task table · `F`/`L`
-follow the selected task · `R` restart it · `U` usage (tokens, context, cost, time in tools; `S` sorts by
-cost), full-screen · `C` jump to the Changes tab.
+restart a failed, blocked, cancelled or skipped task · `E` edit an unfinished task. In the tab bar: `←→`
+choose a tab, `Enter` opens it and focuses its panel. In the Overview: `↑↓` (plus `PgUp`/`PgDn`,
+`Home`/`End`) move the task table · `F`/`L` follow the selected task · `R` restart it · `E` edit it · `U`
+usage (tokens, context, cost, time in tools; `S` sorts by cost), full-screen · `C` jump to the Changes tab.
 
 `Q` while the run is going asks first: **stay**, **stop and quit**, or **continue in plain output** — the
 old minimise, where the run keeps printing lines and `D` or `Enter` reopens the workspace. On a run that
@@ -629,8 +631,9 @@ has ended `Q` leaves at once, with that run's exit code; watching another termin
 the window. See [above](#the-workspace-stays-open-when-the-run-ends) for the ended-run actions (`S` `R`
 `>` `A` `X`) and the observer's controls (`S` `K` `R`).
 
-`Ctrl+C`, `Ctrl+P`, and `Ctrl+J` for a newline in the answer field are the chords the workspace reads;
-the transcript viewer adds `Ctrl+A` to scroll up. Every other `Ctrl`+key is left to the terminal.
+`Ctrl+C`, `Ctrl+P`, `Ctrl+J` for a newline in the answer field and the prompt, and `Ctrl+O` for the prompt
+in `$VISUAL`/`$EDITOR` are the chords the workspace reads; the transcript viewer adds `Ctrl+A` to scroll up.
+Every other `Ctrl`+key is left to the terminal.
 Below 100 columns the sidebar collapses to a one-line task strip, and the footer gives up its freshness
 chip first, then its quota chip, then the focused panel's own keys — `? help` and the way out survive
 last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than
@@ -638,6 +641,53 @@ the terminal it is drawn in; the usage table drops its cache, turns, time and to
 `cao task <id>` still reports all of them.
 
 </details>
+
+### Editing an unfinished task
+
+A prompt that was wrong, a model that was too small, a timeout that was too short: change them without
+stopping the run and without editing the workflow file.
+
+```bash
+cao task edit review --prompt-file better-prompt.md    # the resolved prompt; context is still automatic
+cao task edit review --model claude-opus-5 --restart   # stop the worker, apply, start it again
+cao task edit 002 review --retries 3 --timeout 90m
+```
+
+What is edited is the **resolved** task: the prompt with defaults, templates and `foreach` already applied,
+never the YAML behind it, which an edit never writes. The context section a task's `context.from` produces
+keeps being prepended at launch, and the editor shows it read-only beneath the prompt.
+
+**Validation comes first.** The edited task goes through the same validator `cao validate` prints — the
+agent is installed and capable, the timeout parses, retries are 0-20, a budget is Claude-only — and a
+failure is a refusal with that validator's own sentence. Nothing is stopped and nothing is recorded, so a
+mistyped model costs a running attempt nothing. Warnings (a model with no effort levels, a permission mode
+that will prompt) are printed and the edit is applied.
+
+`pending`, `ready`, `failed`, `blocked`, `cancelled` and `needs_input` tasks are edited in place; the task
+runs with the new settings the next time it starts. A **running or waiting** task needs `--restart` (the
+workspace asks before it does it), which stops the worker, applies the edit and starts the task again
+**from a fresh session** — the previous attempt keeps its `prompt.md`, transcript, usage, diff and session
+id, and the worktree and branch are reused. If `retry.resetWorkspace` is on, you are told that uncommitted
+changes in the worktree will be reset before it happens.
+
+Refused, each with a sentence saying what to do instead: a task that succeeded or was skipped (immutable —
+add a task or start a new run), an approval gate, a task merging its work back, and a task whose dependent
+has already run or is running — that last one names `cao run <workflow> --from <task>`, which is the run
+that gets the revised task and everything downstream of it.
+
+Every edit appends a **revision** to the run. `cao task <id>` prints the history under **Attempts** —
+number, time, source, the fields changed, and the attempt that carried it — and each attempt records the
+revision it ran with. The run's `events.jsonl` gets a `task.edited` line naming the fields and never their
+values.
+
+With nobody executing the run, the edit is written straight into the run and the resume that picks it up is
+named. `--restart` is refused there: a resume is what starts the task.
+
+In the workspace, `E` opens a form over the selected task: one row per field with its current value,
+the validator's message inline under the row that caused it, the context section read-only beneath the
+prompt, and `Ctrl+O` to write the prompt in `$VISUAL`/`$EDITOR` (the workspace steps off the alternate
+screen and waits for it). `Enter` on **Save** sends the edit, asking "restart now?" first when the task is
+running or waiting. On a succeeded or skipped task `E` says why there is nothing to edit.
 
 <details>
 <summary><strong>Transcript viewer keys</strong> (<code>F</code> in the workspace, or <code>cao logs --follow</code>)</summary>
@@ -775,6 +825,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao peek [run] <task>` | What a worker is doing right now, with context size, cost and files. `--follow`, `--json` |
 | `cao task [run] <task>` | Everything recorded about one task: status, model, attempts, PID, cwd, branch, dependencies, usage, changed files, interactions. `--json`. This is `cao task show`, the default subcommand; a task whose own name is a subcommand is reached with `cao task show <name>` |
 | `cao task stop\|restart [run] <task>` | Cancel the attempt a task is running, or run a finished, unsuccessful task again. Applied by the process that owns the run: directly when that is this one, otherwise through a request it answers. `--wait <seconds>` (default 30), `--repository <dir>` |
+| `cao task edit [run] <task>` | Change an unfinished task's prompt, agent, model, effort, timeout, retries or budget. Validated before anything stops. `--prompt <text>` or `--prompt-file <path>`, `--agent claude\|codex`, `--model <id>`, `--effort <level>`, `--timeout <duration>`, `--retries <n>`, `--budget <usd>`, `--restart`, `--wait <seconds>` (default 30), `--repository <dir>`. With nobody executing the run the edit is written into it and the resume that applies it is named; `--restart` is refused there |
 | `cao diff [run] [task]` | What a task changed, as a unified diff `git apply` accepts. `--stat`, `--name-only`, `--file <path>`, `--attempt N`, `--json` |
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |

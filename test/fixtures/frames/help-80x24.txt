@@ -7,6 +7,8 @@ Tasks — the panel with the keys
   Enter            open the selected task in the panel
   F / L            follow the task's live transcript
   R                restart a failed, blocked, cancelled or skipped task
+  E                edit an unfinished task's prompt, agent, model, effort,
+                   timeout, retries or budget
   /                search the task list
 
 Anywhere
@@ -16,9 +18,7 @@ Anywhere
   Q                quit: stay, stop and quit, or carry on in plain output
   Ctrl+C           stop the run and stay here; again within ##s forces it
 
-Transcript viewer (F)
-  ←→ / Tab / #-#   switch task    P task picker    [ ] earlier/later attempt
-  ↑↓ PgUp/PgDn     scroll    g oldest line    G newest line and follow again
-  t / T / k        tool output, thinking, kind filter
-▼ # more   ↑↓ scroll   Esc close
+The task editor (E)
+  ↑↓               move between the fields; Enter on the last one goes to Save
+▼ ## more   ↑↓ scroll   Esc close
 Esc close   ↑↓ move   Enter choose   quota: stage #

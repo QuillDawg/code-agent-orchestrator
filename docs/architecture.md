@@ -44,8 +44,11 @@ src/
                               through the request inbox and shows the ack), detached.ts (a read-only RunController over a run
                               directory nobody is executing, refusing every command with a reason; what `cao ui` reads a
                               finished or another-terminal's run through), local.ts (a per-run map of in-process controllers, so
-                              `cao task stop|restart` reaches the owning process directly when it is this one instead of writing
-                              a request to itself)
+                              `cao task stop|restart|edit` reaches the owning process directly when it is this one instead of
+                              writing a request to itself), edit.ts (what an edit of an unfinished task means: which fields,
+                              which states, which dependents block one, the workflow validator run over the edited task, and
+                              appending the TaskRevision - shared by the scheduler, `cao task edit` and the TUI form so the
+                              three cannot answer differently)
   runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
@@ -66,12 +69,15 @@ src/
                               block, and the ended-run and observer lead lines above it), ended.ts (the ended-run actions —
                               resume run, re-run task, resume from task, answer and resume, approve/reject), observer.ts (the
                               observer's stop/kill/restart controls, sent as requests), panels.tsx (Session, Logs, Changes,
-                              Report and Diagnostics tabs, the command palette, the quit prompt), keys.ts (every key the
-                              workspace answers, written down once so the footer and `?` cannot drift apart), layout.ts (row
-                              budgets and the 80x24 compact-layout thresholds)
+                              Report and Diagnostics tabs, the command palette, the quit prompt), edit.tsx (the task editor `E`
+                              opens: the rows, the round-tripping drafts, the inline validation and the read-only context
+                              section; the decisions themselves come from workflow/control/edit.ts), prompt-editor.ts (the
+                              prompt in $VISUAL/$EDITOR through terminal.ts's suspendTerminal, which hands the terminal over
+                              and takes it back), keys.ts (every key the workspace answers, written down once so the footer and
+                              `?` cannot drift apart), layout.ts (row budgets and the 80x24 compact-layout thresholds)
                               dashboard/ (modal.tsx for permission prompts, questions and approvals; review.tsx + files.ts + editor.ts for the
                               Changes tab; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
-                              by `cao task` and the detail view), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
+                              by `cao task` and the detail view; revisionRows renders the edit history under Attempts), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
                               surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
                               package), logs.tsx, follow.ts (file tailer), store.ts (the zustand store the workspace is fed from: the
                               run snapshot, the focused tab and panel, per-list cursors, drafts, notices and overlays)

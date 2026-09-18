@@ -333,19 +333,17 @@ describe('run controller: run-level commands', () => {
     expect(result.state).toBe('interrupted');
   });
 
-  it('declares edit, prompt and the permission commands but does not apply them yet', async () => {
+  it('declares prompt and the permission commands but does not apply them yet', async () => {
     const runner = new MockRunner().when('a', { kind: 'hang' });
     const h = harness(await wf('name: t\ntasks:\n  - id: a\n    prompt: p\n'), runner);
     const execution = h.scheduler.execute();
     await waitFor(() => h.run.tasks.a!.state === 'running');
 
-    const edit = await h.controller.submit({ kind: 'edit', taskId: 'a', changes: { prompt: 'new' }, restart: true }, tui());
     const prompt = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'hi', mode: 'steer' }, tui());
     const approve = await h.controller.submit({ kind: 'approve', taskId: 'a' }, tui());
     const answer = await h.controller.submit({ kind: 'answer', taskId: 'a', interactionId: 'r1', answer: { kind: 'allow', scope: 'once' } }, tui());
 
-    for (const ack of [edit, prompt, approve, answer]) expect(ack.status).toBe('rejected');
-    expect(edit.reason).toContain('not available until stage 2');
+    for (const ack of [prompt, approve, answer]) expect(ack.status).toBe('rejected');
     expect(prompt.reason).toContain('not available until stage 2');
     expect(approve.reason).toContain('Approve or reject "a" in the terminal that owns this run');
     expect(answer.reason).toContain('Answer "a" in the terminal that owns this run');

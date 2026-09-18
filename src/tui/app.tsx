@@ -19,7 +19,7 @@
  *   and the controller's answer becomes the notice.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { render, Box, Text, useInput, useApp, useFocus, useFocusManager, useIsScreenReaderEnabled, useWindowSize, type Instance } from 'ink';
+import { render, Box, Text, useInput, useApp, useFocus, useFocusManager, useIsScreenReaderEnabled, useWindowSize, type Instance, type Key } from 'ink';
 import { useStore } from 'zustand';
 import {
   type WorkflowRun,
@@ -33,6 +33,7 @@ import {
 import type { EventBus } from '../events/event-bus.js';
 import type { RunController } from '../workflow/control/controller.js';
 import { controlEnvelope } from '../workflow/control/commands.js';
+import { editRejection, resetWorkspaceNote, restartPlanFor } from '../workflow/control/edit.js';
 import { STATE_LABEL, stateGlyph } from '../workflow/states.js';
 import { glyph, spinnerFrames } from '../util/glyphs.js';
 import { formatDuration, formatDurationShort } from '../util/duration.js';
@@ -48,6 +49,8 @@ import { currentAttempt, elapsedCell } from './history.js';
 import {
   ANSWER_DRAFT,
   attachStore,
+  selectDrafts,
+  setDrafts,
   createPresentationStore,
   followRun,
   selectCursor,
@@ -77,6 +80,8 @@ import { workspaceLayout } from './workspace/layout.js';
 import { alwaysHintCells, footerHints, QUIT_ANSWERS, type KeyMode } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
 import { AnswerField, DiagnosticsPanel, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { EDIT_CURSOR, EDIT_ROWS, EditForm, editDraftKey, initialDrafts, SAVE_ROW, validateDraft } from './workspace/edit.js';
+import { editPromptExternally } from './workspace/prompt-editor.js';
 import { endedActionFor, endedActions } from './workspace/ended.js';
 import { leadTaskId } from './workspace/detail.js';
 import { answerElsewhere, observerActionFor, observerActions, pendingLines, type ObserverAction } from './workspace/observer.js';
@@ -241,6 +246,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const helpCursor = useStore(store, selectListCursor('help'));
   const quitCursor = useStore(store, selectListCursor('quit'));
   const answerDraft = useStore(store, selectDraft(ANSWER_DRAFT));
+  const drafts = useStore(store, selectDrafts);
+  const editCursor = useStore(store, selectListCursor(EDIT_CURSOR));
   const controls = useStore(store, selectControls);
 
   const [, setTick] = useState(0);
@@ -416,6 +423,73 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         setNotice(`Could not restart ${task.id}: ${(err as Error).message}`);
       });
   };
+  /**
+   * Open the task editor over the selected task (§3.4).
+   *
+   * The refusal is the controller's own sentence, asked for here rather than after a form has been filled
+   * in: a succeeded task has nothing to edit, and finding that out on Save is finding it out too late.
+   * A running task is not refused — the form is where the operator says "yes, stop it" — so `restart: true`
+   * is what is asked of `editRejection`.
+   */
+  const openEdit = (task: ResolvedTask | undefined): void => {
+    if (!task) return;
+    if (observing) {
+      setNotice(`This window is watching ${props.observer?.ownerPid !== undefined ? `pid ${props.observer.ownerPid}` : 'another process'}; edit the task in the terminal that owns the run, or with "cao task edit ${task.id}".`);
+      return;
+    }
+    if (props.finished) {
+      // The controller outlives the scheduler but refuses every command once the run has ended (§2.2), so
+      // the form would fill in and then be turned away. The offline path is the one that works here.
+      setNotice(`Run ${run.runId} has ended, so nothing is executing "${task.id}". Edit it with "cao task edit ${task.id}", then resume the run.`);
+      return;
+    }
+    const state = run.tasks[task.id];
+    const refusal = state ? editRejection(task, state, true) : undefined;
+    if (refusal) {
+      setNotice(refusal);
+      return;
+    }
+    setDrafts(store, initialDrafts(task));
+    store.getState().setListCursor(EDIT_CURSOR, 0, EDIT_ROWS.length + 1);
+    store.getState().setOverlay({ kind: 'edit', taskId: task.id });
+  };
+
+  /** Send the form's edit to the controller and let its ack be the answer, exactly as `restart` does. */
+  const submitEdit = (taskId: string, restartNow: boolean): void => {
+    const task = tasks.find((t) => t.id === taskId);
+    const state = run.tasks[taskId];
+    if (!task || !state) return;
+    const { edit, fields } = validateDraft(run.workflow, task, store.getState().drafts);
+    if (fields.length === 0) {
+      setNotice(`Nothing to change on "${taskId}".`);
+      return;
+    }
+    closeOverlay();
+    const attempts = state.attempts;
+    const expected = attempts[attempts.length - 1]?.number;
+    const envelope = controlEnvelope('tui', expected ? { attempt: expected } : undefined);
+    recordControl(envelope.id, `edit ${taskId}`);
+    void controller
+      .submit({ kind: 'edit', taskId, changes: edit, restart: restartNow }, envelope)
+      .then((ack) => {
+        store.getState().settleControl(envelope.id, ack.status, ack.reason);
+        setNotice(ack.reason ?? (ack.status === 'rejected' ? `"${taskId}" could not be edited.` : `Edited "${taskId}".`));
+      })
+      .catch((err: unknown) => {
+        store.getState().settleControl(envelope.id, 'rejected', (err as Error).message);
+        setNotice(`Could not edit ${taskId}: ${(err as Error).message}`);
+      });
+  };
+
+  /** `Ctrl+O` on the prompt row: hand the terminal to `$EDITOR` and take what it wrote back (§3.4). */
+  const editPromptInEditor = (taskId: string): void => {
+    const current = store.getState().drafts[editDraftKey('prompt')] ?? tasks.find((t) => t.id === taskId)?.prompt ?? '';
+    void editPromptExternally(current).then((result) => {
+      if (result.text !== undefined) store.getState().setDraft(editDraftKey('prompt'), result.text);
+      setNotice(result.notice);
+    });
+  };
+
   const follow = (task: ResolvedTask | undefined): void => {
     if (task) store.getState().setView({ kind: 'follow', taskId: task.id });
   };
@@ -531,6 +605,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     entries.push(
       { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
       ...(props.finished || observing ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
+      ...(observing ? [] : [{ id: 'action:edit', label: 'Edit the selected task', hint: 'E', run: () => openEdit(selected) }]),
       { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
       { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
       { id: 'action:quit', label: props.finished ? 'Quit the workspace' : 'Quit: stay, stop and quit, or plain output', hint: 'Q', run: requestQuit },
@@ -595,6 +670,61 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     { isActive: inWorkspace },
   );
 
+  /**
+   * The task editor's keys (§3.4, `[D15]`).
+   *
+   * Inside a field every printable key is text, whatever it would mean outside it: `q` types a `q`, `r`
+   * types an `r`, and the only chords are the two that are not text — `Ctrl+O` for the editor and `Ctrl+J`
+   * for a newline in the prompt. Enter on Save asks a running task "restart now?" rather than deciding.
+   */
+  const editKey = (input: string, key: Key, overlay: { kind: 'edit'; taskId: string; confirmRestart?: boolean }): void => {
+    const state = store.getState();
+    const task = tasks.find((t) => t.id === overlay.taskId);
+    if (!task) {
+      closeOverlay();
+      return;
+    }
+    if (overlay.confirmRestart) {
+      if (key.escape) state.setOverlay({ kind: 'edit', taskId: overlay.taskId });
+      else if (input.toLowerCase() === 'y' || key.return) submitEdit(overlay.taskId, true);
+      else if (input.toLowerCase() === 'n') submitEdit(overlay.taskId, false);
+      return;
+    }
+    if (key.ctrl && input === 'o') {
+      if (state.cursors[EDIT_CURSOR] === 0) editPromptInEditor(overlay.taskId);
+      else setNotice('Ctrl+O opens the prompt in $EDITOR; move to the Prompt row first.');
+      return;
+    }
+    if (key.escape) {
+      closeOverlay();
+      return;
+    }
+    if (key.upArrow || key.downArrow) {
+      state.moveListCursor(EDIT_CURSOR, key.upArrow ? -1 : 1, EDIT_ROWS.length + 1);
+      return;
+    }
+    const at = state.cursors[EDIT_CURSOR] ?? 0;
+    if (at === SAVE_ROW) {
+      if (key.return) {
+        // A running or waiting task is stopped by this edit, so it is asked for rather than assumed (§3.4).
+        const runState = run.tasks[overlay.taskId];
+        const plan = runState ? restartPlanFor(runState) : 'restart';
+        if (plan === 'cancelAndRestart') state.setOverlay({ kind: 'edit', taskId: overlay.taskId, confirmRestart: true });
+        else submitEdit(overlay.taskId, false);
+      }
+      return;
+    }
+    const field = EDIT_ROWS[at]!;
+    const draft = state.drafts[editDraftKey(field)] ?? '';
+    // Ctrl+J and `\` then Enter are the two newlines every terminal can type (§3.2); they are the prompt's
+    // alone, because a newline in a model id or a timeout is not a thing anyone means.
+    if (input === LINE_FEED && field === 'prompt') state.setDraft(editDraftKey(field), `${draft}${LINE_FEED}`);
+    else if (key.return && field === 'prompt' && draft.endsWith('\\')) state.setDraft(editDraftKey(field), `${draft.slice(0, -1)}${LINE_FEED}`);
+    else if (key.return) state.setListCursor(EDIT_CURSOR, SAVE_ROW, EDIT_ROWS.length + 1);
+    else if (key.backspace || key.delete) state.setDraft(editDraftKey(field), draft.slice(0, -1));
+    else if (input && !key.ctrl && !key.meta && !key.tab) state.setDraft(editDraftKey(field), draft + input);
+  };
+
   // Both of the handlers below are subscribed whenever the shell is up, and each decides from the current
   // overlay whether the key is theirs. Gating them with `isActive` instead reads better but loses keys: Ink
   // subscribes and unsubscribes in a passive effect, so a key that arrives between the press that opened an
@@ -614,6 +744,10 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           const chosen = QUIT_ANSWERS.find((a) => a.key.toLowerCase() === input.toLowerCase());
           if (chosen) answerQuit(chosen.kind);
         }
+        return;
+      }
+      if (overlay.kind === 'edit') {
+        editKey(input, key, overlay);
         return;
       }
       if (overlay.kind === 'answer') {
@@ -749,6 +883,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       else if (lower === 'u') state.setView({ kind: 'usage' });
       else if (lower === 'c') openTab('changes');
       else if (lower === 'r') restart(selected);
+      else if (lower === 'e') openEdit(selected);
       else if (lower === 'h') state.setOverlay({ kind: 'help' });
       else if (lower === 'q') requestQuit();
     },
@@ -969,6 +1104,23 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                 <Palette entries={paletteMatches} query={paletteQuery} cursor={paletteCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
               ) : overlay.kind === 'quit' ? (
                 <QuitPrompt cursor={quitCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
+              ) : overlay.kind === 'edit' ? (
+                <EditForm
+                  task={tasks.find((t) => t.id === overlay.taskId)!}
+                  state={run.tasks[overlay.taskId]!}
+                  workflow={run.workflow}
+                  tasks={run.tasks}
+                  drafts={drafts}
+                  cursor={editCursor}
+                  rows={layout.mainRows}
+                  columns={layout.mainWidth}
+                  theme={theme}
+                  confirmRestart={
+                    overlay.confirmRestart
+                      ? { note: resetWorkspaceNote(tasks.find((t) => t.id === overlay.taskId)!, true) }
+                      : undefined
+                  }
+                />
               ) : overlay.kind === 'answer' ? (
                 <AnswerField
                   taskId={overlay.taskId}
@@ -988,7 +1140,17 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         </Box>
       </Box>
       <Footer
-        hints={overlayOpen ? (overlay.kind === 'answer' ? 'Enter send   Ctrl+J newline   Esc cancel' : `Esc close   ${glyph('up')}${glyph('down')} move   Enter choose`) : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })}
+        hints={
+          overlayOpen
+            ? overlay.kind === 'answer'
+              ? 'Enter send   Ctrl+J newline   Esc cancel'
+              : overlay.kind === 'edit'
+                ? overlay.confirmRestart
+                  ? 'Y restart now   N apply only   Esc back to the form'
+                  : `${glyph('up')}${glyph('down')} field   Ctrl+O prompt in $EDITOR   Enter save   Esc cancel`
+                : `Esc close   ${glyph('up')}${glyph('down')} move   Enter choose`
+            : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })
+        }
         always={overlayOpen ? undefined : alwaysHintCells(mode)}
         columns={columns}
         theme={theme}

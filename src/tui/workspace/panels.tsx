@@ -13,7 +13,7 @@ import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock } from '../../util/duration.js';
 import { renderMarkdown } from '../markdown.js';
-import { endedKeys, globalKeys, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
+import { editKeys, endedKeys, globalKeys, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
 import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
@@ -24,10 +24,12 @@ import { windowOf } from '../window.js';
 /** What each unfilled tab is for, and when it arrives. Kept here so `?`, the tab and the docs agree. */
 export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
   session: [
-    'The Session panel arrives in stage 2.',
-    'It will hold the live transcript, the composer, editing an unfinished task and sending a worker a follow-up.',
+    'E edits the selected task: its prompt, agent, model, effort, timeout, retries and budget.',
+    'A task that is running is stopped, edited and started again from a fresh session; the form asks first.',
     '',
-    'Until then: F follows the selected task, and cao task <id> shows everything recorded about it.',
+    'The rest of this panel arrives with the composer: the live transcript, the session identity and',
+    'sending a worker a follow-up. Until then: F follows the selected task, and cao task <id> shows',
+    'everything recorded about it.',
   ],
   logs: [
     'The Logs panel arrives in stage 3.',
@@ -274,6 +276,7 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} ${glyph('dash')} the panel with the keys`, keys: panel.keys },
     { title: 'Anywhere', keys: globalKeys(mode) },
+    { title: 'The task editor (E)', keys: editKeys() },
     { title: 'Transcript viewer (F)', keys: viewerKeys() },
     { title: 'When a worker needs you', keys: promptKeys() },
   ];

@@ -1344,7 +1344,7 @@ describe('DashboardApp', () => {
       expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
       for (const line of help.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
       expect(help).toContain('stop the run and stay here');
-      expect(help).toContain('Transcript viewer (F)');
+      expect(help).toContain('The task editor (E)');
 
       tree.write(String.fromCharCode(27));
       await wait();

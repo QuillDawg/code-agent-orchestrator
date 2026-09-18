@@ -140,7 +140,7 @@ describe('the workspace at each terminal size', () => {
     it(`opens every tab at ${size.name} and each one says what it is`, async () => {
       const expected: Record<WorkspaceTab, string> = {
         overview: 'Status:',
-        session: 'arrives in stage 2',
+        session: 'E edits the selected task',
         logs: 'arrives in stage 3',
         changes: 'no diff captured',
         report: 'Run report',
@@ -290,6 +290,7 @@ describe('navigation', () => {
         expect(flat, `${small.columns} cut a help row`).toContain('stop the run and stay here; again within 20s forces it');
         expect(flat, `${small.columns} cut a help row`).toContain('restart a failed, blocked, cancelled or skipped task');
         // The longest row in the table, and the one an 80-column panel has no room for on a single line.
+        tree.write(KEYS.pageDown);
         tree.write(KEYS.pageDown);
         await wait();
         expect(tree.lastText().replace(/\s+/g, ' '), `${small.columns} cut the longest help row`).toContain('allow, allow for the rest of the task, deny, deny with a reason');

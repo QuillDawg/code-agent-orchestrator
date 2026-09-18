@@ -10,6 +10,7 @@ import {
   type TaskRunState,
   type InteractionAnswerSource,
   type InteractionRecord,
+  type TaskEditField,
   type TaskResult,
 } from 'code-agent-orchestrator-protocol';
 import { glyph } from '../util/glyphs.js';
@@ -170,6 +171,46 @@ export function attemptRows(state: TaskRunState, now = Date.now()): AttemptRow[]
     const error = oneLine(a.error);
     if (error) notes.push(error);
     return { number: a.number, line: parts.join('  '), notes, reason, durationMs };
+  });
+}
+
+/** What each editable field is called on screen, so the CLI and the form agree (§3.4). */
+export const EDIT_FIELD_LABEL: Record<TaskEditField, string> = {
+  prompt: 'prompt',
+  agent: 'agent',
+  model: 'model',
+  effort: 'effort',
+  timeout: 'timeout',
+  retries: 'retries',
+  maxBudgetUsd: 'budget',
+};
+
+export interface RevisionRow {
+  number: number;
+  /** `r1  10:12:30  cli  prompt, model  applied to attempt 2` */
+  line: string;
+  /** The revision's own note, already terminal-safe; empty when it carried none. */
+  notes: string[];
+}
+
+/**
+ * The revision history of a task, oldest first (§3.4).
+ *
+ * Fields, not values: a prompt is paragraphs long and the before-and-after of one belongs in the attempt
+ * directory, not in a summary an operator scans. The note is shown because it is the one thing a revision
+ * says that the field list cannot - that a worktree was about to be reset, or which warning the edit raised.
+ */
+export function revisionRows(state: TaskRunState): RevisionRow[] {
+  return (state.revisions ?? []).map((revision) => {
+    const fields = (Object.keys(revision.changes) as TaskEditField[]).map((field) => EDIT_FIELD_LABEL[field] ?? field);
+    const parts = [
+      `r${revision.number}`,
+      formatClock(revision.at),
+      sanitizeText(revision.source),
+      fields.length ? fields.join(', ') : 'nothing',
+      revision.appliedToAttempt === undefined ? 'not run yet' : `applied to attempt ${revision.appliedToAttempt}`,
+    ];
+    return { number: revision.number, line: parts.join('  '), notes: revision.note ? [oneLine(revision.note, 200)] : [] };
   });
 }
 

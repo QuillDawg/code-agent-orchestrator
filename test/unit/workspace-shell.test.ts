@@ -318,7 +318,9 @@ describe('the keys the footer and ? agree on', () => {
 
 describe('the panels a later stage fills', () => {
   it('says which stage fills each of them', () => {
-    expect(PLACEHOLDER_TEXT.session?.[0]).toContain('stage 2');
+    // Session is half filled in: the editor is here (§3.4), the composer is not, and the panel says both.
+    expect(PLACEHOLDER_TEXT.session?.join(' ')).toContain('E edits the selected task');
+    expect(PLACEHOLDER_TEXT.session?.join(' ')).toContain('the composer');
     expect(PLACEHOLDER_TEXT.logs?.[0]).toContain('stage 3');
     expect(PLACEHOLDER_TEXT.diagnostics?.[0]).toContain('stage 3');
     // And what answers the same question today, so the panel is never merely empty.

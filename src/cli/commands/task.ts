@@ -7,7 +7,7 @@ import { renderStat, summarizeDiff } from '../render/diff.js';
 import { stateGlyph, STATE_LABEL } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
 import { formatCost, formatTokens } from '../../tui/format.js';
-import { attemptRows, interactionRows, resultNotes, totalWaitedMs } from '../../tui/history.js';
+import { attemptRows, interactionRows, resultNotes, revisionRows, totalWaitedMs } from '../../tui/history.js';
 import { sanitizeText, useColor } from '../color.js';
 import { glyph } from '../../util/glyphs.js';
 
@@ -111,6 +111,17 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
     out('');
     out('Attempts:');
     for (const row of rows) {
+      out(`  ${row.line}`);
+      for (const note of row.notes) out(`      ${glyph('subArrow')} ${note}`);
+    }
+  }
+  // Under Attempts, because a revision is only legible next to the attempt that carried it (§3.4): "applied
+  // to attempt 2" is the whole point, and a history printed elsewhere makes the reader scroll to join them up.
+  const revisions = revisionRows(st);
+  if (revisions.length) {
+    out('');
+    out('Edits:');
+    for (const row of revisions) {
       out(`  ${row.line}`);
       for (const note of row.notes) out(`      ${glyph('subArrow')} ${note}`);
     }
