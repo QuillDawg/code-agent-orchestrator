@@ -574,6 +574,23 @@ describe('an edit with no owner, and the resume that picks it up (§3.4)', () =>
     await expect(taskEditCommand([runId, 'a'], { repository: repo, prompt: 'x', promptFile: 'y' })).rejects.toThrow(/not both/);
   });
 
+  /**
+   * One name per field, everywhere (§3.4).
+   *
+   * `plan.fields` carries the wire names, and the acks printed them raw: an operator who typed `--budget`
+   * and read `budget` in the revision history was told "Edited "a": maxBudgetUsd" in between.
+   */
+  it('names an edited field the way the flag and the history name it', async () => {
+    const { repo, runId } = await offlineRun();
+    const applied = await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, budget: 5, retries: 2 }));
+    expect(applied.code).toBe(0);
+    expect(applied.stdout).toContain('retries, budget');
+    expect(applied.stdout).not.toContain('maxBudgetUsd');
+
+    const shown = await captureCli(() => taskCommand([runId, 'a'], { repository: repo }));
+    expect(shown.stdout.split('Edits:')[1]).toContain('retries, budget');
+  });
+
   it('prints the revision history under Attempts in cao task show', async () => {
     const { repo, store, runId } = await offlineRun();
     await captureCli(() => taskEditCommand([runId, 'a'], { repository: repo, prompt: 'the offline prompt', model: 'claude-opus-5' }));

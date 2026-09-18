@@ -26,6 +26,7 @@ import {
   decideEdit,
   dependentRejection,
   detectAgentReadiness,
+  editFieldList,
   editRejection,
   resetWorkspaceNote,
   restartPlanFor,
@@ -151,7 +152,7 @@ export async function taskEditCommand(refs: string[], opts: TaskEditOptions): Pr
     // The revision has to be on disk before the operator is told it landed; `saveRun` writes atomically, so
     // a crash here leaves either the run as it was or the run with the whole edit in it.
     await store.saveRun(run);
-    out(`${mark('ok')} edited "${taskId}" as revision ${revision.number}: ${plan.fields.join(', ')}.`);
+    out(`${mark('ok')} edited "${taskId}" as revision ${revision.number}: ${editFieldList(plan.fields)}.`);
     for (const line of note) out(warnLine(sanitizeText(line)));
     out(`Nothing is executing run ${runId}. Run "cao resume ${runId}" to carry on with the edit, or "cao resume ${runId} --task ${taskId}" to run just this task.`);
     return 0;

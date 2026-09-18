@@ -74,6 +74,7 @@ import {
   decideEdit,
   dependentRejection,
   detectAgentReadiness,
+  editFieldList,
   editPendingOnTask,
   editRejection,
   markRevisionsApplied,
@@ -1703,7 +1704,7 @@ export class WorkflowScheduler {
     }
 
     const reason = [
-      `Edited "${taskId}": ${plan.fields.join(', ')}.`,
+      `Edited "${taskId}": ${editFieldList(plan.fields)}.`,
       wanted === 'cancelAndRestart' && restart
         ? 'Its worker is being stopped and the task starts again from a fresh session.'
         : restarting

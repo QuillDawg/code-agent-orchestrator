@@ -46,6 +46,26 @@ const EFFORTS: readonly Effort[] = ['none', 'minimal', 'low', 'medium', 'high', 
 export const MAX_RETRIES = 20;
 
 /**
+ * What each editable field is called in a sentence, so every surface calls it the same thing (§3.4).
+ *
+ * Here rather than beside the form, because the *acks* need it too: `plan.fields` carries the wire names,
+ * and an ack that said "edited "a": maxBudgetUsd" named a field that appears nowhere else - the flag is
+ * `--budget` and the revision history says `budget`. The wire keeps its own spelling; only the reading does.
+ */
+export const EDIT_FIELD_LABEL: Record<TaskEditField, string> = {
+  prompt: 'prompt',
+  agent: 'agent',
+  model: 'model',
+  effort: 'effort',
+  timeout: 'timeout',
+  retries: 'retries',
+  maxBudgetUsd: 'budget',
+};
+
+/** The fields of a plan, in the words an operator reads. */
+export const editFieldList = (fields: readonly TaskEditField[]): string => fields.map((f) => EDIT_FIELD_LABEL[f] ?? f).join(', ');
+
+/**
  * The states an edit may be applied to without stopping anything (§3.4). `running` and `waiting` are not
  * here: they are reachable only with `restart: true`, which is the caller saying so out loud.
  */

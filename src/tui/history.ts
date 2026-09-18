@@ -15,6 +15,9 @@ import {
   type PromptDelivery,
 } from 'code-agent-orchestrator-protocol';
 import { MODE_LABEL } from '../workflow/control/prompt.js';
+import { EDIT_FIELD_LABEL } from '../workflow/control/edit.js';
+
+export { EDIT_FIELD_LABEL };
 import { glyph } from '../util/glyphs.js';
 import { formatClock, formatDuration, formatDurationShort } from '../util/duration.js';
 import { firstLine, truncate } from '../util/misc.js';
@@ -175,17 +178,6 @@ export function attemptRows(state: TaskRunState, now = Date.now()): AttemptRow[]
     return { number: a.number, line: parts.join('  '), notes, reason, durationMs };
   });
 }
-
-/** What each editable field is called on screen, so the CLI and the form agree (§3.4). */
-export const EDIT_FIELD_LABEL: Record<TaskEditField, string> = {
-  prompt: 'prompt',
-  agent: 'agent',
-  model: 'model',
-  effort: 'effort',
-  timeout: 'timeout',
-  retries: 'retries',
-  maxBudgetUsd: 'budget',
-};
 
 export interface RevisionRow {
   number: number;

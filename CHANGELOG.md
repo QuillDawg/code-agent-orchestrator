@@ -430,6 +430,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   message still sitting at `queued`. A **Sent to this task** section now prints each one with its time,
   source, mode, state, the attempt that carried it and the first line of the text, with a rejected steer's
   reason underneath.
+- **An edit's answer names a field the way the flag and the history name it.** `--budget` was acknowledged
+  as `maxBudgetUsd`, a name that appears nowhere an operator can type or read; the acks now use the same
+  labels the revision history and the editor's form use. The `task.edited` event keeps the wire names.
 - **`cao task prompt --help` says the mode flags are optional.** Three of them in an option list read like a
   choice that has to be made before anything can be sent; it is the opposite, and the help now says so and
   shows what the answer looks like.
