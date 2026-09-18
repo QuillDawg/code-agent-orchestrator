@@ -143,6 +143,26 @@ describe('the plain renderer', () => {
     expect(written[0]).not.toContain(CR);
     expect(written[0]).not.toContain('second line');
   });
+
+  /**
+   * The headless line for a message sent to a task (§3.5, §2.6).
+   *
+   * It said "followUp via none: delivered" - the wire's own spelling of the mode, and a `transport` of
+   * `none` that every follow-up has by definition, because a follow-up is the row with no live channel.
+   */
+  it('writes a delivery in the words the rest of the surface uses, and never the message itself', async () => {
+    const written: string[] = [];
+    const r = await run(['a']);
+    const bus = new WorkflowEventBus(r.runId);
+    attachPlainRenderer(bus, r, { write: (line) => written.push(line), color: false });
+
+    bus.emit({ type: 'task.prompted', taskId: 'a', attempt: 2, deliveryId: 'd1', mode: 'followUp', transport: 'none', state: 'delivered' });
+    bus.emit({ type: 'task.prompted', taskId: 'a', attempt: 2, deliveryId: 'd2', mode: 'steer', transport: 'claude-stream', state: 'accepted' });
+
+    expect(written[0]).toContain('a  follow-up: delivered');
+    expect(written[0]).not.toContain('none');
+    expect(written[1]).toContain("a  steer via Claude's open stdin: accepted");
+  });
 });
 
 describe('time formats', () => {

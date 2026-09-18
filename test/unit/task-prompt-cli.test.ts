@@ -11,12 +11,16 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { taskPromptCommand, collectMessage, requestedMode } from '../../src/cli/commands/task-prompt.js';
+import { taskCommand } from '../../src/cli/commands/task.js';
 import { registerLocalController } from '../../src/workflow/control/local.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
-import { readPendingRequests } from '../../src/persistence/requests.js';
+import { controlRequest, readPendingRequests } from '../../src/persistence/requests.js';
 import { buildWorkflow, captureCli, makeRun, tmpDir } from '../helpers/index.js';
 import type { ControlAck, TaskState, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { commandForRequest } from '../../src/workflow/control/commands.js';
 import type { ControlCommand } from '../../src/workflow/control/commands.js';
+
+const NL = String.fromCharCode(10);
 
 const CHAIN = `
 name: t
@@ -101,7 +105,9 @@ describe('cao task prompt: the run this process owns', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('this process');
     expect(result.stdout).toContain('Starting "a" again');
-    expect(seen).toEqual([{ kind: 'prompt', taskId: 'a', text: 'try the other library', mode: 'followUp' }]);
+    // No mode on the command: the operator named none, and only the run knows whether the attempt in front
+    // of it has a live channel. Sending `followUp` here refused every no-flag prompt to a running task.
+    expect(seen).toEqual([{ kind: 'prompt', taskId: 'a', text: 'try the other library' }]);
   });
 
   it('carries --steer and --fresh-session over as asked, and exits 2 on a refusal', async () => {
@@ -131,6 +137,58 @@ describe('cao task prompt: a run another process owns', () => {
     const requests = await readPendingRequests(store.paths, runId);
     expect(requests).toHaveLength(1);
     expect(requests[0]!.request).toMatchObject({ kind: 'prompt', taskId: 'a', text: 'mind the lockfile', mode: 'stopAndContinue' });
+  });
+
+  it('leaves the mode out of the request when no flag named one, and the inbox leaves it out too', async () => {
+    const { repo, store, runId } = await offlineRun();
+    const owner = spawn(process.execPath, ['-e', 'setTimeout(() => undefined, 30_000)'], { stdio: 'ignore' });
+    cleanups.push(() => owner.kill());
+    await writeLock(repo, runId, owner.pid!);
+
+    await captureCli(() => taskPromptCommand([runId, 'a'], { repository: repo, message: 'mind the lockfile', wait: 0 }));
+    const requests = await readPendingRequests(store.paths, runId);
+    expect(requests[0]!.request.mode).toBeUndefined();
+
+    // The file crosses a process boundary, so the absence has to survive the translation as an absence: a
+    // request read as `followUp` would refuse every no-flag prompt sent to a running task.
+    const translated = commandForRequest(requests[0]!.request);
+    expect(translated).toMatchObject({ ok: true, command: { kind: 'prompt', taskId: 'a', text: 'mind the lockfile' } });
+    expect(translated.ok && 'mode' in translated.command).toBe(false);
+  });
+
+  it('refuses a request whose mode this build does not know, rather than reading it as a follow-up', () => {
+    const request = controlRequest('prompt', { taskId: 'a', text: 'x', mode: 'interrupt' as never });
+    const translated = commandForRequest(request);
+    expect(translated).toMatchObject({ ok: false });
+    expect(!translated.ok && translated.reason).toMatch(/does not know.*steer/s);
+  });
+});
+
+describe('what cao task show says about the messages sent to a task (§3.5)', () => {
+  it('lists every delivery with its state, the attempt that carried it, and the first line of the text', async () => {
+    const { repo, store, runId } = await offlineRun('needs_input');
+    const run = await store.loadRun(runId);
+    run.tasks.a!.followUps = [
+      { id: 'd1', at: '2026-09-18T10:12:30.000Z', source: 'cli', mode: 'followUp', transport: 'none', state: 'delivered', text: `use postgres${NL}and pin the version`, carriedByAttempt: 2 },
+      { id: 'd2', at: '2026-09-18T10:14:00.000Z', source: 'tui', mode: 'followUp', transport: 'none', state: 'queued', text: 'and run the migrations' },
+    ];
+    run.tasks.a!.attempts[0]!.prompts = [
+      { id: 'd0', at: '2026-09-18T10:10:00.000Z', source: 'inbox', mode: 'steer', transport: 'codex-app-server', state: 'rejected', text: 'wait', reason: 'no active turn to steer' },
+    ];
+    await store.saveRun(run);
+
+    const shown = await captureCli(() => taskCommand([runId, 'a'], { repository: repo }));
+    expect(shown.code).toBe(0);
+    const section = shown.stdout.split('Sent to this task:')[1]!;
+    // Oldest first, whether it was recorded on an attempt (a steer) or on the task (a follow-up).
+    expect(section.indexOf('steer')).toBeLessThan(section.indexOf('delivered'));
+    expect(section).toContain('no active turn to steer');
+    expect(section).toContain('delivered  attempt 2  use postgres');
+    // The one an operator most needs to see: a message nobody has carried yet.
+    expect(section).toContain('queued');
+    expect(section).toContain('and run the migrations');
+    // One line each: the rest of a long message is in the attempt's prompt.md, not in this table.
+    expect(section).not.toContain('and pin the version');
   });
 });
 

@@ -11,7 +11,7 @@ import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
 import { renderTree, KEYS, type RenderedTree } from '../helpers/ink-harness.js';
 import { buildWorkflow, makeRun } from '../helpers/index.js';
 import { stripAnsi } from '../../src/cli/color.js';
-import type { ControlAck, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import type { ControlAck, TranscriptEntry, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import type { ControlCommand } from '../../src/workflow/control/commands.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,7 +43,7 @@ interface Mounted {
   frame: () => string;
 }
 
-async function mountWorkspace(over: (run: WorkflowRun) => void, opts: { steerable?: boolean; ack?: Partial<ControlAck> } = {}): Promise<Mounted> {
+async function mountWorkspace(over: (run: WorkflowRun) => void, opts: { steerable?: boolean; ack?: Partial<ControlAck>; transcript?: TranscriptEntry[] } = {}): Promise<Mounted> {
   const { workflow } = await buildWorkflow(YAML, { gitRoot: process.cwd() });
   const run = makeRun(workflow);
   run.state = 'running';
@@ -51,8 +51,8 @@ async function mountWorkspace(over: (run: WorkflowRun) => void, opts: { steerabl
   over(run);
   const submits: ControlCommand[] = [];
   const controller = {
-    peek: () => [],
-    transcript: () => [],
+    peek: () => opts.transcript ?? [],
+    transcript: () => opts.transcript ?? [],
     capturedDiff: async () => null,
     steerable: () => opts.steerable === true,
     attemptTranscript: async () => [],
@@ -198,6 +198,55 @@ describe('the composer in the Session panel (§3.5)', () => {
       expect(m.frame()).toContain('half a thought');
     } finally {
       m.tree.unmount();
+    }
+  });
+
+  /**
+   * How much of the panel a long message may have (§3.2).
+   *
+   * A third of it used to be the composer's ceiling as well as its floor, so a task whose transcript was
+   * still empty showed seven lines of a thirty-line message above a dozen blank rows.
+   */
+  it('grows into the rows the transcript is not using, and gives them back when there is output', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`);
+    const type = async (tree: RenderedTree): Promise<void> => {
+      tree.write(KEYS.enter);
+      await wait();
+      for (const line of lines) {
+        tree.write(line);
+        await wait(2);
+        tree.write(KEYS.ctrlJ);
+        await wait(2);
+      }
+      await wait();
+    };
+
+    const empty = await mountWorkspace(running, { steerable: true });
+    try {
+      await openSession(empty.tree);
+      await type(empty.tree);
+      // Far more than the third of the panel the old ceiling allowed, and the blank rows are gone.
+      expect(empty.frame()).toContain('line 10');
+      expect(empty.frame()).toContain('line 29');
+    } finally {
+      empty.tree.unmount();
+    }
+
+    const busy = await mountWorkspace(running, {
+      steerable: true,
+      transcript: Array.from({ length: 40 }, (_, i) => ({ kind: 'text', ts: new Date().toISOString(), text: `output ${i}` }) as TranscriptEntry),
+    });
+    try {
+      await openSession(busy.tree);
+      await type(busy.tree);
+      const frame = busy.frame();
+      // The transcript is what a Session panel is mostly for: with output to read the composer is back to
+      // its share, and the newest lines of the transcript are on screen.
+      expect(frame).toContain('output 39');
+      expect(frame).not.toContain('line 10');
+      expect(frame).toContain('line 29');
+    } finally {
+      busy.tree.unmount();
     }
   });
 

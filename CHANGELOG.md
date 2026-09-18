@@ -414,6 +414,37 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **`cao task prompt` with no mode flag works again.** The command documents that it picks the row of the
+  §3.5 matrix that applies and says which it chose; it sent `followUp` instead, so every no-flag message to
+  a *running* task was refused with "a follow-up has no attempt to start" — the one sentence an operator who
+  named nothing cannot act on. The mode is now left out of the command and the request file when no flag
+  named one, and the run chooses it, which is the only place the choice can be made: whether the attempt has
+  a live channel is the runner's answer, not the sender's. A request file naming a mode this build does not
+  know is refused rather than read as a follow-up.
+- **Every answer to a message says which mode delivered it.** "The message is queued for `review`" did not
+  say whether it had been steered into the turn that was running or whether the worker had been stopped and
+  a new attempt started — very different things to have happened to an hour of work. Each ack now opens with
+  the mode: `Steer: …`, `Follow-up: …`, `Stop and continue: …`.
+- **`cao task <id>` lists the messages sent to a task.** The deliveries were recorded and shown in the
+  workspace's Session panel, but the command dedicated to one task said nothing about them — including a
+  message still sitting at `queued`. A **Sent to this task** section now prints each one with its time,
+  source, mode, state, the attempt that carried it and the first line of the text, with a rejected steer's
+  reason underneath.
+- **A message sent to a running task no longer announces itself as "task manually restarted from
+  dashboard".** All three routes that start a task again — `cao task restart`, the restart half of an edit,
+  and the stop-and-continue row of §3.5 — shared one sentence, which named the wrong action for two of them
+  and the wrong surface for anything sent from a terminal. The run log now says `restarted by the operator`,
+  `restarted to run the edit` or `started again to carry the message you sent`.
+- **The refusal for a session that is no longer on disk fits the mode that asked.** It said "send the
+  follow-up again", including to an operator who had typed a sentence to a running worker and had the
+  stop-and-continue row chosen for them; it now says "send the message again".
+- **The composer uses the room the transcript is not using.** A third of the Session panel was its ceiling
+  as well as its floor, so a task with nothing in its transcript yet showed seven lines of a thirty-line
+  message above a dozen blank rows. It grows into the spare rows and gives them straight back once there is
+  output to read.
+- **A delivery line in plain output is written in words.** `→ review  followUp via none: delivered` used the
+  wire's spelling of the mode and a transport of `none`, which is what every follow-up has by definition. It
+  now reads `→ review  follow-up: delivered`, and a steer names the channel it went through.
 - **An approval gate whose decision is already recorded no longer asks for a human.** Resuming with
   `cao resume --approve <gate>`, or approving from the workspace, still emitted `task.awaiting_approval`
   before honouring the decision — so line output printed "approval required" for a gate that was about to

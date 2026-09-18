@@ -91,7 +91,10 @@ export async function taskPromptCommand(refs: string[], opts: TaskPromptOptions)
     // The mode the *live* run chooses may differ from anything this file could work out — only the
     // scheduler knows whether the attempt in front of it has a channel — so the mode goes over as asked (or
     // not asked) and the controller's own answer is printed.
-    const ack = await here.submit({ kind: 'prompt', taskId, text, mode: requested ?? 'followUp', ...(freshSession ? { freshSession } : {}) }, controlEnvelope('cli'));
+    // No mode where none was asked for: the scheduler is the only thing that knows whether the attempt in
+    // front of it has a live channel, so a default of `followUp` here would refuse every no-flag prompt sent
+    // to a running task ("a follow-up has no attempt to start"). Its ack names the row it chose.
+    const ack = await here.submit({ kind: 'prompt', taskId, text, ...(requested ? { mode: requested } : {}), ...(freshSession ? { freshSession } : {}) }, controlEnvelope('cli'));
     out(`prompt ${taskId} (run ${runId}, this process): ${ack.status}${ack.reason ? ` ${sanitizeText(ack.reason)}` : ''}`);
     return ack.status === 'rejected' ? 2 : 0;
   }
@@ -101,7 +104,7 @@ export async function taskPromptCommand(refs: string[], opts: TaskPromptOptions)
     const sent = await sendControlRequest(
       store.paths,
       runId,
-      controlRequest('prompt', { taskId, text, mode: requested ?? 'followUp', ...(freshSession ? { freshSession: true } : {}) }),
+      controlRequest('prompt', { taskId, text, ...(requested ? { mode: requested } : {}), ...(freshSession ? { freshSession: true } : {}) }),
       { wait },
     );
     out(`prompt ${taskId} (run ${runId}) sent to pid ${ownership.pid}.`);

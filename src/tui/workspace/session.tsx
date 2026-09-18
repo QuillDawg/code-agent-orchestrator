@@ -21,7 +21,7 @@ import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock } from '../../util/duration.js';
 import { renderTranscript } from '../transcript.js';
-import { currentAttempt } from '../history.js';
+import { currentAttempt, deliveriesOf } from '../history.js';
 import { windowOf } from '../window.js';
 import { wrapPlain } from './detail.js';
 import { composerRows, cursorRow, splitAtCursor, type ComposerState } from '../composer.js';
@@ -38,15 +38,6 @@ const DELIVERY_STATE: Record<PromptDelivery['state'], { label: string; token: Th
   rejected: { label: 'rejected', token: 'danger' },
   failed: { label: 'failed', token: 'danger' },
 };
-
-/**
- * Every message sent to this task, oldest first: the steers recorded on their attempts and the follow-ups
- * recorded on the task, in one list because an operator sent them as one conversation.
- */
-export function deliveriesOf(state: TaskRunState): PromptDelivery[] {
-  const all = [...state.attempts.flatMap((a) => a.prompts ?? []), ...(state.followUps ?? [])];
-  return all.sort((a, b) => a.at.localeCompare(b.at));
-}
 
 /** One row of the delivery list: time, mode, state, reason, and the first line of what was said. */
 export function deliveryLine(delivery: PromptDelivery, width: number): string {
@@ -148,13 +139,22 @@ export function SessionPanel({ task, state, entries, hasChannel, composer, focus
     for (const line of wrapPlain(sanitizeText(`${pending.toolName}: ${pending.title}`), width).slice(0, 3)) push(`  ${line}`, 'warning');
   }
 
-  // The composer and the delivery list get a fixed share, and the transcript takes the rest: it is the part
-  // that has more to show than any panel can hold, so it is the part that should absorb a small terminal.
-  const composerRowCount = focused && composer ? Math.min(Math.max(3, composerRows(composer).length), Math.max(3, Math.floor(rows / 3))) : 1;
   const deliveryRowCount = deliveries.length ? Math.min(deliveries.length, 4) + 1 : 0;
-  const transcriptRows = Math.max(1, rows - lines.length - composerRowCount - deliveryRowCount - 4);
-
   const rendered = renderTranscript([...entries], { width, color: false, timestamps: width < 100 ? 'short' : true });
+
+  // The transcript and the composer share whatever the fixed parts leave, and the transcript absorbs a small
+  // terminal: it is the part with more to show than any panel can hold.
+  //
+  // A third of the panel is the composer's **floor**, not its ceiling. It used to be both, so a task whose
+  // transcript was still empty showed seven lines of a thirty-line message above twelve blank rows — the
+  // composer losing an argument it was not having. It takes what the transcript does not want, and gives it
+  // straight back the moment there is output to read.
+  const spare = Math.max(2, rows - lines.length - deliveryRowCount - 4);
+  const wanted = focused && composer ? Math.max(3, composerRows(composer).length) : 1;
+  const share = Math.min(wanted, Math.max(3, Math.floor(rows / 3)));
+  const composerRowCount = focused && composer ? Math.min(wanted, Math.max(share, spare - Math.max(1, rendered.length))) : 1;
+  const transcriptRows = Math.max(1, spare - composerRowCount);
+
   push(' ');
   if (rendered.length === 0) push('No output from this task yet.', 'muted');
   for (const line of rendered.slice(-transcriptRows)) push(line);

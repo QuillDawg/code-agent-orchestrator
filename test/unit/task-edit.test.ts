@@ -199,6 +199,11 @@ describe('editing a running task (§5 row 6)', () => {
     expect(h.run.workflow.tasks.find((t) => t.id === 'a')!.retry.attempts).toBe(2);
     // `b` was never touched: one task was edited, not the run.
     expect(h.run.tasks.b!.state).toBe('running');
+    // What the run log says happened, which for an edit-and-restart is not "manually restarted from
+    // dashboard": the operator edited a task and the run started it again to run the edit.
+    const announced = h.store.eventsOf('workflow.warning').filter((e) => 'code' in e && e.code === 'restart');
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatchObject({ taskId: 'a', message: 'task restarted to run the edit' });
 
     await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
     await execution;

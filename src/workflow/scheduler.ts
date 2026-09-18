@@ -102,6 +102,17 @@ export type StopCause = 'signal' | 'on_failure' | 'pause';
  */
 const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([...TERMINAL_TASK_STATES].filter((s) => s !== 'success'));
 
+/**
+ * Why a task is being started again, in the words the run log and `cao task` show (§2.6).
+ *
+ * Three routes reach `applyRestart` and they are three different things: `cao task restart` or `R`, the
+ * second half of an edit-and-restart (§3.4), and the stop-and-continue row of §3.5. All three used to say
+ * "manually restarted from dashboard", which was the wrong action and the wrong surface for two of them.
+ */
+const RESTART_BY_OPERATOR = 'restarted by the operator';
+const RESTART_FOR_EDIT = 'restarted to run the edit';
+const RESTART_FOR_MESSAGE = 'started again to carry the message you sent';
+
 function noSuchTaskReason(taskId: string, runId: string): string {
   return `There is no task "${taskId}" in this run. Run "cao status ${runId}" to see the tasks it has.`;
 }
@@ -364,11 +375,16 @@ export class WorkflowScheduler {
    */
   private readonly cancelRequests = new Set<string>();
   /**
-   * Tasks whose cancellation is the first half of an edit-and-restart (§3.4, `[D22]`): the abort has gone
-   * out, and the restart is owed the moment the worker's death lands as a `cancelled` task. Kept apart from
-   * `cancelRequests` because a plain `cao task stop` must not start anything again.
+   * Tasks whose cancellation is the first half of an edit-and-restart (§3.4, `[D22]`) or of a
+   * stop-and-continue (§3.5): the abort has gone out, and the restart is owed the moment the worker's death
+   * lands as a `cancelled` task. Kept apart from `cancelRequests` because a plain `cao task stop` must not
+   * start anything again.
+   *
+   * The value is why, because the three things that reach `applyRestart` are three different things to have
+   * happened to a task and the run log is where an operator reads which: a message sent to a worker said
+   * "task manually restarted from dashboard" whatever had sent it and from wherever.
    */
-  private readonly restartAfterCancel = new Set<string>();
+  private readonly restartAfterCancel = new Map<string, string>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
   private retryTimer: unknown;
   private liveTimer: unknown;
@@ -1278,14 +1294,14 @@ export class WorkflowScheduler {
     this.settleOpenInteractions(cause === 'signal' ? 'The run was interrupted' : 'The run is stopping');
   }
 
-  private async applyRestart(taskId: string): Promise<void> {
+  private async applyRestart(taskId: string, why = RESTART_BY_OPERATOR): Promise<void> {
     if (this.stop || this.inflight.has(taskId)) return;
     const state = this.run.tasks[taskId];
     if (!state || !RESTARTABLE_STATES.has(state.state)) return;
-    this.setState(state, 'pending', undefined, 'manually restarted from dashboard');
+    this.setState(state, 'pending', undefined, why);
     state.blockedBy = undefined;
     state.retryWindowStart = (state.attempts[state.attempts.length - 1]?.number ?? 0) + 1;
-    this.bus.emit({ type: 'workflow.warning', code: 'restart', taskId, message: 'task manually restarted from dashboard' });
+    this.bus.emit({ type: 'workflow.warning', code: 'restart', taskId, message: `task ${why}` });
     await this.persist();
   }
 
@@ -1554,9 +1570,12 @@ export class WorkflowScheduler {
     const continues = session.sessionId
       ? `Its next attempt continues session ${session.sessionId}.`
       : 'Its next attempt starts a fresh session with your message in the prompt.';
+    // Named, not implied: a caller that gave no mode flag has to be told which row of the matrix answered
+    // it, because "stopped its worker and started a new attempt" and "queued into the turn it is running"
+    // are very different things to have done to an hour of work (§3.5).
     const reason = stopFirst
-      ? `Stopping the worker of "${taskId}" and continuing with your message. ${continues}`
-      : `Starting "${taskId}" again with your message. ${continues}`;
+      ? `Stop and continue: stopping the worker of "${taskId}" and starting it again with your message. ${continues}`
+      : `Follow-up: starting "${taskId}" again with your message. ${continues}`;
 
     return {
       status: 'accepted',
@@ -1576,7 +1595,7 @@ export class WorkflowScheduler {
     const entry = this.inflight.get(taskId);
     if (!entry) return;
     this.cancelRequests.add(taskId);
-    this.restartAfterCancel.add(taskId);
+    this.restartAfterCancel.set(taskId, RESTART_FOR_MESSAGE);
     this.settleTaskInteractions(taskId, 'The task was stopped to be continued with a follow-up');
     entry.abort.abort(new Error(`task "${taskId}" was stopped to continue with a follow-up`));
   }
@@ -1718,7 +1737,7 @@ export class WorkflowScheduler {
     const entry = this.inflight.get(taskId);
     if (!entry) return;
     this.cancelRequests.add(taskId);
-    this.restartAfterCancel.add(taskId);
+    this.restartAfterCancel.set(taskId, RESTART_FOR_EDIT);
     this.settleTaskInteractions(taskId, 'The task was edited and is being started again');
     entry.abort.abort(new Error(`task "${taskId}" was edited and restarted`));
   }
@@ -1730,10 +1749,10 @@ export class WorkflowScheduler {
    */
   private async restartAfterEdit(taskId: string, wanted: ReturnType<typeof restartPlanFor>): Promise<void> {
     if (wanted === 'cancelAndRestart') {
-      this.restartAfterCancel.add(taskId);
+      this.restartAfterCancel.set(taskId, RESTART_FOR_EDIT);
       return;
     }
-    await this.applyRestart(taskId);
+    await this.applyRestart(taskId, RESTART_FOR_EDIT);
   }
 
   private async handleApproval(taskId: string, decision: 'approved' | 'rejected', note?: string): Promise<void> {
@@ -1970,7 +1989,9 @@ export class WorkflowScheduler {
     // The second half of an edit-and-restart (§3.4): the worker the edit stopped has finished dying, so the
     // task is in a state a restart can act on. One command, one ack - the ack was written when the edit was
     // taken, and this is the rest of what it promised.
-    if (this.restartAfterCancel.delete(task.id) && state.state === 'cancelled') await this.applyRestart(task.id);
+    const owed = this.restartAfterCancel.get(task.id);
+    if (owed !== undefined) this.restartAfterCancel.delete(task.id);
+    if (owed !== undefined && state.state === 'cancelled') await this.applyRestart(task.id, owed);
   }
 
   /**

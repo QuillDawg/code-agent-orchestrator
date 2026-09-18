@@ -12,7 +12,9 @@ import {
   type InteractionRecord,
   type TaskEditField,
   type TaskResult,
+  type PromptDelivery,
 } from 'code-agent-orchestrator-protocol';
+import { MODE_LABEL } from '../workflow/control/prompt.js';
 import { glyph } from '../util/glyphs.js';
 import { formatClock, formatDuration, formatDurationShort } from '../util/duration.js';
 import { firstLine, truncate } from '../util/misc.js';
@@ -211,6 +213,53 @@ export function revisionRows(state: TaskRunState): RevisionRow[] {
       revision.appliedToAttempt === undefined ? 'not run yet' : `applied to attempt ${revision.appliedToAttempt}`,
     ];
     return { number: revision.number, line: parts.join('  '), notes: revision.note ? [oneLine(revision.note, 200)] : [] };
+  });
+}
+
+/**
+ * Every message sent to this task, oldest first: the steers recorded on their attempts and the follow-ups
+ * recorded on the task, in one list because an operator sent them as one conversation (§3.5).
+ */
+export function deliveriesOf(state: TaskRunState): PromptDelivery[] {
+  const all = [...state.attempts.flatMap((a) => a.prompts ?? []), ...(state.followUps ?? [])];
+  return all.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** What each delivery state is called on screen. */
+export const DELIVERY_STATE_LABEL: Record<PromptDelivery['state'], string> = {
+  queued: 'queued',
+  accepted: 'accepted',
+  delivered: 'delivered',
+  rejected: 'rejected',
+  failed: 'failed',
+};
+
+export interface DeliveryRow {
+  delivery: PromptDelivery;
+  /** `10:12:30  cli  steer  accepted  also update the changelog` */
+  line: string;
+  /** The transport's own sentence about a refusal, and nothing when there was none. */
+  notes: string[];
+}
+
+/**
+ * What has been said to this task, for `cao task` and the Session panel (§3.5).
+ *
+ * The first line of the message is part of the row rather than only the state: a task that took three
+ * follow-ups is a conversation, and "delivered / delivered / delivered" is not a record of one. The rest of
+ * a long message stays in the attempt's `prompt.md`, which is where it really went.
+ */
+export function deliveryRows(state: TaskRunState): DeliveryRow[] {
+  return deliveriesOf(state).map((delivery) => {
+    const parts = [
+      formatClock(delivery.at),
+      sanitizeText(delivery.source),
+      MODE_LABEL[delivery.mode] ?? delivery.mode,
+      DELIVERY_STATE_LABEL[delivery.state] ?? delivery.state,
+      delivery.carriedByAttempt !== undefined ? `attempt ${delivery.carriedByAttempt}` : undefined,
+      truncate(oneLine(delivery.text, 60), 60),
+    ].filter((p): p is string => p !== undefined && p !== '');
+    return { delivery, line: parts.join('  '), notes: delivery.reason ? [oneLine(delivery.reason, 200)] : [] };
   });
 }
 

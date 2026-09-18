@@ -89,12 +89,16 @@ describe('the session a follow-up would continue (`[D25]`)', () => {
     expect(check).toEqual({ sessionId: 'sess-1' });
   });
 
-  it('refuses when the transcript is gone, and names the fresh-session option instead of falling back', async () => {
+  it('refuses when the transcript is gone in words that fit whichever mode asked, and names --fresh-session', async () => {
     const check = await checkFollowUpSession(task(), withAttempt('sess-1'), { probe: probe('missing') });
     expect(check.rejection).toContain('no longer on disk');
     expect(check.rejection).toContain('--fresh-session');
     // The one thing it must not do: quietly start a new session and say nothing.
     expect(check.rejection).toContain('silently start a new one');
+    // This check guards the stop-and-continue row as well, where an operator who typed a sentence to a
+    // running worker never asked for a follow-up and never ran a command that has that word in it.
+    expect(check.rejection).toContain('Send the message again');
+    expect(check.rejection).not.toContain('follow-up');
   });
 
   it('starts fresh when asked, without consulting the disk at all', async () => {
@@ -281,7 +285,7 @@ describe('a follow-up through the run controller (§3.5)', () => {
     const before = h.run.controls?.seen.length ?? 0;
     const ack = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'use the cache', mode: 'stopAndContinue' }, controlEnvelope('tui'));
     expect(ack.status).toBe('accepted');
-    expect(ack.reason).toContain('Stopping the worker');
+    expect(ack.reason).toContain('Stop and continue: stopping the worker');
     // One command, one ack: the stop does not get an ack of its own.
     expect((h.run.controls?.seen.length ?? 0) - before).toBe(1);
 
@@ -291,6 +295,41 @@ describe('a follow-up through the run controller (§3.5)', () => {
     expect(second.prompt).toContain('use the cache');
     expect(h.run.tasks.a!.attempts[0]!.outcome).toBe('cancelled');
     expect(h.run.tasks.a!.followUps![0]).toMatchObject({ mode: 'stopAndContinue', state: 'delivered', carriedByAttempt: 2 });
+    // The run log says what really happened to the task. It said "task manually restarted from dashboard",
+    // which named neither the action (a message was sent) nor the surface (this one came from the CLI).
+    const announced = h.events.filter((e) => e.type === 'workflow.warning' && 'code' in e && e.code === 'restart');
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatchObject({ taskId: 'a', message: 'task started again to carry the message you sent' });
+
+    await h.controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli'));
+    await execution;
+  });
+
+  /**
+   * `cao task prompt <task> --message ...` with no mode flag (§3.5).
+   *
+   * The command carries no mode, because the scheduler is the only thing that knows whether the attempt in
+   * front of it has a live channel. A CLI that defaulted it to `followUp` refused every no-flag prompt sent
+   * to a running task with "a follow-up has no attempt to start", which is the one sentence an operator who
+   * named nothing cannot act on.
+   */
+  it('chooses the row itself when the caller named no mode, and says which it chose', async () => {
+    const runner = new MockRunner().when('a', [{ kind: 'error', outcome: 'crash' }, { kind: 'hang' }]).when('b', { kind: 'hang' });
+    const h = harness(await wf(FAILING_PAIR), runner);
+    const execution = h.scheduler.execute();
+    await waitFor(() => h.run.tasks.a!.state === 'failed' && h.run.tasks.b!.state === 'running');
+
+    // `b` is running with a mock runner, which offers no channel: the stop-and-continue row.
+    const running = await h.controller.submit({ kind: 'prompt', taskId: 'b', text: 'use the cache' }, controlEnvelope('cli'));
+    expect(running.status).toBe('accepted');
+    expect(running.reason).toContain('Stop and continue: stopping the worker of "b"');
+    expect(h.run.tasks.b!.followUps![0]).toMatchObject({ mode: 'stopAndContinue' });
+
+    // `a` has stopped: the follow-up row, and the ack names that instead.
+    const stopped = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'try it with -O2' }, controlEnvelope('cli'));
+    expect(stopped.status).toBe('accepted');
+    expect(stopped.reason).toContain('Follow-up: starting "a" again');
+    expect(h.run.tasks.a!.followUps![0]).toMatchObject({ mode: 'followUp' });
 
     await h.controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli'));
     await execution;

@@ -129,9 +129,12 @@ export async function checkFollowUpSession(task: ResolvedTask, state: TaskRunSta
   if (presence !== 'missing') return { sessionId };
   return {
     sessionId,
+    // "the message", not "the follow-up": this check guards the stop-and-continue row too, and telling an
+    // operator who typed a sentence to a running worker to "send the follow-up again" names a mode they
+    // never chose and a command they did not run.
     rejection:
       `The ${task.agent} session "${sessionId}" that "${state.id}" would continue is no longer on disk, so resuming it would silently start a new one instead. ` +
-      `Send the follow-up again with --fresh-session (or "Start a fresh session" in the composer) to run the task from the top with your message in its prompt.`,
+      `Send the message again with --fresh-session (or "Start a fresh session" in the composer) to run the task from the top with your message in its prompt.`,
   };
 }
 

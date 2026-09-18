@@ -151,19 +151,47 @@ export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolea
   return { reason: `Task "${state.id}" is ${state.state}; ${MODE_LABEL[opts.requested]} does not apply to it.` };
 }
 
-/** The ack sentence for a delivery, in the state the transport left it. */
+/** How each transport is named in a sentence an operator reads; `none` has no name because it is not one. */
+export const TRANSPORT_LABEL: Record<PromptDelivery['transport'], string | undefined> = {
+  'claude-stream': "Claude's open stdin",
+  'codex-app-server': 'the Codex app-server',
+  'codex-exec': 'a new codex exec session',
+  none: undefined,
+};
+
+/**
+ * The mode as a sentence opens with it, so every ack says which row of the matrix it used (§3.5).
+ *
+ * Separate from `MODE_LABEL`, which is the mid-sentence form the delivery list and the composer header use:
+ * "stop and continue: ..." at the start of an ack and "  stop and continue  delivered" in a list are the
+ * same fact written for two different places, and one string cannot be right in both.
+ */
+const MODE_LEAD: Record<PromptDeliveryMode, string> = {
+  steer: 'Steer',
+  followUp: 'Follow-up',
+  stopAndContinue: 'Stop and continue',
+};
+
+/**
+ * The ack sentence for a delivery, in the state the transport left it.
+ *
+ * It leads with the mode because the caller may not have chosen one: §3.5 lets `cao task prompt` be given a
+ * message and nothing else, and "the message is queued" answers neither of the two questions an operator
+ * then has — was it steered into the turn that is running, or did it stop the worker and start a new attempt.
+ */
 export function deliveryReason(taskId: string, delivery: PromptDelivery): string {
   const detail = delivery.reason ? ` ${delivery.reason}` : '';
+  const lead = MODE_LEAD[delivery.mode];
   switch (delivery.state) {
     case 'accepted':
-      return `The message was delivered to "${taskId}".${detail}`;
+      return `${lead}: the message was delivered to "${taskId}".${detail}`;
     case 'queued':
-      return `The message is queued for "${taskId}".${detail}`;
+      return `${lead}: the message is queued for "${taskId}" and starts a new turn when the current one ends.${detail}`;
     case 'rejected':
-      return `"${taskId}" refused the message.${detail}`;
+      return `${lead}: "${taskId}" refused the message.${detail}`;
     case 'failed':
-      return `The message did not reach "${taskId}".${detail}`;
+      return `${lead}: the message did not reach "${taskId}".${detail}`;
     case 'delivered':
-      return `The message was carried into "${taskId}".${detail}`;
+      return `${lead}: the message was carried into "${taskId}".${detail}`;
   }
 }

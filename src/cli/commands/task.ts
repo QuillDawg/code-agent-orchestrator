@@ -7,7 +7,7 @@ import { renderStat, summarizeDiff } from '../render/diff.js';
 import { stateGlyph, STATE_LABEL } from '../../workflow/states.js';
 import { formatDuration, formatWhen } from '../../util/duration.js';
 import { formatCost, formatTokens } from '../../tui/format.js';
-import { attemptRows, interactionRows, resultNotes, revisionRows, totalWaitedMs } from '../../tui/history.js';
+import { attemptRows, deliveryRows, interactionRows, resultNotes, revisionRows, totalWaitedMs } from '../../tui/history.js';
 import { sanitizeText, useColor } from '../color.js';
 import { glyph } from '../../util/glyphs.js';
 
@@ -122,6 +122,18 @@ export async function taskCommand(refs: string[], opts: TaskOptions): Promise<nu
     out('');
     out('Edits:');
     for (const row of revisions) {
+      out(`  ${row.line}`);
+      for (const note of row.notes) out(`      ${glyph('subArrow')} ${note}`);
+    }
+  }
+  // Beside the edits, for the same reason (§3.5): what was said to a task is half of why its attempts look
+  // the way they do, and until now the one command dedicated to a task was silent about every message an
+  // operator had sent it - including one still sitting at `queued`.
+  const deliveries = deliveryRows(st);
+  if (deliveries.length) {
+    out('');
+    out('Sent to this task:');
+    for (const row of deliveries) {
       out(`  ${row.line}`);
       for (const note of row.notes) out(`      ${glyph('subArrow')} ${note}`);
     }

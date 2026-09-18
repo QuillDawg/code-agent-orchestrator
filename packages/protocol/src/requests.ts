@@ -88,8 +88,10 @@ export interface ControlRequest {
   /** `prompt` only: the text to deliver, verbatim. */
   text?: string;
   /**
-   * `prompt` only: how to deliver it. A `stop` request carries no mode — `stop.json` has never had one, and
-   * a stop from another terminal has always meant the cancelling kind, as Ctrl+C does.
+   * `prompt` only: how to deliver it. **Absent** means the sender did not choose, and the run picks the row
+   * of the §3.5 matrix that applies — which is the only place that choice can be made, because whether the
+   * attempt has a live channel is the runner's answer. A `stop` request carries no mode either: `stop.json`
+   * has never had one, and a stop from another terminal has always meant the cancelling kind, as Ctrl+C does.
    */
   mode?: PromptDeliveryMode;
   /**

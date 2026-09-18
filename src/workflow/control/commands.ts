@@ -35,8 +35,15 @@ export type ControlCommand =
   /** Return a terminal non-success task to `pending` so the run picks it up again. */
   | { kind: 'restart'; taskId: string }
   | { kind: 'edit'; taskId: string; changes: TaskEdit; restart: boolean }
-  /** §3.5. `freshSession` is the explicit half of `[D25]`: start over rather than continue the session. */
-  | { kind: 'prompt'; taskId: string; text: string; mode: PromptDeliveryMode; freshSession?: boolean }
+  /**
+   * §3.5. `freshSession` is the explicit half of `[D25]`: start over rather than continue the session.
+   *
+   * `mode` is **absent** when the operator did not choose one — `cao task prompt` with no mode flag. The run
+   * then picks the row of the §3.5 matrix that applies and its ack says which, which is the only place that
+   * choice can be made: whether the attempt in front of it has a live channel is the runner's answer, and a
+   * sender that guessed would refuse a perfectly good steer or start an attempt nobody asked for.
+   */
+  | { kind: 'prompt'; taskId: string; text: string; mode?: PromptDeliveryMode; freshSession?: boolean }
   | { kind: 'approve'; taskId: string; note?: string }
   | { kind: 'reject'; taskId: string; note?: string }
   | { kind: 'answer'; taskId: string; interactionId: string; answer: InteractionAnswer };
@@ -146,8 +153,17 @@ export function commandForRequest(request: ControlRequest): RequestTranslation {
       if (!taskId) return needsTask('prompt');
       const text = typeof request.text === 'string' ? request.text : '';
       if (text.trim() === '') return { ok: false, reason: 'A prompt request has to carry the text to deliver, and this one is empty.' };
-      const mode = request.mode !== undefined && (PROMPT_DELIVERY_MODES as readonly string[]).includes(request.mode) ? request.mode : 'followUp';
-      return { ok: true, command: { kind: 'prompt', taskId, text, mode, ...(request.freshSession === true ? { freshSession: true } : {}) } };
+      // A mode this build does not know is refused rather than quietly read as a follow-up: a file asking to
+      // steer a worker and a file asking to start a new attempt of it are two very different requests, and
+      // guessing between them is how an hour of work gets thrown away. Absent is not unknown - it is the
+      // sender saying "you choose", which is what §3.5 asks the run to do.
+      if (request.mode !== undefined && !(PROMPT_DELIVERY_MODES as readonly string[]).includes(request.mode)) {
+        return { ok: false, reason: `A prompt request named a delivery mode this version does not know. Use one of ${PROMPT_DELIVERY_MODES.join(', ')}, or leave it out and the run picks the one that applies.` };
+      }
+      return {
+        ok: true,
+        command: { kind: 'prompt', taskId, text, ...(request.mode !== undefined ? { mode: request.mode } : {}), ...(request.freshSession === true ? { freshSession: true } : {}) },
+      };
     }
     case 'approve':
     case 'reject':

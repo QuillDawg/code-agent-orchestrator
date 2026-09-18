@@ -5,6 +5,7 @@ import { withoutWorkerInstructions } from '../../util/text.js';
 import { formatDuration } from '../../util/duration.js';
 import { stateGlyph, STATE_COLOR, STATE_LABEL, summarize } from '../../workflow/states.js';
 import { renderExecutionPlan } from '../../workflow/plan.js';
+import { MODE_LABEL, TRANSPORT_LABEL } from '../../workflow/control/prompt.js';
 import { renderTranscript } from '../../tui/transcript.js';
 import { paint, sanitizeText, useColor } from '../color.js';
 import { glyph, rule } from '../../util/glyphs.js';
@@ -99,11 +100,17 @@ export function attachPlainRenderer(bus: EventBus, run: WorkflowRun, opts: Plain
         // prompt printed into a headless log is the work itself, not a summary of it.
         write(`${stamp()} ${glyph('retry')} ${ev.taskId}  edited (revision ${ev.revision}): ${ev.fields.join(', ')}`);
         break;
-      case 'task.prompted':
+      case 'task.prompted': {
         // The state and the transport, never the message (§2.6): the text is the operator's own words, and
         // this line goes into a log an operator may well paste somewhere else.
-        write(`${stamp()} ${glyph('arrow')} ${ev.taskId}  ${ev.mode} via ${ev.transport}: ${ev.state}${ev.reason ? ` (${firstLine(ev.reason)})` : ''}`);
+        //
+        // Both are written the way the rest of the surface writes them. The wire names - `followUp`, and a
+        // `transport` of `none` for every follow-up, which has no live channel by definition - said "followUp
+        // via none: delivered" to an operator who had just typed a sentence to a task.
+        const via = TRANSPORT_LABEL[ev.transport];
+        write(`${stamp()} ${glyph('arrow')} ${ev.taskId}  ${MODE_LABEL[ev.mode]}${via ? ` via ${via}` : ''}: ${ev.state}${ev.reason ? ` (${firstLine(ev.reason)})` : ''}`);
         break;
+      }
       case 'task.merging':
         write(`${stamp()} ${glyph('merge')} ${ev.taskId}  merge conflict on ${ev.branch}; starting agent merge-resolution session`);
         break;
