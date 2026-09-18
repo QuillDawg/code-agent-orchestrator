@@ -54,7 +54,9 @@ async function steerOneTask(repo: string, yaml: string, environment: Record<stri
   // The session id is the last thing set before a runner offers its channel — for Claude at spawn, for the
   // Codex app-server once the thread is open. Waiting on the pid alone would steer into a thread that has
   // not been created yet, which is a race a test must not have.
-  await waitFor(() => run.tasks['a']?.state === 'running' && Boolean(run.tasks['a']?.attempts[0]?.sessionId));
+  // 20 s, not the 5 s default: every wait in this file is on a real child process starting inside a real
+  // git repository, and under a full-suite load that is slower than a unit test's idea of "soon".
+  await waitFor(() => run.tasks['a']?.state === 'running' && Boolean(run.tasks['a']?.attempts[0]?.sessionId), 20_000);
   const ack = await runtime.controller.submit({ kind: 'prompt', taskId: 'a', text: MESSAGE, mode: 'steer' }, controlEnvelope('cli'));
   await finished;
 
@@ -142,7 +144,9 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
       interactionHandler: async () => ({ kind: 'deny', message: 'no' }),
     });
     const finished = runtime.scheduler.execute();
-    await waitFor(() => created.tasks['a']?.state === 'failed');
+    // The same 20 s the waits below use: this one spawns a real worker process and lets it fail, which on a
+    // loaded machine takes longer than the 5 s default — the whole test then failed on its first wait.
+    await waitFor(() => created.tasks['a']?.state === 'failed', 20_000);
     const session = created.tasks['a']!.attempts[0]!.sessionId ?? created.tasks['a']!.attempts[0]!.usage?.sessionId;
     expect(session).toBeTruthy();
 
@@ -180,7 +184,7 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
     const unwatch = watchStopRequests({ paths: store.paths, runId: created.runId, controller: runtime.controller, onStop: () => undefined });
     const finished = runtime.scheduler.execute();
     try {
-      await waitFor(() => created.tasks['a']?.state === 'running' && Boolean(created.tasks['a']?.attempts[0]?.sessionId));
+      await waitFor(() => created.tasks['a']?.state === 'running' && Boolean(created.tasks['a']?.attempts[0]?.sessionId), 20_000);
 
       const request = controlRequest('prompt', { taskId: 'a', text: MESSAGE, mode: 'steer', source: 'another cao' });
       await writeControlRequest(store.paths, created.runId, request);
@@ -191,7 +195,7 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
       }, 10_000);
       expect(ack).toMatchObject({ id: request.id, status: expect.stringMatching(/accepted|applied/) });
 
-      await waitFor(() => (created.tasks['a']!.attempts[0]!.prompts?.length ?? 0) > 0);
+      await waitFor(() => (created.tasks['a']!.attempts[0]!.prompts?.length ?? 0) > 0, 20_000);
       expect(created.tasks['a']!.attempts[0]!.prompts![0]).toMatchObject({ source: 'inbox', mode: 'steer', text: MESSAGE });
       // A run started by this `cao` advertises the kind, or the second terminal would not have offered it.
       expect(INBOX_REQUEST_KINDS).toContain('prompt');
@@ -218,7 +222,7 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
       interactionHandler: async () => ({ kind: 'deny', message: 'no' }),
     });
     const finished = runtime.scheduler.execute();
-    await waitFor(() => created.tasks['a']?.state === 'success' && created.tasks['b']?.state === 'running');
+    await waitFor(() => created.tasks['a']?.state === 'success' && created.tasks['b']?.state === 'running', 20_000);
 
     const ack = await runtime.controller.submit({ kind: 'prompt', taskId: 'a', text: MESSAGE, mode: 'steer' }, controlEnvelope('cli'));
     expect(ack).toMatchObject({ status: 'rejected', reason: expect.stringMatching(/immutable/) });
