@@ -105,7 +105,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   has since moved on is refused instead of applied to something nobody looked at. Every command is applied
   **inside** the scheduler's loop, between two of its own events, so it can never land halfway through an
   attempt finishing.
-  The commands are `stop`, `kill`, `restart` and the new `cancelTask`; `edit`, `prompt`, `approve`,
+  The commands are `stop`, `kill`, `restart` and the new `cancelTask`; `edit` and `prompt` are declared
+  here and wired up later in this file (Editing an unfinished task, `cao task prompt`), and `approve`,
   `reject` and `answer` are declared and answered with "not available yet", so the surfaces that will send
   them can be built against the whole shape. **Nothing about using `cao` changes**: Ctrl+C, `cao stop` and
   the dashboard's `R` do exactly what they did, through the new door.
@@ -688,6 +689,21 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   a matching fake change is incomplete; the fake-agent mode tables are complete again.
 - Every `examples/` workflow that runs Codex on `exec` now says in a comment that no human can be reached
   during such a task. No example changed what it does.
+- Docs aligned with the `edit`/`prompt` controls landing: [docs/desktop.md](docs/desktop.md)'s example
+  registry entry and `cao emit` output blocks listed only `requests, stop, kill, restart`, and
+  [docs/architecture.md](docs/architecture.md) still called `edit` and `prompt` "declared but not yet
+  applied" and left them out of what `wiredCapabilities()` reports — both are wired and applied now, and
+  every quoted `Controls:` line was re-checked against `cao emit status`'s real output.
+  [docs/capabilities.md](docs/capabilities.md)'s Session panel description still said its live transcript,
+  session identity and composer were unfilled; only Logs and Diagnostics remain placeholders.
+  [docs/models.md](docs/models.md) said flatly "there is no `--model` flag", which stopped being true the
+  moment `cao task edit --model/--effort` shipped; it now says so and points at the editor. `CONTRIBUTING.md`'s
+  fake-agent mode tables gained the `steer`/`steer-exit` (Claude) and `steer` (Codex app-server) rows,
+  `FAKE_CODEX_RESUME_CONFLICT`, and the `fake-editor.mjs` fixture the composer's `Ctrl+O` round trip needs, none
+  of which had been added when the runners grew them.
+  [packages/protocol/CHANGELOG.md](packages/protocol/CHANGELOG.md) said `TaskRevision` and `PromptDelivery`
+  were shapes `cao` would write "from a later release" and that `edit`/`prompt` "will not appear" in a
+  registry entry; both now say `cao` writes and advertises them.
 
 ### Security
 

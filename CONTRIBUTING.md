@@ -82,10 +82,13 @@ listed in the header comment of the file and cover the cases that are otherwise 
 | `permission-two`, `permission-cancel-late`, `permission-give-up` | two prompts open at once answered in either order, a withdrawal of an already-answered request, and a session that is refused everything and gives up carrying `permission_denials` |
 | `question-resumable`, `prose-no-json` | what `cao resume --task X --input "…"` and the result nudge do to a session: both ask once and finish when the session is resumed |
 | `subagent`, `subagents`, `orphan-tool`, `thinking` | transcript shapes: nested subagent entries, a call whose result never arrives, thinking blocks |
+| `steer`, `steer-exit` | steering a running turn (needs `--input-format stream-json`): `steer` ends the current turn and starts a new one from the message queued on stdin, `steer-exit` dies mid-turn holding a message so the delivery ends up `failed` rather than `queued` |
 
 `FAKE_CLAUDE_DELAY_MS` slows it down so you can watch the dashboard; `FAKE_CLAUDE_TRACE=<file>` appends the
 cwd and prompt of every invocation, which is how the isolation and context-passing tests assert what each
-worker actually received.
+worker actually received. `FAKE_CLAUDE_STEER_WAIT_MS` bounds how long `steer`/`steer-exit` wait for the
+queued message; `FAKE_CLAUDE_NO_REPLAY=1` drops `--replay-user-messages` from the fake's advertised flags,
+modelling a CLI too old to echo a steered message back.
 
 `FAKE_CODEX_MODE` (or `FAKE_CODEX_TASK_MODES='{"task-id":"hang"}'`) does the same for the Codex fixture, and
 `FAKE_CODEX_TRACE=<file>` records the argv, the prompt and which command line was used (`exec`,
@@ -101,6 +104,10 @@ worker actually received.
 | `question-recovers`, `question-then-resume`, `unknown-request` | a worker that finishes without its answer, one that finishes when the session is resumed with it, and a request CAO must refuse with `-32601` |
 | `failure`, `interrupted`, `mcp-failure`, `overload-once` | typed turn failures, an interrupted turn, a required MCP server that will not start, a `-32001` overload on `thread/start` |
 | `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope CAO did not ask for |
+| `steer` | **app-server only**: holds a turn open for a `turn/steer`. `FAKE_CODEX_STEER` selects one of the server's refusals instead of success (`no-turn`, `review`, `compact`, `empty-input`, `schema`), covering every rejection row of spec §3.5; `FAKE_CODEX_STEER_WAIT_MS` bounds how long the turn waits |
+
+`FAKE_CODEX_RESUME_CONFLICT=1` makes a `thread/resume` answer "already has an active writer", modelling a
+thread another process still has open.
 
 ## Tests
 
@@ -136,7 +143,8 @@ The layout:
   fit the terminal"; the harness does, and adds `write(keys)` (see its `KEYS` table for the raw escapes),
   `waitFor(predicate)`, `resize(columns, rows)` and `frameHeight()`. Use it for anything that sizes itself
   to the terminal, and `ink-testing-library` for a single component.
-- **`test/fixtures/`** — the fake Claude/Codex agents and the expected report document.
+- **`test/fixtures/`** — the fake Claude/Codex agents, a fake `$VISUAL`/`$EDITOR` (`fake-editor.mjs`, for the
+  composer and task editor's `Ctrl+O` round trip) and the expected report document.
 - **`test/fixtures/frames/`** — the dashboard's frames, captured through the harness and compared by
   `test/unit/dashboard-frames.test.tsx`. They are colour-stripped and every digit is flattened to `#`, so
   what they pin is the layout, not a clock reading. Re-capture with `CAO_UPDATE_FRAMES=1 npx vitest run

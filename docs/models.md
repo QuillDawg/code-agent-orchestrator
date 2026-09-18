@@ -233,9 +233,17 @@ Per-attempt cost, duration and turn count are stored in `result.json` under `usa
 
 ## Overriding at the command line
 
-There is no `--model` flag. Models are workflow configuration, so a run is reproducible from its YAML. To try a different model, either edit the workflow or point `cao` at a different one.
+There is no `--model` flag on `cao run` or `cao validate`. Models are workflow configuration, so a run's
+plan is reproducible from its YAML before it starts. To try a different model for a whole run, either edit
+the workflow or point `cao` at a different one.
 
-The CLI overrides that do exist are `--permission-mode`, `--max-concurrency`, `--repository`, and `--claude-command`. `CAO_CLAUDE_COMMAND` and `CAO_CODEX_COMMAND` replace the binary itself, which is how the test suite runs whole workflows against a fake agent with no API calls.
+The CLI overrides that do exist for `cao run`/`cao resume` are `--permission-mode`, `--max-concurrency`, `--repository`, and `--claude-command`. `CAO_CLAUDE_COMMAND` and `CAO_CODEX_COMMAND` replace the binary itself, which is how the test suite runs whole workflows against a fake agent with no API calls.
+
+Once a run exists, `cao task edit <task> --model <id> --effort <level>` changes one unfinished task's
+resolved model or effort in the run — without touching the workflow file, and validated the same way as
+above before anything is stopped. That is a change to *this run's* record, not to workflow configuration:
+a fresh `cao run` of the same YAML still gets what the file says. See
+[capabilities.md](capabilities.md#editing-an-unfinished-task).
 
 ## Smaller models
 

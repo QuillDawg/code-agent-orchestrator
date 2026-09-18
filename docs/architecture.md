@@ -149,8 +149,8 @@ and the CLI. It is not a second engine: `submit()` puts the command on the sched
 `control` wake, so it is applied *between* two of the scheduler's own events and never inside one — two
 commands sent in the same tick apply in the order they were sent, and the second sees what the first did.
 
-- **Commands:** `stop` (`wait` | `cancel`), `kill`, `cancelTask`, `restart`, and, declared but not yet
-  applied, `edit`, `prompt`, `approve`, `reject` and `answer`.
+- **Commands:** `stop` (`wait` | `cancel`), `kill`, `cancelTask`, `restart`, `edit` (§3.4), `prompt`
+  (§3.5), and, declared but not yet applied, `approve`, `reject` and `answer`.
 - **Envelope:** a ULID `id`, the `source` (`tui` | `cli` | `inbox` | `desktop`), the sender's pid, a
   timestamp and an optional `expected` (attempt, revision). The id deduplicates for the life of the run —
   persisted under `run.controls.seen` in `workflow.json`, capped at the last 1000 — so a resend after a lost
@@ -180,10 +180,9 @@ shared process, `persistence/requests.ts` plus the owner's existing 500 ms tick
 (`execution/signals.ts:watchStopRequests`, unchanged in name because it grew this rather than gaining a
 second timer).
 
-- A sender (a second `cao task stop|restart|edit|prompt`, eventually `cao-desktop`) writes
-  `requests/<ULID>-<kind>.json` into the run directory and reads its answer back from
-  `requests/acks/<ULID>.json`; `sendControlRequest` builds both halves for a future CLI caller, though
-  nothing invokes it yet.
+- A sender (a second `cao task stop|restart|edit|prompt`, the workspace observer's `S`/`K`/`R`, eventually
+  `cao-desktop`) writes `requests/<ULID>-<kind>.json` into the run directory and reads its answer back from
+  `requests/acks/<ULID>.json`; `sendControlRequest` (`persistence/requests.ts`) builds both halves.
 - Each tick, the owner reads every file in `requests/` in ULID order (`readPendingRequests`), turns each one
   into a `ControlCommand` (`commandForRequest`, `workflow/control/commands.ts`) and submits it to the
   `RunController` with `source: 'inbox'` and the request's own id as the envelope id — so an inbox command is
@@ -202,8 +201,8 @@ second timer).
   rejection at the two ends of a run's process lifetime — a request nobody got to apply must not silently
   stop or kill the run that resumes afterwards, and a sender waiting on `--wait` must not be left hanging
   past the process that could have answered it.
-- `wiredCapabilities()` reports `requests`, `stop`, `kill`, `restart` for a run built this way; `edit` and
-  `prompt` are parsed and refused, not wired, so they stay out of that list.
+- `wiredCapabilities()` reports `requests`, `stop`, `kill`, `restart`, `edit`, `prompt` for a run built this
+  way; `approve`, `reject` and `answer` are parsed and refused, not wired, so they stay out of that list.
 
 ## Agent session isolation
 

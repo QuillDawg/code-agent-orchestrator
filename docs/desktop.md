@@ -72,7 +72,7 @@ The file itself looks like this:
   "endedAt": null,
   "exitCode": null,
   "taskCount": 7,
-  "capabilities": ["requests", "stop", "kill", "restart"],
+  "capabilities": ["requests", "stop", "kill", "restart", "edit", "prompt"],
   "feedUrl": null
 }
 ```
@@ -86,11 +86,11 @@ the directory it points at is always the truth.
 `capabilities` is the one field worth calling out because it is easy to misread. It is not a
 version number and not a fixed list for this release of `cao` — it is exactly what **this run**
 wired up when it started. A run started by this release polls its request inbox and acts on `stop`,
-`kill` and `restart`, and says so; it does not yet write interaction payloads or check who is
-present, so `interactions`, `presence`, `answer` and `approve` are absent and a reader must not
-offer them. A reader is expected to enable each affordance (a Stop button, an Answer button, and so
-on) only when its token is present, and to ignore any token it does not recognize — so an older
-reader talking to a newer `cao` degrades by feature, not by refusing the whole file.
+`kill`, `restart`, `edit` and `prompt`, and says so; it does not yet write interaction payloads or
+check who is present, so `interactions`, `presence`, `answer` and `approve` are absent and a reader
+must not offer them. A reader is expected to enable each affordance (a Stop button, an Answer
+button, and so on) only when its token is present, and to ignore any token it does not recognize —
+so an older reader talking to a newer `cao` degrades by feature, not by refusing the whole file.
 
 ## Asking a run to do something: `requests/`
 
@@ -246,7 +246,7 @@ Nothing else about how a run behaves changes: with no surface running it is byte
 Emit:     on  (cao emit enable, in config.json)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
-Controls: requests, stop, kill, restart
+Controls: requests, stop, kill, restart, edit, prompt
 Surfaces: none present
 
 Runs are announced, but no surface is present to read them.
@@ -260,7 +260,7 @@ Emit disabled for this user. Runs already announced keep their entries until the
 Emit:     off  (cao emit enable, in config.json)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
-Controls: requests, stop, kill, restart
+Controls: requests, stop, kill, restart, edit, prompt
 Surfaces: none present
 
 Runs are not announced, so a desktop app on this machine cannot see them.
@@ -289,7 +289,7 @@ $ CAO_HOME='//server/share/.cao' cao emit status
 Emit:     off  (the default — announcing is opt-in)
 Home:     //server/share/.cao  REFUSED: it is a UNC path
 Runs:     0 live, 0 retained
-Controls: requests, stop, kill, restart
+Controls: requests, stop, kill, restart, edit, prompt
 Surfaces: none present
 
 ! Nothing is announced: //server/share/.cao cannot be used because it is a UNC path.
@@ -332,7 +332,7 @@ $ cao emit status
 Emit:     off  (the default — announcing is opt-in)
 Home:     /home/me/.cao  usable
 Runs:     0 live, 0 retained
-Controls: requests, stop, kill, restart
+Controls: requests, stop, kill, restart, edit, prompt
 Surfaces: none present
 
 Runs are not announced, so a desktop app on this machine cannot see them.

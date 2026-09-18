@@ -30,13 +30,14 @@ exhaustive-switch note below.
 - **`PROMPT_DELIVERY_MODES`** / **`PromptDeliveryMode`** (`steer` | `followUp` | `stopAndContinue`).
 - **`TaskRevision`** (`TaskRunState.revisions?`) and **`PromptDelivery`** (`TaskAttempt.prompts?`,
   `TaskAttempt.revision?`): what an applied edit and a delivered follow-up leave behind on a run (§2.6).
-  The shapes are here from this release; `cao` writes them from a later one.
+  `cao` writes both: a `TaskRevision` for every `cao task edit`, a `PromptDelivery` for every steer,
+  stop-and-continue and follow-up sent through `cao task prompt`.
 - **`QuotaSnapshot`** and `QuotaWindow`: what a provider last said was left of a rate-limited window.
 - Two capability tokens, **`edit`** and **`prompt`**. A `CAPABILITIES` list that was nine long is now
   eleven; as §4.5 requires, a reader ignores tokens it does not know, so this is not a breaking change.
 
-  **For a consumer:** a run advertises a token only when it really wires that affordance up, so `edit` and
-  `prompt` will not appear in a registry entry until the orchestrator applies them.
+  **For a consumer:** a run advertises a token only when it really wires that affordance up; `edit` and
+  `prompt` now appear in a registry entry's `capabilities`, since `cao` applies both.
 
 - **`ControlAck`**, the answer to one control command: `{ protocol, id, status, reason?, at }` with
   `status` one of `CONTROL_ACK_STATUSES` (`accepted` | `applied` | `rejected`). It is returned in process by
