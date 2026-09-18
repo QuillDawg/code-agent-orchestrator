@@ -1567,7 +1567,7 @@ export class WorkflowScheduler {
       return { status: 'rejected', reason: `Task "${taskId}" still has an attempt in flight, so a follow-up has nothing to start. Stop it first, or send the message with --stop-and-continue.` };
     }
 
-    const session = await checkFollowUpSession(task, state, { probe: this.sessionProbe, freshSession: command.freshSession === true });
+    const session = await checkFollowUpSession(task, state, { probe: this.sessionProbe, freshSession: command.freshSession === true, source: envelope.source });
     if (session.rejection) return { status: 'rejected', reason: session.rejection };
 
     // Named, not implied: a caller that gave no mode flag has to be told which row of the matrix answered

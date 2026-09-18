@@ -295,7 +295,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
    * costs a re-render of the whole shell per character. The **text** is mirrored into the store's drafts,
    * which is the part the spec asks to survive — a draft is kept per task and lost only on quit.
    */
-  const [composer, setComposer] = useState<{ taskId: string; state: ComposerState } | null>(null);
+  const [composer, setComposer] = useState<{ taskId: string; state: ComposerState; freshSession?: boolean } | null>(null);
   const [sendingNote, setSendingNote] = useState<string | undefined>(undefined);
   const frame = useRef(0);
   const entriesCache = useRef<{ taskId: string; value: TranscriptEntry[] } | undefined>(undefined);
@@ -521,8 +521,21 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       if (!current) return current;
       const next = fn(current.state);
       saveComposerDraft(current.taskId, next);
-      return { taskId: current.taskId, state: next };
+      return { ...current, state: next };
     });
+  };
+
+  /**
+   * Ctrl+F: "Start a fresh session", the explicit half of `[D25]`.
+   *
+   * A follow-up and a stop-and-continue both resume the session the task last reported, and a session that
+   * has been deleted is refused rather than silently swapped for a new one. This is the control that
+   * refusal names - and the one an operator who *wants* to start over reaches for before typing anything.
+   * It is off again with the next Ctrl+F and whenever the composer is closed, so "start from the top" is
+   * never something a draft carries into a message that did not ask for it.
+   */
+  const toggleFreshSession = (): void => {
+    setComposer((current) => (current ? { ...current, freshSession: !current.freshSession } : current));
   };
 
   /**
@@ -559,7 +572,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
    * every other ended-state action uses (§2.4, `[D36]`), and the only way a message reaches a run that has
    * already let go of its lock.
    */
-  const submitPrompt = (taskId: string, text: string): void => {
+  const submitPrompt = (taskId: string, text: string, freshSession = false): void => {
     const state = run.tasks[taskId];
     if (!state) return;
     if (observing) {
@@ -578,14 +591,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       }
       store.getState().setDraft(composerDraftKey(taskId), '');
       setComposer(null);
-      resume({ kind: 'followUp', taskId, text });
+      resume({ kind: 'followUp', taskId, text, freshSession });
       return;
     }
     const envelope = controlEnvelope('tui', { attempt: state.attempts[state.attempts.length - 1]?.number ?? 0 });
     recordControl(envelope.id, `prompt ${taskId}`);
     setSendingNote(`sending${glyph('ellipsis')}`);
     void controller
-      .submit({ kind: 'prompt', taskId, text, mode: row.mode }, envelope)
+      .submit({ kind: 'prompt', taskId, text, mode: row.mode, ...(freshSession ? { freshSession: true } : {}) }, envelope)
       .then((ack) => {
         store.getState().settleControl(envelope.id, ack.status, ack.reason);
         setSendingNote(ack.reason ?? ack.status);
@@ -805,7 +818,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   // ------------------------------------------------------------------ keys
   const inWorkspace = view.kind === 'dashboard' && !pending;
   // The composer owns the keys while it is up: inside it a printable key is text, whatever it means
-  // outside (§3.2, `[D15]`). Only Esc, Ctrl+P, Ctrl+O, Ctrl+J and Ctrl+C are chords there.
+  // outside (§3.2, `[D15]`). Esc, Ctrl+P, Ctrl+O, Ctrl+J, Ctrl+F and Ctrl+C are the chords there.
   const composerOpen = composerHasFocus && inWorkspace;
 
   /**
@@ -822,11 +835,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
    *
    * Enter submits, Ctrl+J and a trailing backslash before Enter are the two newlines every terminal can
    * type, and Shift+Enter is the third where the kitty protocol reports it — documented as a bonus, never
-   * required. Everything else printable is text.
+   * required. Ctrl+F is "Start a fresh session" (`[D25]`). Everything else printable is text.
    */
-  const composerKey = (input: string, key: Key, open: { taskId: string; state: ComposerState }): void => {
+  const composerKey = (input: string, key: Key, open: { taskId: string; state: ComposerState; freshSession?: boolean }): void => {
     if (key.ctrl && input === 'o') {
       composeInEditor();
+      return;
+    }
+    if (key.ctrl && input === 'f') {
+      toggleFreshSession();
       return;
     }
     if (key.escape) {
@@ -849,7 +866,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         setNotice('Type a message first, or press Esc to close the composer.');
         return;
       }
-      submitPrompt(open.taskId, composerText(open.state));
+      submitPrompt(open.taskId, composerText(open.state), open.freshSession === true);
       return;
     }
     if (key.ctrl && input === 'z') {
@@ -1345,6 +1362,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             entries={selected ? controller.peek(selected.id, SESSION_TRANSCRIPT_LINES) : []}
             hasChannel={Boolean(selected) && !observing && !props.finished && controller.steerable(selected!.id)}
             composer={composer?.taskId === selected?.id ? (composer?.state ?? null) : null}
+            freshSession={composer?.taskId === selected?.id && composer?.freshSession === true}
             focused={composerOpen && composer?.taskId === selected?.id}
             sending={sendingNote}
             rows={layout.mainRows}
@@ -1428,7 +1446,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       <Footer
         hints={
           composerOpen
-            ? `Enter send   Ctrl+J newline   Ctrl+O $EDITOR   Ctrl+Z undo   Esc close`
+            ? `Enter send   Ctrl+J newline   Ctrl+O $EDITOR   Ctrl+F fresh session   Ctrl+Z undo   Esc close`
             : overlayOpen
             ? overlay.kind === 'answer'
               ? 'Enter send   Ctrl+J newline   Esc cancel'

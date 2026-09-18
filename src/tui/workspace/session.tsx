@@ -79,18 +79,33 @@ export function identityLine(task: ResolvedTask, state: TaskRunState): string {
  * The session id is in the follow-up line because it is the one fact that decides whether the next attempt
  * remembers anything, and an operator about to send a long message deserves to know which it will be.
  */
-export function composerHeader(task: ResolvedTask, state: TaskRunState, row: PromptRow): string {
+export function composerHeader(task: ResolvedTask, state: TaskRunState, row: PromptRow, freshSession = false): string {
   if (!row.mode) return row.reason ?? 'There is nothing to send this task.';
   switch (row.mode) {
     case 'steer':
       return `steer ${glyph('dash')} queued until the turn ends`;
     case 'followUp': {
-      const session = resumableSessionId(task, state);
+      const session = freshSession ? undefined : resumableSessionId(task, state);
       return `follow-up ${glyph('dash')} ${session ? `resumes session ${session}` : 'starts a fresh session with your message in the prompt'}`;
     }
     case 'stopAndContinue':
       return `stop and continue ${glyph('dash')} its worker is stopped, then started again with your message`;
   }
+}
+
+/**
+ * The "Start a fresh session" option under the header (§3.5, `[D25]`), or nothing where it would mean
+ * nothing.
+ *
+ * Offered exactly where there is a session to *not* resume: a task whose next attempt would start fresh
+ * anyway has nothing to choose, and a steer never starts an attempt at all. The line says which of the two
+ * it is on, because "fresh session" with no state next to it is the kind of option an operator toggles
+ * twice to find out what it was.
+ */
+export function freshSessionLine(task: ResolvedTask, state: TaskRunState, row: PromptRow, freshSession: boolean): string | undefined {
+  if (row.mode !== 'followUp' && row.mode !== 'stopAndContinue') return undefined;
+  if (!resumableSessionId(task, state)) return undefined;
+  return `Ctrl+F  Start a fresh session: ${freshSession ? 'on, the next attempt starts from the top' : 'off, the next attempt continues where it left off'}`;
 }
 
 export interface SessionPanelProps {
@@ -100,6 +115,8 @@ export interface SessionPanelProps {
   /** Whether the attempt running right now has a live channel; false whenever nothing is running. */
   hasChannel: boolean;
   composer: ComposerState | null;
+  /** Whether the composer is armed to start over rather than resume the session (`[D25]`). */
+  freshSession?: boolean;
   /** True while the composer has the keys; false draws it as the line that says how to open it. */
   focused: boolean;
   /** Set while a submission is in flight or has just been answered (§3.5). */
@@ -115,7 +132,7 @@ interface Line {
   bold?: boolean;
 }
 
-export function SessionPanel({ task, state, entries, hasChannel, composer, focused, sending, rows, columns, theme }: SessionPanelProps): React.JSX.Element {
+export function SessionPanel({ task, state, entries, hasChannel, composer, freshSession = false, focused, sending, rows, columns, theme }: SessionPanelProps): React.JSX.Element {
   const width = Math.max(24, columns);
   if (!task || !state) {
     return (
@@ -149,7 +166,8 @@ export function SessionPanel({ task, state, entries, hasChannel, composer, focus
   // transcript was still empty showed seven lines of a thirty-line message above twelve blank rows — the
   // composer losing an argument it was not having. It takes what the transcript does not want, and gives it
   // straight back the moment there is output to read.
-  const spare = Math.max(2, rows - lines.length - deliveryRowCount - 4);
+  const freshRows = focused && composer && freshSessionLine(task, state, row, freshSession) ? 1 : 0;
+  const spare = Math.max(2, rows - lines.length - deliveryRowCount - freshRows - 4);
   const wanted = focused && composer ? Math.max(3, composerRows(composer).length) : 1;
   const share = Math.min(wanted, Math.max(3, Math.floor(rows / 3)));
   const composerRowCount = focused && composer ? Math.min(wanted, Math.max(share, spare - Math.max(1, rendered.length))) : 1;
@@ -166,7 +184,9 @@ export function SessionPanel({ task, state, entries, hasChannel, composer, focus
   }
 
   push(' ');
-  push(composerHeader(task, state, row), row.mode ? 'info' : 'muted', true);
+  push(composerHeader(task, state, row, freshSession), row.mode ? 'info' : 'muted', true);
+  const fresh = freshSessionLine(task, state, row, freshSession);
+  if (fresh && focused && composer) push(fresh, freshSession ? 'warning' : 'muted');
   if (sending) push(sanitizeText(sending), 'muted');
 
   if (!row.mode) {

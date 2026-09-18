@@ -11,11 +11,12 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { taskPromptCommand, collectMessage, requestedMode } from '../../src/cli/commands/task-prompt.js';
+import { startRuntime } from '../../src/cli/app.js';
 import { taskCommand } from '../../src/cli/commands/task.js';
 import { registerLocalController } from '../../src/workflow/control/local.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { controlRequest, readPendingRequests } from '../../src/persistence/requests.js';
-import { buildWorkflow, captureCli, makeRun, tmpDir } from '../helpers/index.js';
+import { buildWorkflow, captureCli, FAKE_CLAUDE, makeRun, tmpDir } from '../helpers/index.js';
 import type { ControlAck, TaskState, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { commandForRequest } from '../../src/workflow/control/commands.js';
 import type { ControlCommand } from '../../src/workflow/control/commands.js';
@@ -217,5 +218,52 @@ describe('cao task prompt: nobody is executing the run', () => {
     const result = await captureCli(() => taskPromptCommand([runId, 'a'], { repository: repo, message: 'x' }));
     expect(result.code).toBe(2);
     expect(result.stdout).toContain('cao task edit a');
+  });
+});
+
+/**
+ * `[D25]` on the *resume* that carries a follow-up, which is the path the workspace's composer takes on an
+ * ended run: it calls `startRuntime` directly and never goes near `cao task prompt`'s own check.
+ */
+describe('the resume that carries a follow-up checks the session too (`[D25]`)', () => {
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = saved;
+  });
+
+  /** A Claude config directory that exists and has run other projects, but not this session. */
+  async function configWithoutTheSession(): Promise<string> {
+    const home = await tmpDir('cao-claude-home-');
+    await fs.mkdir(path.join(home, 'projects', 'some-other-project'), { recursive: true });
+    return home;
+  }
+
+  it('refuses when the transcript the follow-up would resume is gone, before taking the lock', async () => {
+    const { repo, store, runId } = await offlineRun();
+    process.env.CLAUDE_CONFIG_DIR = await configWithoutTheSession();
+
+    await expect(startRuntime(runId, { repository: repo, task: ['a'], followUp: { taskId: 'a', text: 'carry on', source: 'tui' } }))
+      .rejects.toThrow(/no longer on disk/);
+    // The sentence names what the workspace operator can actually press, and the lock was never taken.
+    await expect(startRuntime(runId, { repository: repo, task: ['a'], followUp: { taskId: 'a', text: 'carry on', source: 'tui' } }))
+      .rejects.toThrow(/Ctrl\+F/);
+    expect(await fs.readFile(store.paths.lockFile(runId), 'utf8').then(() => true, () => false)).toBe(false);
+  });
+
+  it('takes it once the fresh session was asked for, without consulting the disk', async () => {
+    const { repo, runId } = await offlineRun();
+    process.env.CLAUDE_CONFIG_DIR = await configWithoutTheSession();
+
+    // Past the check: it fails later on the agent probe or the lock, never on `[D25]`.
+    const started = await startRuntime(runId, {
+      repository: repo,
+      task: ['a'],
+      followUp: { taskId: 'a', text: 'carry on', source: 'tui', freshSession: true },
+      claudeCommand: FAKE_CLAUDE,
+    });
+    expect(started.kind).toBe('ready');
+    expect(started.run.tasks.a!.followUps?.[0]).toMatchObject({ text: 'carry on', source: 'tui', state: 'queued' });
+    expect(started.run.tasks.a!.resumeSessionId).toBeUndefined();
   });
 });

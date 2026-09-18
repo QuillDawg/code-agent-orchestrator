@@ -246,7 +246,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   the task's state does not offer it. A task waiting on a permission prompt is told to answer that first,
   one that has not started is pointed at `cao task edit`, and a succeeded or skipped task is immutable.
   **A session that is no longer on disk is a refusal, not a silent restart**: the answer names
-  `--fresh-session`, which starts the task from the top with the message in its prompt. Every message is
+  `--fresh-session` (or `Ctrl+F` when the message came from the composer, which has no flags to type),
+  which starts the task from the top with the message in its prompt. The resume that carries a follow-up
+  makes the same check, so the composer on an ended run is refused there too. Every message is
   recorded on the run with its mode, transport, state and reason, and the run log gets a `task.prompted`
   line carrying all of that and never the text. Routes are the same as `cao task edit`: the controller in
   this process, a request file for another one, and — with nobody executing the run — a resume that carries
@@ -258,8 +260,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   composer. `Enter` opens it and `Enter` sends; the header says which mode the message will use and, for a
   follow-up, which session it resumes. `Ctrl+J` or a trailing `\` before `Enter` inserts a newline
   (`Shift+Enter` too, where the terminal reports it), `Ctrl+O` opens the draft in `$VISUAL`/`$EDITOR`,
-  `Ctrl+Z` undoes the last edit, `Ctrl+W` deletes the word before the cursor, and `Esc` closes it keeping
-  the draft until you quit. A paste arrives whole and one over 20 lines is shown as `[pasted N lines]` with
+  `Ctrl+F` is **Start a fresh session** — the composer's `--fresh-session`, offered whenever there is a
+  session the next attempt would otherwise continue, shown as on or off above the field and off again with
+  a second `Ctrl+F` or when the composer closes — `Ctrl+Z` undoes the last edit, `Ctrl+W` deletes the word
+  before the cursor, and `Esc` closes it keeping the draft until you quit. A paste arrives whole and one over 20 lines is shown as `[pasted N lines]` with
   every byte kept. Inside the composer every printable key is text, so `q` types a `q`.
 
 ### Changed

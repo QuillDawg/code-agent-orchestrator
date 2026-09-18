@@ -351,7 +351,9 @@ the other thing.
 **The session is checked before anything is stopped.** If the transcript a follow-up would continue is no
 longer on disk, the command refuses and offers `--fresh-session` instead of resuming into a worker that has
 silently forgotten everything. `--fresh-session` starts the task from the top with your message in its
-prompt.
+prompt. The same check guards the resume that carries a follow-up, so the workspace's composer on an ended
+run gets the same refusal rather than a quietly fresh session; there the refusal names `Ctrl+F` instead,
+because there is no command line to type a flag into.
 
 Every message is recorded: a `PromptDelivery` on the attempt (steer) or on the task (follow-up) with its
 mode, transport, state and reason, and a `task.prompted` line in the run's `events.jsonl` carrying all of
@@ -363,8 +365,10 @@ otherwise — because a resume is the only thing that can start an attempt.
 
 In the workspace the same thing is the **composer** at the bottom of the Session panel. `Enter` opens it and
 `Enter` sends; its header says which of the three modes the message will use and, for a follow-up, which
-session it will resume. `Ctrl+J` (or a trailing `\` then `Enter`) is a newline, `Ctrl+O` opens the draft in
-`$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, and `Esc` closes it keeping the draft. A paste arrives
+session it will resume. `Ctrl+F` is **Start a fresh session** — the composer's `--fresh-session`, offered
+whenever there is a session the next attempt would otherwise continue, and off again with a second `Ctrl+F`
+or when the composer closes. `Ctrl+J` (or a trailing `\` then `Enter`) is a newline, `Ctrl+O` opens the
+draft in `$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, and `Esc` closes it keeping the draft. A paste arrives
 whole; one over 20 lines is shown as `[pasted N lines]` with every byte kept. Inside the composer every
 printable key is text, so `q` types a `q`.
 

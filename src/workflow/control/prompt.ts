@@ -136,7 +136,7 @@ const MODE_FLAG: Record<PromptDeliveryMode, string> = {
  * and it is refused only when the task moved between the frame and the submit. "Send it a follow-up instead
  * (--follow-up)" told that operator to type something that is not a thing they can type.
  */
-const flagsFor = (source?: ControlSource): boolean => source !== 'tui' && source !== 'desktop';
+export const namesFlags = (source?: ControlSource): boolean => source !== 'tui' && source !== 'desktop';
 
 const instead = (mode: PromptDeliveryMode, flags: boolean): string => (flags ? `${MODE_LABEL[mode]} (${MODE_FLAG[mode]})` : MODE_LABEL[mode]);
 
@@ -151,7 +151,7 @@ const instead = (mode: PromptDeliveryMode, flags: boolean): string => (flags ? `
 export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolean; requested?: PromptDeliveryMode; source?: ControlSource }): PromptRow {
   const row = promptRow(state, opts.hasChannel);
   if (!opts.requested || !row.mode || row.mode === opts.requested) return row;
-  const flags = flagsFor(opts.source);
+  const flags = namesFlags(opts.source);
   if (opts.requested === 'steer') {
     return {
       reason:

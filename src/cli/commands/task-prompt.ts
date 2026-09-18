@@ -138,7 +138,7 @@ export async function taskPromptCommand(refs: string[], opts: TaskPromptOptions)
       out(`${mark('error')} rejected ${sanitizeText(why)}`);
       return 2;
     }
-    const session = await checkFollowUpSession(task, state, { probe: detectSessionPresence(), freshSession });
+    const session = await checkFollowUpSession(task, state, { probe: detectSessionPresence(), freshSession, source: 'cli' });
     if (session.rejection) {
       out(`${mark('error')} rejected ${sanitizeText(session.rejection)}`);
       return 2;

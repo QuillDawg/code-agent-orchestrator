@@ -155,6 +155,66 @@ describe('the composer in the Session panel (§3.5)', () => {
     }
   });
 
+  it('offers Ctrl+F as the fresh-session option, and sends it with the message (`[D25]`)', async () => {
+    const failed = (run: WorkflowRun): void => {
+      running(run);
+      run.tasks['implement-api']!.state = 'failed';
+      run.tasks['implement-api']!.attempts[0]!.outcome = 'crash';
+      run.tasks['implement-api']!.attempts[0]!.endedAt = new Date().toISOString();
+    };
+    const m = await mountWorkspace(failed);
+    try {
+      await openSession(m.tree);
+      m.tree.write(KEYS.enter);
+      await wait();
+      // Off by default: the follow-up continues the session the task reported, which is what the header says.
+      expect(m.frame()).toContain('resumes session sess-8f2a');
+      expect(m.frame()).toContain('Start a fresh session: off');
+
+      m.tree.write(KEYS.ctrlF);
+      await wait();
+      expect(m.frame()).toContain('Start a fresh session: on');
+      expect(m.frame()).toContain('starts a fresh session with your message in the prompt');
+      expect(m.frame()).not.toContain('resumes session sess-8f2a');
+
+      m.tree.write('from the top please');
+      await wait();
+      m.tree.write(KEYS.enter);
+      await wait();
+      expect(m.submits).toEqual([
+        { kind: 'prompt', taskId: 'implement-api', text: 'from the top please', mode: 'followUp', freshSession: true },
+      ]);
+    } finally {
+      m.tree.unmount();
+    }
+  });
+
+  it('leaves the fresh-session option off unless it is asked for, and off again after a second Ctrl+F', async () => {
+    const m = await mountWorkspace((run) => {
+      running(run);
+      run.tasks['implement-api']!.state = 'failed';
+      run.tasks['implement-api']!.attempts[0]!.outcome = 'crash';
+      run.tasks['implement-api']!.attempts[0]!.endedAt = new Date().toISOString();
+    });
+    try {
+      await openSession(m.tree);
+      m.tree.write(KEYS.enter);
+      await wait();
+      m.tree.write(KEYS.ctrlF);
+      await wait();
+      m.tree.write(KEYS.ctrlF);
+      await wait();
+      expect(m.frame()).toContain('Start a fresh session: off');
+      m.tree.write('carry on');
+      await wait();
+      m.tree.write(KEYS.enter);
+      await wait();
+      expect(m.submits[0]).not.toHaveProperty('freshSession');
+    } finally {
+      m.tree.unmount();
+    }
+  });
+
   it('takes Ctrl+J and a trailing backslash as newlines, and every other key as text', async () => {
     const m = await mountWorkspace(running, { steerable: true });
     try {

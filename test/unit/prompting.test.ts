@@ -136,6 +136,18 @@ describe('the session a follow-up would continue (`[D25]`)', () => {
     expect(check.rejection).not.toContain('follow-up');
   });
 
+  it('names a control the reader has: the flag on a command line, the key in the composer', async () => {
+    // The same reasoning as `selectPromptMode`'s mode flags. A workspace operator has no command line to
+    // type `--fresh-session` into, and the refusal that names one is a refusal they cannot act on.
+    const cli = await checkFollowUpSession(task(), withAttempt('sess-1'), { probe: probe('missing'), source: 'cli' });
+    expect(cli.rejection).toContain('--fresh-session');
+    expect(cli.rejection).not.toContain('Ctrl+F');
+
+    const tui = await checkFollowUpSession(task(), withAttempt('sess-1'), { probe: probe('missing'), source: 'tui' });
+    expect(tui.rejection).toContain('Ctrl+F ("Start a fresh session")');
+    expect(tui.rejection).not.toContain('--fresh-session');
+  });
+
   it('starts fresh when asked, without consulting the disk at all', async () => {
     let probed = false;
     const check = await checkFollowUpSession(task(), withAttempt('sess-1'), {

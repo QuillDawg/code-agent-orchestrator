@@ -37,6 +37,7 @@ export const KEYS = {
   shiftTab: `${ESC}[Z`,
   backspace: DEL,
   ctrlC: ctrl('c'),
+  ctrlF: ctrl('f'),
   ctrlJ: ctrl('j'),
   ctrlO: ctrl('o'),
   ctrlP: ctrl('p'),

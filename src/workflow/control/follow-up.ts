@@ -11,9 +11,9 @@
  * Nothing here starts anything. It queues the delivery and says which session the next attempt should
  * continue; `launch()` reads that back and `decidePrompt` is what decides an attempt may start at all.
  */
-import type { PromptDelivery, ResolvedTask, TaskAttempt, TaskRunState } from 'code-agent-orchestrator-protocol';
+import type { ControlSource, PromptDelivery, ResolvedTask, TaskAttempt, TaskRunState } from 'code-agent-orchestrator-protocol';
 import type { SessionProbe } from '../../runners/sessions.js';
-import { newDelivery, type DeliveryOrigin } from './prompt.js';
+import { namesFlags, newDelivery, type DeliveryOrigin } from './prompt.js';
 import { nowIso } from '../../util/misc.js';
 
 export { FOLLOW_UP_STATES } from './prompt.js';
@@ -117,6 +117,21 @@ export interface SessionCheckOptions {
   probe: SessionProbe;
   /** `--fresh-session` / "Start a fresh session": start over deliberately, whatever is on disk. */
   freshSession?: boolean;
+  /** Who is being refused, so the refusal names a control they have. Defaults to the command line's. */
+  source?: ControlSource;
+}
+
+/**
+ * How to say "start a fresh session" to the surface that is being refused (§3.5, `[D25]`).
+ *
+ * The same reasoning as `selectPromptMode`'s mode flags: a refusal is only actionable if it names something
+ * the reader can actually do. Telling a workspace operator to "send it again with --fresh-session" names a
+ * flag there is nowhere to type.
+ */
+export const FRESH_SESSION_KEY = 'Ctrl+F';
+
+export function freshSessionOption(source?: ControlSource): string {
+  return namesFlags(source) ? '--fresh-session' : `${FRESH_SESSION_KEY} ("Start a fresh session")`;
 }
 
 export async function checkFollowUpSession(task: ResolvedTask, state: TaskRunState, opts: SessionCheckOptions): Promise<SessionCheck> {
@@ -134,7 +149,7 @@ export async function checkFollowUpSession(task: ResolvedTask, state: TaskRunSta
     // never chose and a command they did not run.
     rejection:
       `The ${task.agent} session "${sessionId}" that "${state.id}" would continue is no longer on disk, so resuming it would silently start a new one instead. ` +
-      `Send the message again with --fresh-session (or "Start a fresh session" in the composer) to run the task from the top with your message in its prompt.`,
+      `Send the message again with ${freshSessionOption(opts.source)} to run the task from the top with your message in its prompt.`,
   };
 }
 

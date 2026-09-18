@@ -25,6 +25,8 @@ import { ConsoleLogger, type Logger } from '../logging/logger.js';
 import { Git } from '../workspace/git.js';
 import { WorkflowCompletionStore } from '../workflow/completion-store.js';
 import { reconcileForResume } from '../workflow/run-factory.js';
+import { checkFollowUpSession } from '../workflow/control/follow-up.js';
+import { detectSessionPresence } from '../runners/sessions.js';
 import { OrchestratorError, UsageError } from '../util/errors.js';
 import { pathExists } from '../util/fs.js';
 import { openStore, parseList } from './util.js';
@@ -258,6 +260,24 @@ export async function startRuntime(runRef: string | undefined, opts: StartRuntim
     }
   }
 
+  // `[D25]`, before the lock like every other argument check: a follow-up that would resume a session the
+  // agent no longer has on disk is refused here, not quietly turned into a fresh one. `cao task prompt`
+  // already checks on its own way in, so this is the path the workspace's composer takes on an ended run
+  // and the one `cao resume --follow-up` takes from anywhere else.
+  if (opts.followUp) {
+    const target = run.tasks[opts.followUp.taskId];
+    if (!target) throw new UsageError(`Run ${runId} has no task "${opts.followUp.taskId}"`);
+    const task = run.workflow.tasks.find((t) => t.id === opts.followUp!.taskId);
+    if (task) {
+      const session = await checkFollowUpSession(task, target, {
+        probe: detectSessionPresence(),
+        freshSession: opts.followUp.freshSession,
+        source: opts.followUp.source ?? 'cli',
+      });
+      if (session.rejection) throw new UsageError(session.rejection);
+    }
+  }
+
   // Probe workers before acquiring the run lock or killing/reclassifying orphaned attempts. A bad CLI
   // should leave the persisted run and any recoverable worker exactly as they were.
   const runners = await detectRunnersForWorkflow(run.workflow, environment);
@@ -267,10 +287,6 @@ export async function startRuntime(runRef: string | undefined, opts: StartRuntim
   const lock = await store.acquireLock(runId);
   if (!lock.ok) throw new RunLockedError(runId, lock.lock.pid, lock.lock.heartbeatAt);
 
-  if (opts.followUp) {
-    const target = run.tasks[opts.followUp.taskId];
-    if (!target) throw new UsageError(`Run ${runId} has no task "${opts.followUp.taskId}"`);
-  }
   // A follow-up continues the run around the task it names, exactly as an answer does: `--task` is how the
   // task is named, not a request to run only it.
   const restrict = input || opts.followUp ? [] : only;
