@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { ClaudeRunner } from '../../src/runners/claude/claude-runner.js';
+import { ClaudeSteering } from '../../src/runners/claude/steer.js';
 import { CodexRunner } from '../../src/runners/codex/codex-runner.js';
 import { clearDetectionCache, detectClaude } from '../../src/runners/claude/detect.js';
 import { clearCodexDetectionCache } from '../../src/runners/codex/detect.js';
@@ -201,6 +202,77 @@ describe('Claude: steering a live stream-json session', () => {
     expect(run.sent[0]).toMatchObject({ state: 'queued' });
     expect(finalState(run)).toMatchObject({ transport: 'claude-stream', state: 'failed', reason: expect.stringMatching(/ended before it acknowledged/) });
     expect(run.outcome.kind).toBe('error');
+  });
+});
+
+/**
+ * The four inputs of `ClaudeSteering`, driven directly.
+ *
+ * `turnEnded()` decides whether the runner closes stdin, and both ways of getting it wrong are invisible
+ * from outside: too eager loses a queued turn, too reluctant leaves the worker waiting on stdin until its
+ * `timeoutMs`. The through-the-runner cases above cover one message in one turn; these cover the shapes a
+ * fake CLI cannot be made to produce on demand.
+ */
+describe('Claude: when stdin may be closed (§7.1)', () => {
+  const machine = (replay: boolean) => {
+    const updates: Array<[string, SteerResult]> = [];
+    const written: string[] = [];
+    const steering = new ClaudeSteering({
+      write: (line) => {
+        written.push(line);
+        return true;
+      },
+      record: () => undefined,
+      update: (id, result) => updates.push([id, result]),
+      replay,
+    });
+    return { steering, updates, written };
+  };
+
+  it('owes one turn for two messages steered into the same one, not two', async () => {
+    // §7.1: a message written while a turn runs "starts a new turn when the current one ends" — one turn,
+    // carrying whatever was queued by then. Counting a turn per message left the second owed for ever, and
+    // stdin was never closed: the worker waited on input with the work already done.
+    const m = machine(true);
+    await m.steering.steer('first', { id: 'D1' });
+    await m.steering.steer('second', { id: 'D2' });
+    m.steering.replayed('first');
+    m.steering.replayed('second');
+
+    expect(m.steering.turnEnded()).toBe(true); // turn 1 ends, turn 2 carries both
+    expect(m.steering.turnsOwed).toBe(0);
+    expect(m.steering.turnEnded()).toBe(false); // turn 2 ends and there is nothing left to wait for
+  });
+
+  it('still keeps stdin open for a message steered into the turn a previous one started', async () => {
+    const m = machine(true);
+    await m.steering.steer('first', { id: 'D1' });
+    expect(m.steering.turnEnded()).toBe(true);
+    await m.steering.steer('second', { id: 'D2' });
+    expect(m.steering.turnEnded()).toBe(true);
+    expect(m.steering.turnEnded()).toBe(false);
+  });
+
+  it('accepts a message at the next boundary when the CLI cannot echo and the turn said nothing', async () => {
+    // The no-replay path waits for the worker to speak, and a turn that emits a `result` with no assistant
+    // line never does. The boundary is evidence enough: the session carried on.
+    const m = machine(false);
+    await m.steering.steer('first', { id: 'D1' });
+    expect(m.steering.turnEnded()).toBe(true);
+    expect(m.updates).toEqual([]);
+
+    expect(m.steering.turnEnded()).toBe(false);
+    expect(m.updates).toEqual([['D1', expect.objectContaining({ state: 'accepted', reason: expect.stringMatching(/started a new turn/) })]]);
+  });
+
+  it('acknowledges through the worker speaking, exactly once, where it does speak', async () => {
+    const m = machine(false);
+    await m.steering.steer('first', { id: 'D1' });
+    m.steering.turnEnded();
+    m.steering.spoke();
+    m.steering.spoke();
+    expect(m.updates).toHaveLength(1);
+    expect(m.steering.turnEnded()).toBe(false);
   });
 });
 

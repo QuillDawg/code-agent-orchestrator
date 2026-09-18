@@ -44,11 +44,16 @@ export class ClaudeSteering implements AttemptChannel {
   /** Queued when the turn ended; waiting for the worker to speak again (the no-replay path). */
   private awaitingSpeech: Queued[] = [];
   /**
-   * Messages the CLI has taken but not yet turned into a turn. Each one costs one `result` event, and stdin
-   * may not be closed while any are outstanding: closing it is "no more input", and the queued turn would
-   * never run.
+   * Messages the CLI has taken but not yet turned into a turn. Stdin may not be closed while any are
+   * outstanding: closing it is "no more input", and the turn they are waiting for would never run.
+   *
+   * A set, not a count. §7.1 says a message written while a turn runs "starts a new turn when the current
+   * one ends" - one turn, carrying whatever was queued by then - so the boundary that opens that turn owes
+   * nothing further. Counting instead meant two messages steered into a single turn left a second turn owed
+   * for ever: nothing would answer it, stdin was never closed, and the worker sat on its timeout with the
+   * work already done.
    */
-  private owedTurns = 0;
+  private owed: Queued[] = [];
   private closed = false;
 
   constructor(deps: ClaudeSteeringDeps) {
@@ -57,7 +62,7 @@ export class ClaudeSteering implements AttemptChannel {
 
   /** Whether a message is still on its way to the worker — what keeps stdin open past a turn boundary. */
   get turnsOwed(): number {
-    return this.owedTurns;
+    return this.owed.length;
   }
 
   async steer(text: string, expected: SteerExpectation): Promise<SteerResult> {
@@ -68,8 +73,9 @@ export class ClaudeSteering implements AttemptChannel {
       this.closed = true;
       return { transport: CLAUDE_TRANSPORT, state: 'failed', reason: 'The Claude session closed its input before the message could be written.' };
     }
-    this.queued.push({ id: expected.id, text });
-    this.owedTurns += 1;
+    const message = { id: expected.id, text };
+    this.queued.push(message);
+    this.owed.push(message);
     this.deps.record(text, expected.id);
     return {
       transport: CLAUDE_TRANSPORT,
@@ -85,17 +91,29 @@ export class ClaudeSteering implements AttemptChannel {
    * message is still owed a turn.
    */
   turnEnded(): boolean {
+    // Anything that was already waiting when this turn began has had a whole turn of its own now. On a CLI
+    // with no echo the worker speaking is the usual evidence, but a turn that produced no assistant line
+    // gives none - and an entry left here for ever kept stdin open just as surely as an owed turn did.
+    this.accept('Claude started a new turn with the message.');
     if (!this.deps.replay) {
       this.awaitingSpeech.push(...this.queued);
       this.queued = [];
     }
-    // One owed turn means one *more* turn is coming after this boundary, so the answer is taken before the
-    // decrement: a message acknowledged by its echo during turn 1 has still not had its own turn.
-    if (this.owedTurns > 0) {
-      this.owedTurns -= 1;
+    // The turn that starts after this boundary carries everything the CLI has taken, so nothing is owed
+    // past it; stdin stays open for that one turn and no longer.
+    if (this.owed.length > 0) {
+      this.owed = [];
       return true;
     }
     return this.awaitingSpeech.length > 0;
+  }
+
+  /** Everything waiting on the worker's next word, acknowledged. */
+  private accept(reason: string): void {
+    if (!this.awaitingSpeech.length) return;
+    const accepted = this.awaitingSpeech;
+    this.awaitingSpeech = [];
+    for (const q of accepted) this.deps.update(q.id, { transport: CLAUDE_TRANSPORT, state: 'accepted', reason });
   }
 
   /** The CLI echoed a user message back (`--replay-user-messages`). */
@@ -111,12 +129,7 @@ export class ClaudeSteering implements AttemptChannel {
 
   /** The worker spoke: on a CLI without the echo, the first one after a turn boundary is the acknowledgment. */
   spoke(): void {
-    if (!this.awaitingSpeech.length) return;
-    const accepted = this.awaitingSpeech;
-    this.awaitingSpeech = [];
-    for (const q of accepted) {
-      this.deps.update(q.id, { transport: CLAUDE_TRANSPORT, state: 'accepted', reason: 'Claude started a new turn with the message.' });
-    }
+    this.accept('Claude started a new turn with the message.');
   }
 
   /** The process is gone. Anything still unacknowledged never reached the worker. */
@@ -125,7 +138,7 @@ export class ClaudeSteering implements AttemptChannel {
     const lost = [...this.queued, ...this.awaitingSpeech];
     this.queued = [];
     this.awaitingSpeech = [];
-    this.owedTurns = 0;
+    this.owed = [];
     for (const q of lost) this.deps.update(q.id, { transport: CLAUDE_TRANSPORT, state: 'failed', reason });
   }
 }
