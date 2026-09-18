@@ -19,7 +19,11 @@
  *     (interactive modes; all but permission-give-up need --input-format stream-json)
  *   prose-no-json (ends with prose that reads like a result and no JSON at all; a --resume of the session answers with the object)
  *   question-resumable (asks one question, then completes when the session is resumed with the answer)
+ *   steer (takes a user message mid-turn, ends the turn, and starts a new one from it)
+ *   steer-exit (takes a user message mid-turn and dies without acknowledging it)
+ *     (both need --input-format stream-json; FAKE_CLAUDE_STEER_WAIT_MS bounds the wait)
  * FAKE_CLAUDE_NO_SUBAGENT_TEXT=1 drops --forward-subagent-text from the --help text.
+ * FAKE_CLAUDE_NO_REPLAY=1 drops --replay-user-messages from it, so nothing echoes a steered message back.
  * FAKE_CLAUDE_DELAY_MS delays between events. FAKE_CLAUDE_TRACE=<file> appends one line per invocation
  * with cwd + prompt so tests can assert isolation and context passing; control responses received on stdin
  * are appended to <file>.control.
@@ -45,10 +49,13 @@ const FLAGS = {
   '--disallowedTools': '<tools...>', '--disallowed-tools': '<tools...>', '--add-dir': '<directories...>',
   '--no-session-persistence': 0, '--fallback-model': '<model>', '--settings': '<file-or-json>',
   '--mcp-config': '<configs...>', '--strict-mcp-config': 0, '--setting-sources': '<sources>',
-  '--include-partial-messages': 0, '--bare': 0, '--forward-subagent-text': 0, '--help': 0, '--version': 0,
+  '--include-partial-messages': 0, '--bare': 0, '--forward-subagent-text': 0, '--replay-user-messages': 0,
+  '--help': 0, '--version': 0,
 };
 // The flag is new: a CLI that does not advertise it does not accept it either.
 if (process.env.FAKE_CLAUDE_NO_SUBAGENT_TEXT === '1') delete FLAGS['--forward-subagent-text'];
+// An older CLI with no echo at all: the host can still steer, it just cannot be told the message arrived.
+if (process.env.FAKE_CLAUDE_NO_REPLAY === '1') delete FLAGS['--replay-user-messages'];
 
 if (args.includes('--version')) {
   process.stdout.write('9.9.9 (Fake Claude)\n');
@@ -84,12 +91,49 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const emit = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+
+// Declared before stdin is read: with `--replay-user-messages` the very first user message is echoed back
+// the moment it arrives, which is while the promise below is still being awaited.
+const sessionIdx = args.indexOf('--session-id');
+const resumeIdx = args.indexOf('--resume');
+const resumedSessionId = resumeIdx >= 0 ? args[resumeIdx + 1] : undefined;
+const sessionId = resumedSessionId ?? (sessionIdx >= 0 ? args[sessionIdx + 1] : 'fake-session');
+
 const streamInput = args.includes('--input-format') && args[args.indexOf('--input-format') + 1] === 'stream-json';
 // Control requests are only routed to stdin when the session was started with a stdio permission tool;
 // without it the CLI answers them itself (it denies), and the host never sees them.
 const canAskHost = streamInput && args.includes('--permission-prompt-tool') && args[args.indexOf('--permission-prompt-tool') + 1] === 'stdio';
+const replayUserMessages = args.includes('--replay-user-messages');
 const controlWaiters = new Map();
 const controlResponses = new Map();
+
+/**
+ * User messages after the first, i.e. what the host steered in while a turn was running. The real CLI queues
+ * one and starts a new turn when the current one ends; `finished` is set once the last result has gone out,
+ * and a message arriving after that is refused the way the real CLI refuses input on a closed session.
+ */
+let firstUserMessage = false;
+let finished = false;
+let stdinClosed = false;
+const steered = [];
+let steerWaiter = null;
+
+/** Wait for the next steered message, or give up after `ms` so no mode can hang the suite. */
+const nextSteer = (ms = 2000) =>
+  new Promise((resolve) => {
+    if (steered.length) return resolve(steered.shift());
+    const timer = setTimeout(() => {
+      steerWaiter = null;
+      resolve(undefined);
+    }, ms);
+    steerWaiter = (text) => {
+      clearTimeout(timer);
+      steerWaiter = null;
+      resolve(text);
+    };
+  });
 
 const prompt = await new Promise((resolve) => {
   if (streamInput) {
@@ -104,7 +148,19 @@ const prompt = await new Promise((resolve) => {
       }
       if (msg.type === 'user') {
         const content = msg.message?.content;
-        resolve(typeof content === 'string' ? content : JSON.stringify(content ?? ''));
+        const text = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+        if (finished) {
+          // Nothing can be sent to a session that has already produced its final result.
+          process.stderr.write('error: the session has ended and is no longer accepting input\n');
+          process.exit(4);
+        }
+        // `--replay-user-messages` re-emits every user message the CLI was handed, the prompt included.
+        if (replayUserMessages) emit({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: sessionId });
+        if (!firstUserMessage) {
+          firstUserMessage = true;
+          resolve(text);
+        } else if (steerWaiter) steerWaiter(text);
+        else steered.push(text);
       } else if (msg.type === 'control_response') {
         const id = msg.response?.request_id;
         if (process.env.FAKE_CLAUDE_TRACE) appendFileSync(`${process.env.FAKE_CLAUDE_TRACE}.control`, `${JSON.stringify(msg)}\n`);
@@ -113,7 +169,12 @@ const prompt = await new Promise((resolve) => {
         else controlResponses.set(id, msg.response);
       }
     });
-    rl.on('close', () => resolve(''));
+    rl.on('close', () => {
+      // "No more input": the real CLI finishes what it is doing and leaves. A message it had queued for a
+      // new turn never gets that turn, which is why the host must not close stdin while one is owed.
+      stdinClosed = true;
+      resolve('');
+    });
     setTimeout(() => resolve(''), 5000);
     return;
   }
@@ -125,10 +186,6 @@ const prompt = await new Promise((resolve) => {
   setTimeout(() => resolve(data), 2000);
 });
 
-const sessionIdx = args.indexOf('--session-id');
-const resumeIdx = args.indexOf('--resume');
-const resumedSessionId = resumeIdx >= 0 ? args[resumeIdx + 1] : undefined;
-const sessionId = resumedSessionId ?? (sessionIdx >= 0 ? args[sessionIdx + 1] : 'fake-session');
 const mode = process.env.FAKE_CLAUDE_MODE ?? 'success';
 const delay = Number(process.env.FAKE_CLAUDE_DELAY_MS ?? 0);
 const taskId = process.env.CAO_TASK_ID ?? 'unknown';
@@ -141,9 +198,6 @@ if (process.env.FAKE_CLAUDE_TRACE) {
     `${JSON.stringify({ taskId, attempt, cwd: process.cwd(), pid: process.pid, args, prompt, streamInput, env: { CAO_ATTEMPT_KIND: process.env.CAO_ATTEMPT_KIND } })}\n`,
   );
 }
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const emit = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 
 // Per-task overrides: FAKE_CLAUDE_TASK_MODES='{"issue-102":"failed"}' and FAKE_CLAUDE_FAIL_UNTIL_ATTEMPT='{"issue-103":2}'
 // FAKE_CLAUDE_API_ERROR_UNTIL_ATTEMPT='{"issue-104":3}' emits a transient API error result for attempts below 3.
@@ -176,7 +230,7 @@ const result = (status, extra = {}) => ({
   ...extra,
 });
 
-const finish = (structured, opts = {}) => {
+const finish = (structured, opts = {}, last = true) => {
   // The real CLI says its final answer twice: once as the last assistant message (which, in a structured-output
   // session, is the completion object itself) and once in the result event. A fake that only emits the second
   // one agrees with any runner that renders the first as agent prose.
@@ -196,6 +250,8 @@ const finish = (structured, opts = {}) => {
     ...(opts.permissionDenials ? { permission_denials: opts.permissionDenials } : {}),
     modelUsage: { 'fake-model': { inputTokens: 120, outputTokens: 30, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.01, contextWindow: 200000, maxOutputTokens: 32000 } },
   });
+  // A turn boundary that another turn follows is not the end of the session; only the last one is.
+  finished = last;
 };
 
 let toolSeq = 0;
@@ -238,6 +294,37 @@ switch (effectiveMode) {
     text(`Working on ${taskId}`);
     await sleep(delay);
     finish(result('success'));
+    break;
+  }
+  // A turn the host steers into: the second user message arrives while turn 1 is running, turn 1 ends with
+  // its own result, and turn 2 starts from the steered text. `--replay-user-messages` (when the runner
+  // passed it) has already echoed the message by the time this sees it.
+  case 'steer': {
+    text(`Working on ${taskId}`);
+    const message = await nextSteer(Number(process.env.FAKE_CLAUDE_STEER_WAIT_MS ?? 3000));
+    if (!message) {
+      finish(result('success', { summary: `Nothing was steered into ${taskId}` }));
+      break;
+    }
+    // Turn 1's own boundary. Not the session's last result: turn 2 follows and overwrites it.
+    finish(undefined, { text: 'Stopping here to take your message.' }, false);
+    // Long enough for a host that closed stdin at the boundary to have done so. The queued turn only runs
+    // while the session is still accepting input, exactly as the real CLI behaves.
+    await sleep(Math.max(delay, 100));
+    if (stdinClosed) {
+      process.stderr.write('error: input was closed before the queued message could start its turn\n');
+      process.exit(6);
+    }
+    text(`Continuing with: ${message}`);
+    finish(result('success', { summary: `Steered ${taskId}`, data: { steered: message } }));
+    break;
+  }
+  // Takes the message and dies before acknowledging it: the delivery must end up `failed`, not `queued`.
+  case 'steer-exit': {
+    text(`Working on ${taskId}`);
+    const message = await nextSteer(Number(process.env.FAKE_CLAUDE_STEER_WAIT_MS ?? 3000));
+    process.stderr.write(`fatal: crashed while holding ${message ? 'a steered message' : 'nothing'}\n`);
+    process.exit(5);
     break;
   }
   case 'thinking': {

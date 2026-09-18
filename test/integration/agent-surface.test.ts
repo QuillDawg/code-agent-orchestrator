@@ -13,7 +13,7 @@ import { execa } from 'execa';
 import { buildCodexArgs } from '../../src/runners/codex/codex-runner.js';
 import { buildCodexAppServerArgs } from '../../src/runners/codex/app-server.js';
 import { buildClaudeArgs, resolveClaudeOptions, type PromptMode } from '../../src/runners/claude/claude-runner.js';
-import { MINIMUM_AGENT_VERSIONS, versionAtLeast } from '../../src/runners/capabilities.js';
+import { CLAUDE_REPLAY_USER_MESSAGES, MINIMUM_AGENT_VERSIONS, STEER_MINIMUM_VERSIONS, versionAtLeast } from '../../src/runners/capabilities.js';
 import type { ClaudeOptions, CodexOptions, PermissionMode } from 'code-agent-orchestrator-protocol';
 
 /** One `--help` output, reduced to the flags it advertises and the values they accept. */
@@ -245,6 +245,18 @@ describe.skipIf(Boolean(codex.skip))('codex argv against the installed CLI', () 
     expect([...new Set(problems)]).toEqual([]);
   });
 
+  /**
+   * `turn/steer` is a JSON-RPC method, not a flag: `--help` cannot advertise it, so the only evidence the
+   * installed CLI has it is the app-server subcommand plus the version it first shipped in (§7.2).
+   */
+  it(`is new enough for turn/steer and serves an app-server (codex ${codex.version})`, () => {
+    expect({ version: codex.version, atLeast: versionAtLeast(codex.version, STEER_MINIMUM_VERSIONS.codex) }).toEqual({
+      version: codex.version,
+      atLeast: true,
+    });
+    expect(appServer.flags.has('--stdio')).toBe(true);
+  });
+
   it('puts exec-only flags after the subcommand and session flags before it', () => {
     const argv = buildCodexArgs({ permissionMode: 'readOnly', configMode: 'isolated', profile: 'ci', addDirs: ['../shared'] }, 's.json', 'f.json');
     const boundary = argv.indexOf('exec');
@@ -266,6 +278,24 @@ describe.skipIf(Boolean(codex.skip))('codex argv against the installed CLI', () 
 describe.skipIf(Boolean(claude.skip))('claude argv against the installed CLI', () => {
   it('still mentions the flags CAO relies on that --help does not list as options', () => {
     for (const flag of UNDOCUMENTED.claude!) expect({ flag, mentioned: claude.help.includes(flag) }).toEqual({ flag, mentioned: true });
+  });
+
+  /**
+   * §3.5's acknowledgment of a steered message is `--replay-user-messages` and nothing else: without it a
+   * follow-up can only ever be shown as `queued`. CAO passes it only when it is advertised, so losing it
+   * degrades silently — which is precisely why it is asserted against the installed binary.
+   */
+  it(`advertises --replay-user-messages, the only acknowledgment a steered message has (claude ${claude.version})`, () => {
+    const root = claude.surfaces.root!;
+    expect({ flag: CLAUDE_REPLAY_USER_MESSAGES, advertised: root.flags.has(CLAUDE_REPLAY_USER_MESSAGES) }).toEqual({
+      flag: CLAUDE_REPLAY_USER_MESSAGES,
+      advertised: true,
+    });
+    const argv = buildClaudeArgs({}, '11111111-1111-1111-1111-111111111111', undefined, undefined, 'ask', false, true);
+    expect(argv).toContain(CLAUDE_REPLAY_USER_MESSAGES);
+    expect(audit(argv, root, () => undefined)).toEqual([]);
+    // Deny mode closes stdin at spawn, so the flag has nothing to echo and is never sent (§7.1).
+    expect(buildClaudeArgs({}, 's', undefined, undefined, 'deny', false, true)).not.toContain(CLAUDE_REPLAY_USER_MESSAGES);
   });
 
   it(`accepts every flag the option matrix can produce (claude ${claude.version})`, () => {

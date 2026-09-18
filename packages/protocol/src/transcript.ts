@@ -23,6 +23,12 @@ export type TranscriptEntry =
   /** Tool output, truncated. */
   | { kind: 'tool_result'; ts: string; text: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { kind: 'stderr'; ts: string; text: string }
+  /**
+   * A message the **operator** sent into the running session (spec §3.5, `[D26]`). Not agent output: every
+   * surface draws it as the human's turn, so a transcript reads as the conversation it was. `deliveryId`
+   * names the `PromptDelivery` on the attempt whose state (queued, accepted, …) this message is at.
+   */
+  | { kind: 'user'; ts: string; text: string; deliveryId?: string }
   /** The worker asked the human a question (AskUserQuestion). */
   | { kind: 'question'; ts: string; id: string; questions: InteractionQuestion[]; answer?: string }
   /** The worker needed a permission decision. */
@@ -66,6 +72,8 @@ export function transcriptLine(entry: TranscriptEntry): string {
       return `${entry.isError ? '! ' : '-> '}${firstLine(entry.text)}`;
     case 'stderr':
       return `[stderr] ${entry.text}`;
+    case 'user':
+      return `> ${firstLine(entry.text)}`;
     case 'question':
       return `? ${entry.questions[0]?.question ?? 'question'}${entry.answer ? ` -> ${entry.answer}` : ''}`;
     case 'permission':
@@ -84,7 +92,7 @@ export function transcriptLine(entry: TranscriptEntry): string {
   }
 }
 
-const KINDS: ReadonlySet<string> = new Set(['text', 'thinking', 'command', 'tool', 'tool_result', 'stderr', 'question', 'permission', 'result', 'error', 'system']);
+const KINDS: ReadonlySet<string> = new Set(['text', 'thinking', 'command', 'tool', 'tool_result', 'stderr', 'user', 'question', 'permission', 'result', 'error', 'system']);
 
 /**
  * Parse one events.jsonl line. Accepts the current entry shape and the legacy `type:` records of older runs.

@@ -18,6 +18,9 @@
  *                    exec-approval (the CLI rejects a command approval mid-turn and the turn fails) |
  *                    exec-user-input (the CLI rejects request_user_input; the turn ends with no result)
  *   app-server only: approval | approval-always | approval-decline | file-approval | two-approvals |
+ *                    steer (holds the turn open for a `turn/steer`; FAKE_CODEX_STEER selects a refusal:
+ *                    no-turn | review | compact | empty-input | schema, and FAKE_CODEX_STEER_WAIT_MS
+ *                    bounds how long the turn waits) |
  *                    question |
  *                    question-multi | question-recovers | question-then-resume | unknown-request |
  *                    failure | interrupted |
@@ -28,6 +31,7 @@
  * `interim` emits a completion object mid-turn, keeps working, and finishes with a different one.
  * `invalid`, `api-error` and `failure` recover when the session is resumed, so a run can exercise
  * nudge-then-success and transient-error-then-resume.
+ * FAKE_CODEX_RESUME_CONFLICT=1 makes `thread/resume` answer "already has an active writer".
  * FAKE_CODEX_AUTH=0 makes `login status` fail. FAKE_CODEX_TRACE=<file> appends one JSON line per
  * invocation (task, attempt, cwd, argv, prompt) so tests can assert what CAO actually launched.
  */
@@ -302,6 +306,25 @@ const recallThread = (id) => {
   }
 };
 
+/**
+ * `turn/steer` (§7.2). The success answer is a turn id; `FAKE_CODEX_STEER` selects one of the refusals the
+ * real server produces instead, so every rejection row of the §3.5 matrix is reachable from a test.
+ *
+ * `expectedTurnId must not be empty` and `expected active turn id X but found Y` are decided from the
+ * request itself rather than from the env, because those two are the server checking what the client sent.
+ */
+const STEER_REJECTIONS = {
+  'no-turn': 'no active turn to steer',
+  review: 'cannot steer a review turn',
+  compact: 'cannot steer a compact turn',
+  'empty-input': 'input must not be empty',
+  schema: 'active turn uses a different output schema',
+};
+const NOT_STEERABLE = new Set(['review', 'compact']);
+const steerMode = process.env.FAKE_CODEX_STEER ?? '';
+/** Set once `turn/start` has been answered and cleared at `turn/completed`: the window a steer is legal in. */
+let activeTurnId = null;
+
 let unsupportedOutstanding = 2;
 /** `two-approvals`: the turn ends only once both of the requests it opened have been answered. */
 let bothOutstanding = 2;
@@ -369,6 +392,11 @@ rl.on('line', (raw) => {
     }
     isResume = message.method === 'thread/resume';
     threadId = message.params?.threadId ?? threadId;
+    // One writer per thread (§7.2): a second process resuming a thread someone else holds is refused.
+    if (isResume && process.env.FAKE_CODEX_RESUME_CONFLICT === '1') {
+      emit({ id: message.id, error: { code: -32600, message: `thread ${threadId} already has an active writer` } });
+      return;
+    }
     const stored = isResume ? recallThread(threadId) : undefined;
     const settings = {
       model: message.params?.model ?? stored?.model ?? 'fake-codex',
@@ -386,7 +414,36 @@ rl.on('line', (raw) => {
       instructionSources: [], approvalPolicy: mode === 'missing-policy' ? null : settings.approvalPolicy, approvalsReviewer: settings.approvalsReviewer,
       sandbox: { type: sandboxType, writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null,
     } });
+  } else if (message.method === 'turn/steer') {
+    process.stderr.write(`steer:${JSON.stringify(message.params)}\n`);
+    const input = Array.isArray(message.params?.input) ? message.params.input : [];
+    const text = input.map((part) => part?.text ?? '').join('');
+    const expected = message.params?.expectedTurnId;
+    // The server's own argument checks come first, then the turn's state, then the selected refusal.
+    if (!expected) emit({ id: message.id, error: { code: -32600, message: 'expectedTurnId must not be empty' } });
+    else if (!activeTurnId) emit({ id: message.id, error: { code: -32600, message: 'no active turn to steer' } });
+    else if (expected !== activeTurnId) emit({ id: message.id, error: { code: -32600, message: `expected active turn id ${expected} but found ${activeTurnId}` } });
+    else if (!text) emit({ id: message.id, error: { code: -32600, message: 'input must not be empty' } });
+    else if (STEER_REJECTIONS[steerMode]) {
+      emit({
+        id: message.id,
+        error: { code: -32600, message: STEER_REJECTIONS[steerMode], ...(NOT_STEERABLE.has(steerMode) ? { data: { codexErrorInfo: 'activeTurnNotSteerable' } } : {}) },
+      });
+    } else {
+      emit({ id: message.id, result: { turnId: activeTurnId } });
+      if (mode === 'steer') {
+        emit({ method: 'item/completed', params: { threadId, turnId: activeTurnId, item: { type: 'agentMessage', id: 'msg-steer', text: `Taking your note: ${text}`, phase: null, memoryCitation: null, delivery: null, questions: null } } });
+        finish({ ...result, summary: `fake app-server steered with ${text}` });
+      }
+    }
   } else if (message.method === 'turn/start') {
+    // §7.2: the real server routes a `turn/start` on a thread with an active turn to steer, silently. The
+    // fake does the same and says so on stderr, so a test can catch a client that ever sends one.
+    if (activeTurnId) {
+      process.stderr.write(`turn-start-routed-to-steer:${JSON.stringify(message.params?.input ?? null)}\n`);
+      emit({ id: message.id, result: { turn: { id: activeTurnId, status: 'inProgress', items: [], itemsView: 'full', error: null } } });
+      return;
+    }
     const schemaError = mode === 'schema-rejected'
       ? "Invalid schema for response_format 'codex_output_schema': In context=(), 'additionalProperties' is required to be supplied and to be false."
       : strictSchemaError(message.params?.outputSchema);
@@ -395,7 +452,14 @@ rl.on('line', (raw) => {
       return;
     }
     emit({ id: message.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null } } });
-    if (mode === 'approval' || mode === 'approval-decline') {
+    activeTurnId = 'turn-1';
+    if (mode === 'steer') {
+      // The turn stays open so the host has something to steer into. Bounded, so a test that never steers
+      // (or one whose steer is refused) still ends instead of hanging the suite.
+      setTimeout(() => {
+        if (activeTurnId) finish({ ...result, summary: 'fake app-server finished without a steer' });
+      }, Number(process.env.FAKE_CODEX_STEER_WAIT_MS ?? 3000)).unref?.();
+    } else if (mode === 'approval' || mode === 'approval-decline') {
       // No amendment proposed and no acceptForSession offered: "allow for the rest of this task" is not on.
       emit({ id: 99, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: 'turn-1', itemId: 'cmd-1', startedAtMs: Date.now(), kind: 'command', command: 'npm test', cwd: process.cwd(), availableDecisions: ['accept', 'decline'], proposedExecpolicyAmendment: null } });
     } else if (mode === 'approval-always') {
@@ -483,6 +547,7 @@ function ask(id, questions) {
 }
 
 function finish(value = result) {
+  activeTurnId = null;
   emit({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-1', text: JSON.stringify(value), phase: 'final_answer', memoryCitation: null, delivery: null, questions: null } } });
   emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId: 'turn-1', tokenUsage: { total: { totalTokens: 15, inputTokens: 10, cachedInputTokens: 2, cacheWriteInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 1 }, last: { totalTokens: 15, inputTokens: 10, cachedInputTokens: 2, cacheWriteInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 1 }, modelContextWindow: 200000 } } });
   emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'completed', items: [], itemsView: 'full', error: null } } });

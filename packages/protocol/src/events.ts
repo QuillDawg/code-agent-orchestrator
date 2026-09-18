@@ -1,8 +1,8 @@
-import type { AttemptOutcome, RunSummary, TaskReason, WorkspaceInfo } from './run.js';
+import type { AttemptOutcome, PromptDelivery, RunSummary, TaskReason, WorkspaceInfo } from './run.js';
 import type { RunnerUsage, TaskResult } from './result.js';
 import type { TranscriptEntry, FileOp } from './transcript.js';
 import type { Interaction, InteractionAnswer, InteractionAnswerSource } from './interaction.js';
-import type { TaskEditField } from './requests.js';
+import type { PromptDeliveryMode, TaskEditField } from './requests.js';
 
 export interface EventMeta {
   seq: number;
@@ -52,6 +52,11 @@ export type WorkflowEventBody =
    * the run log carries summaries, and a prompt is the one field whose value is the work itself.
    */
   | { type: 'task.edited'; taskId: string; revision: number; fields: TaskEditField[] }
+  /**
+   * A follow-up was sent to a task's worker (spec §2.6, §3.5). **Never the text**: the message itself lives
+   * on the attempt's `PromptDelivery` and in its `user` transcript entry, and the run log keeps the summary.
+   */
+  | { type: 'task.prompted'; taskId: string; attempt: number; deliveryId: string; mode: PromptDeliveryMode; transport: PromptDelivery['transport']; state: PromptDelivery['state']; reason?: string }
   | { type: 'task.merging'; taskId: string; branch: string; into: string }
   | { type: 'task.merged'; taskId: string; branch: string; into: string; sha: string }
   | { type: 'hook.started'; hook: string; command: string; taskId?: string }

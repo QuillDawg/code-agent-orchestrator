@@ -10,7 +10,9 @@
  */
 import path from 'node:path';
 import { createWriteStream } from 'node:fs';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
+import type { TaskRunner, RunnerCapabilities, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
+import { CLAUDE_REPLAY_USER_MESSAGES } from '../capabilities.js';
+import { ClaudeSteering } from './steer.js';
 import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
 import { claudeCapabilityNeeds } from './preflight.js';
 import type {
@@ -47,6 +49,12 @@ export type PromptMode = 'ask' | 'deny';
 const ENV_TO_STRIP = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_CHILD_SESSION'];
 
 /**
+ * The parsed event kinds an `assistant` line produces, and no other line does — how "the worker spoke again"
+ * is recognised without re-parsing every stdout line a second time (§3.5's turn-boundary acknowledgment).
+ */
+const ASSISTANT_EVENT_KINDS: ReadonlySet<string> = new Set(['activity', 'command', 'text', 'thinking', 'usage']);
+
+/**
  * Runner defaults (workflow `claude:`) merged with the task's own `claude:` block, then the resolved
  * generic `model`/`effort` promoted over both. normalize() already folded `claude.model`/`claude.effort`
  * in as the legacy fallback, so this only ever promotes an already-resolved value; without it the
@@ -68,12 +76,16 @@ export function buildClaudeArgs(
   resumeSessionId?: string,
   prompts: PromptMode = 'deny',
   forwardSubagentText = false,
+  replayUserMessages = false,
 ): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--json-schema', TASK_RESULT_JSON_SCHEMA_STRING];
   if (options.configMode === 'isolated') args.push('--safe-mode');
   args.push('--permission-mode', options.permissionMode ?? 'auto');
   if (prompts === 'ask') args.push('--input-format', 'stream-json', '--permission-prompt-tool', 'stdio');
   else args.push('--permission-prompts', 'none');
+  // Only in ask mode: the flag needs stream-json on both sides (§7.1), and a deny-mode session has no open
+  // stdin to steer through in the first place. Without it a follow-up can only ever show as `queued`.
+  if (prompts === 'ask' && replayUserMessages) args.push(CLAUDE_REPLAY_USER_MESSAGES);
   // Without it a subagent's prose never reaches the stream; its tool calls arrive either way.
   if (forwardSubagentText) args.push('--forward-subagent-text');
   // A resumed session keeps its transcript (and id); a fresh one gets an orchestrator-generated id.
@@ -152,6 +164,8 @@ function claudeProviderCode(retry: { httpStatus?: number; message?: string } | u
 
 export class ClaudeRunner implements TaskRunner {
   readonly name = 'claude';
+  /** Ask-mode sessions keep stdin open, which is the whole of Claude's steering transport (§3.5, `[D23]`). */
+  readonly capabilities: RunnerCapabilities = { steer: true };
   private readonly pm: ProcessManager;
   private readonly defaults: ClaudeOptions;
   private readonly bufferLines: number;
@@ -196,7 +210,8 @@ export class ClaudeRunner implements TaskRunner {
     const resumeSessionId = input.resumeSessionId && options.sessionPersistence !== false ? input.resumeSessionId : undefined;
     const sessionId = resumeSessionId ?? uuid();
     const { file, args: prefixArgs } = splitCommand(detection.command);
-    const args = [...prefixArgs, ...buildClaudeArgs(options, sessionId, input.systemPromptAddendum, resumeSessionId, promptMode, detection.forwardSubagentText ?? false)];
+    const replayUserMessages = promptMode === 'ask' && (detection.replayUserMessages ?? false);
+    const args = [...prefixArgs, ...buildClaudeArgs(options, sessionId, input.systemPromptAddendum, resumeSessionId, promptMode, detection.forwardSubagentText ?? false, replayUserMessages)];
 
     await ensureDir(input.attemptDir);
     const eventsLog = createWriteStream(path.join(input.attemptDir, 'events.jsonl'), { flags: 'a' });
@@ -248,6 +263,20 @@ export class ClaudeRunner implements TaskRunner {
     const pending = new PendingInteractions();
     let proc: ReturnType<ProcessManager['spawn']> | undefined;
 
+    /**
+     * The live channel, for ask mode only: a deny-mode session closed its stdin at spawn, so there is nothing
+     * to write a follow-up to and the orchestrator reports `transport: 'none'` for it (§3.5).
+     */
+    const steering =
+      promptMode === 'ask'
+        ? new ClaudeSteering({
+            write: (line) => proc?.writeStdin(line) ?? false,
+            record: (text, deliveryId) => entry({ kind: 'user', ts: nowIso(), text, deliveryId }),
+            update: (id, result) => hooks.onSteerUpdate?.(id, result),
+            replay: replayUserMessages,
+          })
+        : undefined;
+
     const answer = (requestId: string, request: Record<string, unknown>): void => {
       const interaction = toInteraction(requestId, request, { taskId: input.task.id, attempt: input.attempt, agent: 'claude' });
       const signal = pending.open(requestId);
@@ -287,6 +316,9 @@ export class ClaudeRunner implements TaskRunner {
           return;
         }
         const ts = nowIso();
+        // What the no-echo acknowledgment path watches for: a turn boundary, then the worker speaking again.
+        // Every one of these kinds comes from an `assistant` line, and only from one.
+        if (steering && events.some((ev) => ASSISTANT_EVENT_KINDS.has(ev.kind))) steering.spoke();
         for (const ev of events) {
           switch (ev.kind) {
             case 'init':
@@ -374,6 +406,9 @@ export class ClaudeRunner implements TaskRunner {
             case 'control_cancel':
               pending.cancel(ev.requestId, 'withdrawn by the worker');
               break;
+            case 'user_replay':
+              steering?.replayed(ev.text);
+              break;
             case 'result':
               resultEvent = ev;
               if (ev.usage) {
@@ -385,7 +420,9 @@ export class ClaudeRunner implements TaskRunner {
               usage.numTurns = ev.numTurns;
               usage.sessionId = ev.sessionId ?? sessionId;
               hooks.onUsage({ ...usage });
-              proc?.endStdin();
+              // Closing stdin is "no more input": a follow-up the CLI has taken but not yet turned into a
+              // turn would never run. Without a follow-up in flight this is exactly what it always was.
+              if (!steering?.turnEnded()) proc?.endStdin();
               break;
             default:
               break;
@@ -400,6 +437,7 @@ export class ClaudeRunner implements TaskRunner {
       },
     });
     hooks.onProcess({ pid: proc.pid, sessionId });
+    if (steering) hooks.onChannel?.(steering);
 
     const onAbort = (): void => {
       // Answer anything the worker is still waiting on so no promise dangles, then stop the process.
@@ -410,6 +448,8 @@ export class ClaudeRunner implements TaskRunner {
     const exit = await proc.exited;
     input.signal.removeEventListener('abort', onAbort);
     pending.abortAll('worker exited');
+    // A follow-up the session never acknowledged did not reach the worker, whatever else happened here.
+    steering?.end('The Claude session ended before it acknowledged the message.');
 
     const finalUsage: RunnerUsage = { ...usage, sessionId: resultEvent?.sessionId ?? sessionId, model };
     const stderrSummary = stderrTail.length ? `\nstderr:\n${stderrTail.slice(-10).join('\n')}` : '';

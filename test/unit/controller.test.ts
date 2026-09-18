@@ -333,22 +333,27 @@ describe('run controller: run-level commands', () => {
     expect(result.state).toBe('interrupted');
   });
 
-  it('declares prompt and the permission commands but does not apply them yet', async () => {
+  it('declares the permission commands but does not apply them yet, and answers a prompt with the transport', async () => {
     const runner = new MockRunner().when('a', { kind: 'hang' });
     const h = harness(await wf('name: t\ntasks:\n  - id: a\n    prompt: p\n'), runner);
     const execution = h.scheduler.execute();
     await waitFor(() => h.run.tasks.a!.state === 'running');
 
+    // §3.5: a worker whose runner offered no live channel cannot be steered, and the refusal says so
+    // rather than pretending the feature does not exist. Only `steer` is wired in this stage.
     const prompt = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'hi', mode: 'steer' }, tui());
+    const followUp = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'hi', mode: 'followUp' }, tui());
     const approve = await h.controller.submit({ kind: 'approve', taskId: 'a' }, tui());
     const answer = await h.controller.submit({ kind: 'answer', taskId: 'a', interactionId: 'r1', answer: { kind: 'allow', scope: 'once' } }, tui());
 
-    for (const ack of [prompt, approve, answer]) expect(ack.status).toBe('rejected');
-    expect(prompt.reason).toContain('not available until stage 2');
+    for (const ack of [prompt, followUp, approve, answer]) expect(ack.status).toBe('rejected');
+    expect(prompt.reason).toContain('has no channel to steer through');
+    expect(followUp.reason).toContain('a follow-up for "a" is not');
     expect(approve.reason).toContain('Approve or reject "a" in the terminal that owns this run');
     expect(answer.reason).toContain('Answer "a" in the terminal that owns this run');
     // Nothing was touched by any of them.
     expect(h.run.tasks.a!.state).toBe('running');
+    expect(h.run.tasks.a!.attempts[0]!.prompts).toBeUndefined();
 
     await h.controller.submit({ kind: 'stop', mode: 'cancel' }, tui());
     await execution;

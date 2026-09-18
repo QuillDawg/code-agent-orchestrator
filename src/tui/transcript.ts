@@ -124,6 +124,16 @@ function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: 
     }
     case 'stderr':
       return block([paint(sanitizeText(entry.text), ['red', 'dim'], color)], `  ${glyph('warning')} `, ['red', 'dim'], color, width);
+    // The operator's own message. Deliberately not `say`/green: a transcript is unreadable if the human's
+    // turn and the agent's turn are drawn the same way, and the only mark a mono terminal has is the gutter.
+    case 'user':
+      return block(
+        textLines(entry.text).map((l) => paint(l, ['blue', 'bold'], color)),
+        '> ',
+        ['blue', 'bold'],
+        color,
+        width,
+      );
     case 'question': {
       const lines: string[] = [];
       for (const q of entry.questions) {

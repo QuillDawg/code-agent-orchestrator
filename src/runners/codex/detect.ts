@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { splitCommand } from '../claude/detect.js';
-import { MINIMUM_AGENT_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
+import { MINIMUM_AGENT_VERSIONS, STEER_MINIMUM_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
 
 export type CodexDetection = AgentRuntimeDetection;
 
@@ -35,6 +35,9 @@ async function inspectCodex(file: string, prefix: string[], command: string, ver
   const capabilities: AgentCapability[] = [];
   if (execHelp?.exitCode === 0) capabilities.push('exec');
   if (appHelp?.exitCode === 0) capabilities.push('appServer');
+  // `turn/steer` is not a flag, so `--help` cannot advertise it: the app-server and a version floor are the
+  // only evidence there is (§7.2).
+  if (appHelp?.exitCode === 0 && versionAtLeast(version, STEER_MINIMUM_VERSIONS.codex)) capabilities.push('steer');
   if (root.includes('--approve-for-me')) capabilities.push('autoReview');
   if (exec.includes('--ignore-user-config') && exec.includes('--ignore-rules')) capabilities.push('isolatedConfig');
   return {

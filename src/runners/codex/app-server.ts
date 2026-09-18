@@ -8,8 +8,8 @@ import type {
   TaskResult,
   TranscriptEntry,
 } from 'code-agent-orchestrator-protocol';
-import { asSentence, withoutWorkerInstructions } from '../../util/text.js';
-import type { RunnerHooks, RunnerInput, RunnerOutcome } from '../task-runner.js';
+import { asSentence, sanitizeText, withoutWorkerInstructions } from '../../util/text.js';
+import type { AttemptChannel, RunnerHooks, RunnerInput, RunnerOutcome, SteerExpectation, SteerResult } from '../task-runner.js';
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../contract.js';
 import { agentTextEvents, completionTranscript } from '../completion-text.js';
@@ -57,6 +57,9 @@ interface JsonObject extends Record<string, unknown> {
   codexErrorInfo?: unknown;
 }
 const MAX_OUTPUT_CHARS = 2000;
+
+/** Which of `PromptDelivery.transport` this runner speaks (§2.6, §3.5). */
+const CODEX_APP_SERVER_TRANSPORT = 'codex-app-server' as const;
 
 /**
  * The app-server command line. The security envelope travels in the `thread/start` params rather than in
@@ -137,6 +140,23 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   let proc: ManagedProcess;
   let threadId = input.resumeSessionId;
   let turnId: string | undefined;
+  /**
+   * Whether this thread has a turn in flight. `turn/start` on a thread that does is **routed to steer** by
+   * the server (§7.2, `turn_processor.rs`): the second turn silently never happens and its prompt is
+   * appended to the first. CAO starts exactly one turn per attempt, and this is what proves it.
+   */
+  let turnActive = false;
+  /**
+   * Resolves once `turn/start` has been answered, however it was answered, and on process exit.
+   *
+   * A steer that arrived in the moments between the thread opening and the turn id coming back would
+   * otherwise send an empty `expectedTurnId` and be refused for a race the operator had no part in — so it
+   * waits for the answer instead, and only then asks the server what it thinks of the message.
+   */
+  let turnAnswered = (): void => {};
+  const turnReady = new Promise<void>((resolve) => {
+    turnAnswered = resolve;
+  });
   let finalText = '';
   let terminal: JsonObject | undefined;
   /**
@@ -157,6 +177,19 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     inflightRequests.set(id, { method, params, overloads: inflightRequests.get(id)?.overloads ?? 0 });
     return send({ id, method, params });
   };
+  /**
+   * Requests whose answer the caller is waiting on, rather than one of the fixed ids handled below. Only
+   * `turn/steer` uses it today, and it is what lets a steer return the server's own verdict (§3.5).
+   */
+  const responders = new Map<number, (message: JsonObject) => void>();
+  const call = (method: string, params: JsonObject): Promise<JsonObject> =>
+    new Promise<JsonObject>((resolve) => {
+      const id = nextId++;
+      responders.set(id, resolve);
+      if (request(id, method, params)) return;
+      responders.delete(id);
+      resolve({ error: { message: 'the Codex app-server is no longer reading its input' } });
+    });
   const retryOverloaded = (message: JsonObject): boolean => {
     if (message.error?.code !== -32001 || typeof message.id !== 'number') return false;
     const pendingRequest = inflightRequests.get(message.id);
@@ -230,6 +263,36 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
     });
   };
 
+  /**
+   * The live channel (§3.5, `[D23]`). `turn/steer` is the *only* way a message reaches a turn that is
+   * already running: the experimental `turn/settings/update` is not used, and `turn/start` would be routed
+   * to steer behind CAO's back, which is exactly what `turnActive` above forbids.
+   *
+   * Every refusal is the server's own sentence, verbatim — `no active turn to steer`, `expected active turn
+   * id X but found Y`, `cannot steer a review turn`, `input must not be empty`, `active turn uses a
+   * different output schema` — because each one names a different thing the operator has to do next, and
+   * none of them is something this runner can say better (§7.2).
+   */
+  const channel: AttemptChannel = {
+    steer: async (text: string, expected: SteerExpectation): Promise<SteerResult> => {
+      if (!expected.turnId) await turnReady;
+      if (!threadId) {
+        return { transport: CODEX_APP_SERVER_TRANSPORT, state: 'failed', reason: 'The Codex thread has not started yet, so there is nothing to steer.' };
+      }
+      const expectedTurnId = expected.turnId ?? turnId ?? '';
+      const answer = await call('turn/steer', { threadId, input: [{ type: 'text', text }], expectedTurnId });
+      if (answer.error) {
+        return { transport: CODEX_APP_SERVER_TRANSPORT, state: 'rejected', reason: asSentence(sanitizeText(String(answer.error.message ?? JSON.stringify(answer.error)))) };
+      }
+      const accepted = typeof answer.result?.turnId === 'string' ? answer.result.turnId : expectedTurnId;
+      // Recorded only once the server has taken it: a refused message never reached the worker, and a
+      // transcript that shows it anyway is a transcript of a conversation that did not happen.
+      entry({ kind: 'user', ts: nowIso(), text, deliveryId: expected.id });
+      hooks.onActivity(`> ${text.split(/\r?\n/)[0] ?? ''}`);
+      return { transport: CODEX_APP_SERVER_TRANSPORT, state: 'accepted', turnId: accepted, reason: 'The Codex turn took the message.' };
+    },
+  };
+
   proc = config.processManager.spawn({
     taskId: input.task.id, attempt: input.attempt, command: file, args, cwd: input.cwd, env, timeoutMs: input.timeoutMs,
     stdin: 'keep-open', logDir: input.attemptDir, bufferLines: config.bufferLines,
@@ -239,6 +302,14 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
       if (message.id !== undefined && message.method) { answerRequest(message); return; }
       if (retryOverloaded(message)) return;
       if (typeof message.id === 'number') inflightRequests.delete(message.id);
+      if (typeof message.id === 'number') {
+        const responder = responders.get(message.id);
+        if (responder) {
+          responders.delete(message.id);
+          responder(message);
+          return;
+        }
+      }
       if (message.id === initializeId) {
         if (message.error) {
           const detail = `initialize failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
@@ -314,6 +385,17 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         usage.model = result.model ?? usage.model;
         hooks.onProcess({ pid: proc.pid, sessionId: threadId });
         entry({ kind: 'system', ts: nowIso(), text: `thread ${threadId ?? 'unknown'}${usage.model ? ` (${usage.model})` : ''}` });
+        // The thread exists, so a follow-up has somewhere to go — including, honestly, into the server's
+        // "no active turn to steer" while the first turn is still being set up (§3.5).
+        hooks.onChannel?.(channel);
+        if (turnActive) {
+          // Unreachable by construction, and recorded rather than ignored: a `turn/start` that reached a
+          // busy thread would come back as a successful steer and nothing would ever say the turn was lost.
+          protocolError = { detail: 'CAO would have started a second turn on a thread that already has one, which the app-server routes to steer', key: 'an internal invariant' };
+          void proc.kill('graceful');
+          return;
+        }
+        turnActive = true;
         turnRequestId = nextId++;
         request(turnRequestId, 'turn/start', {
           threadId, input: [{ type: 'text', text: input.prompt, text_elements: [] }], cwd: input.cwd,
@@ -324,7 +406,9 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         return;
       }
       if (message.id === turnRequestId) {
+        turnAnswered();
         if (message.error) {
+          turnActive = false;
           const detail = `turn/start failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
           protocolError = codexProtocolRejection({ message: detail }) ?? { detail };
           void proc.kill('graceful');
@@ -375,6 +459,7 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
         hooks.onWarning?.(text); entry({ kind: 'error', ts: nowIso(), text }); return;
       }
       if (message.method === 'turn/completed') {
+        turnActive = false;
         terminal = params.turn ?? {}; usage.numTurns = (usage.numTurns ?? 0) + 1; hooks.onUsage({ ...usage }); proc.endStdin(); return;
       }
       if (message.method === 'error' || message.method === 'warning' || message.method === 'configWarning') {
@@ -389,8 +474,15 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   input.signal.addEventListener('abort', abort, { once: true });
   const exit = await proc.exited;
   input.signal.removeEventListener('abort', abort);
+  // A process that died before `turn/start` was answered releases anything waiting for that answer.
+  turnAnswered();
   for (const controller of pending.values()) controller.abort(new Error('worker exited'));
   pending.clear();
+  // A steer whose answer never came back: the process died with the request on the wire.
+  for (const [id, responder] of responders) {
+    responders.delete(id);
+    responder({ error: { message: 'the Codex app-server exited before it answered' } });
+  }
   // A declined question is only the attempt's outcome when the worker could not finish its turn without an
   // answer. Whatever went wrong instead is kept as a warning, so the result says both what was asked and
   // what the turn did afterwards.

@@ -492,8 +492,10 @@ function matchesFilter(entry: TranscriptEntry, filter: TranscriptFilter): boolea
   switch (filter) {
     case 'all':
       return true;
+    // The operator's own messages belong to "what was said": filtered out, the agent's replies in this view
+    // would answer questions that are nowhere on the screen.
     case 'text':
-      return entry.kind === 'text' || entry.kind === 'thinking' || entry.kind === 'result';
+      return entry.kind === 'text' || entry.kind === 'thinking' || entry.kind === 'result' || entry.kind === 'user';
     case 'tools':
       return entry.kind === 'tool' || entry.kind === 'command' || entry.kind === 'tool_result';
     case 'issues':

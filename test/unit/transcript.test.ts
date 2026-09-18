@@ -5,6 +5,7 @@ import { renderMarkdown, wrapLine } from '../../src/tui/markdown.js';
 import { renderTranscript, renderEntry, createTranscriptStream, stampWidth } from '../../src/tui/transcript.js';
 import {
   planTranscript,
+  createTranscriptPlan,
   filterEntries,
   nextFilter,
   FILTER_LABEL,
@@ -384,6 +385,50 @@ describe('thinking entries', () => {
   it('summarises as a thought and round-trips through events.jsonl', () => {
     expect(transcriptLine({ kind: 'thinking', ts, text: 'weighing it up\nmore' })).toBe('(thinking) weighing it up');
     expect(parseTranscriptLine(JSON.stringify({ kind: 'thinking', ts, text: 'x' }))).toEqual({ kind: 'thinking', ts, text: 'x' });
+  });
+});
+
+/**
+ * The operator's own messages (spec §3.5, `[D26]`). A follow-up steered into a running session is part of
+ * the conversation, so it is one `TranscriptEntry` like everything else — but it is the *human's* turn, and
+ * a surface that drew it as agent prose would be reporting words the agent never said.
+ */
+describe('user entries: the operator\'s side of the transcript', () => {
+  const conversation: TranscriptEntry[] = [
+    { kind: 'text', ts, text: 'Working on it' },
+    { kind: 'user', ts, text: 'also update the changelog', deliveryId: 'D1' },
+    { kind: 'text', ts, text: 'Will do' },
+  ];
+
+  it('renders with its own gutter, distinct from agent text', () => {
+    expect(renderTranscript(conversation, { color: false, width: 0 })).toEqual([
+      '› Working on it',
+      '> also update the changelog',
+      '› Will do',
+    ]);
+  });
+
+  it('summarises as the operator speaking, and round-trips through events.jsonl', () => {
+    expect(transcriptLine({ kind: 'user', ts, text: 'do the other thing\nand this' })).toBe('> do the other thing');
+    expect(parseTranscriptLine(JSON.stringify({ kind: 'user', ts, text: 'hi', deliveryId: 'D1' }))).toEqual({ kind: 'user', ts, text: 'hi', deliveryId: 'D1' });
+  });
+
+  it('is a leaf in both planners: it owns nothing and belongs to nothing', () => {
+    const planned = planTranscript(conversation);
+    expect(planned.map((p) => p.entry.kind)).toEqual(['text', 'user', 'text']);
+    expect(planned[1]).toEqual({ entry: conversation[1], elapsedMs: undefined, children: undefined, nested: undefined, result: undefined, unanswered: undefined });
+
+    const planner = createTranscriptPlan();
+    planner.append(conversation);
+    expect(planner.plan().map((p) => p.entry.kind)).toEqual(['text', 'user', 'text']);
+    expect(planner.plan()[1]).toEqual(planned[1]);
+  });
+
+  it('stays in the text view, where the reply it caused is', () => {
+    // Filtered out, the "Will do" below it would be an answer to a question nowhere on the screen.
+    expect(filterEntries(conversation, 'text').map((e) => e.kind)).toEqual(['text', 'user', 'text']);
+    expect(filterEntries(conversation, 'tools')).toEqual([]);
+    expect(filterEntries(conversation, 'issues')).toEqual([]);
   });
 });
 

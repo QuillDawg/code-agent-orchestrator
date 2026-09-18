@@ -99,6 +99,11 @@ export function attachPlainRenderer(bus: EventBus, run: WorkflowRun, opts: Plain
         // prompt printed into a headless log is the work itself, not a summary of it.
         write(`${stamp()} ${glyph('retry')} ${ev.taskId}  edited (revision ${ev.revision}): ${ev.fields.join(', ')}`);
         break;
+      case 'task.prompted':
+        // The state and the transport, never the message (§2.6): the text is the operator's own words, and
+        // this line goes into a log an operator may well paste somewhere else.
+        write(`${stamp()} ${glyph('arrow')} ${ev.taskId}  ${ev.mode} via ${ev.transport}: ${ev.state}${ev.reason ? ` (${firstLine(ev.reason)})` : ''}`);
+        break;
       case 'task.merging':
         write(`${stamp()} ${glyph('merge')} ${ev.taskId}  merge conflict on ${ev.branch}; starting agent merge-resolution session`);
         break;

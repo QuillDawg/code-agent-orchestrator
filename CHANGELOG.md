@@ -221,6 +221,19 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   task with one row per field, the validator's message inline, `Ctrl+O` to write the prompt in
   `$VISUAL`/`$EDITOR`, and a warning before a `retry.resetWorkspace` restart throws uncommitted work away.
   A run started by this `cao` now advertises `edit` among its capabilities.
+- **Steering a worker that is already running.** Where the agent has a live channel, a message can now be
+  sent into a turn in progress instead of waiting for it to end: **Claude in ask mode** (a dashboard is
+  attached, so stdin is open) takes it as a stream-json user message and starts a new turn with it when the
+  current one finishes, and the **Codex app-server** takes it into the running turn with `turn/steer`.
+  Claude in deny mode and `codex exec` have no such channel and say so rather than pretending: they report
+  no transport at all. Each message is recorded on the attempt as a delivery — who sent it, how it
+  travelled, and where it got to (`queued` → `accepted`, or `rejected` with the server's own sentence, or
+  `failed` when the session died first) — and appears in the transcript as a `user` entry next to the
+  agent's own words, so `cao logs` reads as the conversation it was. Claude's acknowledgment uses
+  `--replay-user-messages`, passed only when `claude --help` advertises it; without it a message stays
+  `queued` until the next turn begins. The run log gets a `task.prompted` line carrying the state and the
+  transport and **never the message**. Sending one is not wired to a command yet: `cao task prompt` and the
+  Session composer are the next change.
 
 ### Changed
 

@@ -1,11 +1,13 @@
 import { execa } from 'execa';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { MINIMUM_AGENT_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
+import { CLAUDE_REPLAY_USER_MESSAGES, MINIMUM_AGENT_VERSIONS, versionAtLeast, type AgentCapability, type AgentRuntimeDetection } from '../capabilities.js';
 
 export interface ClaudeDetection extends AgentRuntimeDetection {
   /** True when `--help` lists `--forward-subagent-text`; older CLIs reject the flag, so it is only passed when advertised. */
   forwardSubagentText?: boolean;
+  /** True when `--help` lists `--replay-user-messages`; same rule, and what decides whether a steer can be acknowledged (§7.1, `[D24]`). */
+  replayUserMessages?: boolean;
 }
 
 const cache = new Map<string, ClaudeDetection>();
@@ -13,7 +15,7 @@ const cache = new Map<string, ClaudeDetection>();
 const FORWARD_SUBAGENT_TEXT = '--forward-subagent-text';
 
 /** One `--help` probe per command: the flag is new, and passing it to a CLI that does not know it fails the run. */
-async function probeRuntime(cmd: string, environment?: Record<string, string>): Promise<{ forwardSubagentText: boolean; authenticated: boolean; capabilities: AgentCapability[] }> {
+async function probeRuntime(cmd: string, environment?: Record<string, string>): Promise<{ forwardSubagentText: boolean; replayUserMessages: boolean; authenticated: boolean; capabilities: AgentCapability[] }> {
   try {
     const { file, args } = splitCommand(cmd);
     const [help, auth] = await Promise.all([
@@ -28,13 +30,15 @@ async function probeRuntime(cmd: string, environment?: Record<string, string>): 
       authenticated = false;
     }
     authenticated ||= Boolean(environment?.ANTHROPIC_API_KEY || environment?.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+    const replayUserMessages = text.includes(CLAUDE_REPLAY_USER_MESSAGES);
     const capabilities: AgentCapability[] = [];
     if (text.includes('stream-json')) capabilities.push('streamJson');
     if (text.includes('--json-schema')) capabilities.push('structuredOutput');
     if (text.includes('--safe-mode')) capabilities.push('isolatedConfig');
-    return { forwardSubagentText: text.includes(FORWARD_SUBAGENT_TEXT), authenticated, capabilities };
+    if (replayUserMessages) capabilities.push('replayUserMessages');
+    return { forwardSubagentText: text.includes(FORWARD_SUBAGENT_TEXT), replayUserMessages, authenticated, capabilities };
   } catch {
-    return { forwardSubagentText: false, authenticated: false, capabilities: [] };
+    return { forwardSubagentText: false, replayUserMessages: false, authenticated: false, capabilities: [] };
   }
 }
 

@@ -70,6 +70,14 @@ export interface ClaudeApiRetryEvent {
   httpStatus?: number;
   message?: string;
 }
+/**
+ * A user message the CLI echoed back because the session was started with `--replay-user-messages` (§7.1).
+ * It is the only acknowledgment the stream-json protocol offers that a steered message was taken `[D24]`.
+ */
+export interface ClaudeUserReplayEvent {
+  kind: 'user_replay';
+  text: string;
+}
 export interface ClaudeControlRequestEvent {
   kind: 'control_request';
   requestId: string;
@@ -106,6 +114,7 @@ export type ClaudeEvent =
   | ClaudeTextEvent
   | ClaudeThinkingEvent
   | ClaudeToolResultEvent
+  | ClaudeUserReplayEvent
   | ClaudeUsageEvent
   | ClaudeCompactEvent
   | ClaudeApiRetryEvent
@@ -280,7 +289,12 @@ export function parseClaudeEvents(line: string): ClaudeEvent[] {
       const text = truncateResult(flattenContent(block.content));
       events.push({ kind: 'tool_result', toolUseId: str(block, 'tool_use_id'), parentToolUseId, text, isError: Boolean(block.is_error) });
     }
-    return events.length ? events : [{ kind: 'other', type: 'user' }];
+    if (events.length) return events;
+    // No tool results in it: with `--replay-user-messages` this is the CLI handing back a message CAO wrote
+    // on stdin. Tool results travel as user messages too, which is why the two are told apart by content and
+    // not by the envelope. Without the flag no such line is ever emitted and this branch never runs.
+    const replayed = typeof message?.content === 'string' ? message.content : flattenContent(message?.content);
+    return replayed ? [{ kind: 'user_replay', text: replayed }] : [{ kind: 'other', type: 'user' }];
   }
   if (type === 'control_request') {
     const request = (msg.request ?? {}) as Record<string, unknown>;

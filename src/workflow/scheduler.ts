@@ -39,6 +39,7 @@ import {
   type CapabilityToken,
   type ControlAck,
   type ControlAckStatus,
+  type PromptDelivery,
   CONTROL_SEEN_LIMIT,
   PROTOCOL_VERSION,
   stamp,
@@ -48,7 +49,7 @@ import { NEEDS_INPUT_HINT, sanitizeText } from '../util/text.js';
 import { formatDuration } from '../util/duration.js';
 import type { RunStore } from '../persistence/run-store.js';
 import { OLDER_PAGE, readOlderAcrossAttempts, readOlderEntries, readTranscriptFile } from '../persistence/transcript-log.js';
-import type { RunnerRegistry, RunnerOutcome, RunnerHooks } from '../runners/task-runner.js';
+import type { AttemptChannel, RunnerRegistry, RunnerOutcome, RunnerHooks, SteerResult } from '../runners/task-runner.js';
 import type { PreflightProblem } from '../runners/preflight.js';
 import type { WorkspaceManager, FinalizeResult } from '../workspace/workspace-manager.js';
 import type { EventBus } from '../events/event-bus.js';
@@ -80,6 +81,7 @@ import {
   restartPlanFor,
   type AgentReadiness,
 } from './control/edit.js';
+import { applyDelivery, deliveryReason, findDelivery, newDelivery, recordDelivery, steerRejection } from './control/prompt.js';
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
 
@@ -315,6 +317,8 @@ export class WorkflowScheduler {
       kind: 'task' | 'merge';
       /** Merge attempts only: the git block of the task's own attempt, which finalizing the merge cannot rebuild. */
       priorGit?: GitInfo;
+      /** The live channel this attempt's runner offered, while it has one (§3.5). Absent means no transport. */
+      channel?: AttemptChannel;
     }
   >();
   private readonly buffers = new Map<string, RingBuffer<TranscriptEntry>>();
@@ -974,6 +978,15 @@ export class WorkflowScheduler {
         this.markLive(false);
       },
       onInteraction: (interaction, signal) => this.handleInteraction(taskId, attempt, interaction, signal),
+      onChannel: (channel) => {
+        // Only for the attempt that is actually in flight: a channel offered by an attempt the scheduler has
+        // already moved past would let a follow-up reach a worker nobody is watching.
+        const live = this.inflight.get(taskId);
+        if (live?.attempt === attempt) live.channel = channel;
+      },
+      onSteerUpdate: (id, update) => {
+        void this.applySteerUpdate(taskId, id, update);
+      },
       onWarning: (message) => {
         this.bus.emit({ type: 'workflow.warning', code: 'permission', taskId, message });
       },
@@ -1267,7 +1280,7 @@ export class WorkflowScheduler {
       case 'edit':
         return this.decideEdit(command, envelope);
       case 'prompt':
-        return { status: 'rejected', reason: `Prompting a task is not available until stage 2 of the v2 beta. Answer "${command.taskId}" in the terminal that owns this run.` };
+        return this.decidePrompt(command, envelope);
       case 'approve':
       case 'reject':
         return { status: 'rejected', reason: `Approval decisions are not taken by the run controller yet. Approve or reject "${command.taskId}" in the terminal that owns this run.` };
@@ -1362,6 +1375,83 @@ export class WorkflowScheduler {
       return { status: 'rejected', reason: `Task "${taskId}" already finished as ${state.state}, so there is nothing to cancel.` };
     }
     return { status: 'rejected', reason: `Task "${taskId}" is ${state.state} and has no attempt running, so there is nothing to cancel.` };
+  }
+
+  /**
+   * `prompt` with `mode: 'steer'` (§3.5, `[D23]`): hand the text to the live channel of the attempt that is
+   * running, and record what the transport said about it.
+   *
+   * The send happens here, inside the loop, rather than in `apply`, because the ack is the answer: an
+   * operator is told `accepted`, `queued` or the server's own refusal, and none of those is knowable before
+   * the message has actually been offered to the worker. Nothing about the run's state changes either way,
+   * so there is nothing for a crash between the two to leave half-done - `apply` only writes the record.
+   *
+   * The other two modes of the matrix (follow-up, stop-and-continue) start a new attempt rather than speak
+   * to a running one, and are not wired yet.
+   */
+  private async decidePrompt(command: Extract<ControlCommand, { kind: 'prompt' }>, envelope: ControlEnvelope): Promise<ControlDecision> {
+    const { taskId, mode } = command;
+    const state = this.run.tasks[taskId];
+    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    if (mode !== 'steer') {
+      return {
+        status: 'rejected',
+        reason: `Only steering a running worker is wired up so far; a ${mode === 'followUp' ? 'follow-up' : 'stop-and-continue'} for "${taskId}" is not. Steer it while it runs, or restart it with "cao task restart ${taskId}".`,
+      };
+    }
+    const entry = this.inflight.get(taskId);
+    const channel = entry?.kind === 'task' ? entry.channel : undefined;
+    const rejection = steerRejection(state, Boolean(channel));
+    if (rejection) return { status: 'rejected', reason: rejection };
+    const attempt = state.attempts.find((a) => a.number === entry!.attempt);
+    if (!attempt || attempt.endedAt) {
+      return { status: 'rejected', reason: `The worker of "${taskId}" has finished its turn, so there is nothing left to steer.` };
+    }
+
+    const delivery = newDelivery({ source: envelope.source, mode, text: command.text });
+    // No `turnId` from here: the attempt's own runner is the only thing that knows which turn is running,
+    // and a scheduler that guessed would refuse a perfectly good steer over a stale number.
+    applyDelivery(delivery, await channel!.steer(command.text, { id: delivery.id }));
+    const reason = deliveryReason(taskId, delivery);
+    // A transport that refused took nothing: there is no delivery to record, and the ack carries its words.
+    if (delivery.state === 'rejected' || delivery.state === 'failed') return { status: 'rejected', reason };
+    return {
+      status: delivery.state === 'accepted' ? 'applied' : 'accepted',
+      reason,
+      apply: async () => {
+        recordDelivery(attempt, delivery);
+        this.emitPrompted(taskId, attempt.number, delivery);
+        await this.persist();
+      },
+    };
+  }
+
+  /**
+   * A delivery the transport answered `queued` has moved on. Written straight into the attempt rather than
+   * through the wake queue: it changes one record and starts nothing, and an acknowledgment that waited for
+   * the loop would arrive after the turn it acknowledges.
+   */
+  private async applySteerUpdate(taskId: string, id: string, update: SteerResult): Promise<void> {
+    const state = this.run.tasks[taskId];
+    const found = state ? findDelivery(state, id) : undefined;
+    if (!found) return;
+    applyDelivery(found.delivery, update);
+    this.emitPrompted(taskId, found.attempt.number, found.delivery);
+    await this.persist().catch(() => undefined);
+  }
+
+  /** The run-log summary of a delivery (§2.6): every field of it except the one that matters to a reader. */
+  private emitPrompted(taskId: string, attempt: number, delivery: PromptDelivery): void {
+    this.bus.emit({
+      type: 'task.prompted',
+      taskId,
+      attempt,
+      deliveryId: delivery.id,
+      mode: delivery.mode,
+      transport: delivery.transport,
+      state: delivery.state,
+      ...(delivery.reason ? { reason: delivery.reason } : {}),
+    });
   }
 
   /**

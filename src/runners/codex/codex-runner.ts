@@ -6,7 +6,7 @@
  */
 import path from 'node:path';
 import { promises as fs, createWriteStream } from 'node:fs';
-import type { TaskRunner, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
+import type { TaskRunner, RunnerCapabilities, RunnerInput, RunnerHooks, RunnerOutcome } from '../task-runner.js';
 import { capabilityPreflight, type CapabilityNeed, type PreflightProblem } from '../preflight.js';
 import { codexCapabilityNeeds } from './preflight.js';
 import type {
@@ -73,6 +73,11 @@ const FILE_OPS: Record<string, FileOp> = { add: 'write', create: 'write', update
 
 export class CodexRunner implements TaskRunner {
   readonly name = 'codex';
+  /**
+   * The app-server transport has `turn/steer` (§7.2). `codex exec` has no live channel at all — it sends one
+   * `turn/start` and exits — so an exec attempt offers no channel and is reported as `transport: 'none'`.
+   */
+  readonly capabilities: RunnerCapabilities = { steer: true };
   private readonly pm: ProcessManager;
   private readonly defaults: CodexOptions;
   private readonly bufferLines: number;
