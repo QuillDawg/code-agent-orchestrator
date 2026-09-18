@@ -14,7 +14,7 @@ import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { createRunController, type RunController } from '../../src/workflow/control/controller.js';
 import { controlEnvelope } from '../../src/workflow/control/commands.js';
 import { followUpAck, promptRow, selectPromptMode, MODE_LABEL } from '../../src/workflow/control/prompt.js';
-import { adoptLegacyFollowUp, checkFollowUpSession, followUpText, pendingFollowUps, queueFollowUp, resumableSessionId } from '../../src/workflow/control/follow-up.js';
+import { adoptLegacyFollowUp, checkFollowUpSession, deliveryText, followUpText, markFollowUpsDelivered, pendingFollowUps, queueFollowUp, resumableSessionId } from '../../src/workflow/control/follow-up.js';
 import { reconcileForResume } from '../../src/workflow/run-factory.js';
 import { detectSessionPresence, unknownSessionPresence, type SessionProbe } from '../../src/runners/sessions.js';
 import { claudeProjectSlug, claudeSessionPresence } from '../../src/runners/claude/session-file.js';
@@ -184,9 +184,27 @@ describe('a follow-up on the task', () => {
     expect(state.resumeSessionId).toBe('sess-1');
 
     queueFollowUp(state, { source: 'cli', mode: 'followUp', text: 'and the readme' });
+    // Two messages nothing has carried yet are two things one attempt has to answer, so it gets both.
     expect(followUpText(state)).toBe(`also update the changelog${NL}${NL}and the readme`);
+    expect(state.userInput).toBe(`also update the changelog${NL}${NL}and the readme`);
     // A second follow-up with no session is a deliberate fresh start, and it wins.
     expect(state.resumeSessionId).toBeUndefined();
+  });
+
+  it('replaces the answer rather than stacking it once an attempt has carried the first', () => {
+    // `cao resume --task X --input` has always *replaced* `userInput`, and a second answer to a second
+    // question is not a longer version of the first. Generalizing `--input` into a list of deliveries must
+    // not change what the command documents.
+    const state = withAttempt('sess-1');
+    queueFollowUp(state, { source: 'cli', mode: 'followUp', text: 'use postgres' });
+    markFollowUpsDelivered(state, 1);
+
+    queueFollowUp(state, { source: 'cli', mode: 'followUp', text: 'no, use sqlite' });
+    expect(state.userInput).toBe('no, use sqlite');
+    expect(followUpText(state)).toBe('no, use sqlite');
+    // Both are still on the record; only what the *next* attempt carries has moved on.
+    expect(state.followUps).toHaveLength(2);
+    expect(deliveryText(state.followUps!)).toBe(`use postgres${NL}${NL}no, use sqlite`);
   });
 
   it('gives a run written before follow-ups were records the delivery its answer always was', () => {

@@ -85,7 +85,7 @@ import {
 import { applyDelivery, deliveryReason, findDelivery, followUpAck, newDelivery, recordDelivery, selectPromptMode, steerRejection } from './control/prompt.js';
 import {
   checkFollowUpSession,
-  followUpText,
+  deliveryText,
   markFollowUpsDelivered,
   pendingFollowUps,
   queueFollowUp,
@@ -986,7 +986,7 @@ export class WorkflowScheduler {
       for (const w of ctx.warnings) this.bus.emit({ type: 'workflow.warning', code: 'context', message: w, taskId: task.id });
       const prompt = resumeSessionId
         ? answering
-          ? followUpPrompt(attemptQuestion(lastAttempt), followUpText(state) ?? '')
+          ? followUpPrompt(attemptQuestion(lastAttempt), deliveryText(followUps) ?? '')
           : nudge
             ? nudgePrompt(lastAttempt)
             : resumePrompt(lastAttempt)

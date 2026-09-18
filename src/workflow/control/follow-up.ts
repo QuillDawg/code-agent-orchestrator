@@ -55,15 +55,24 @@ export function pendingFollowUps(state: TaskRunState): PromptDelivery[] {
   return (state.followUps ?? []).filter((d) => d.state === 'queued');
 }
 
+/** The text of a set of deliveries, oldest first, as one block - what a prompt carries. */
+export function deliveryText(deliveries: readonly PromptDelivery[]): string | undefined {
+  const texts = deliveries.map((d) => d.text).filter((t) => t.trim() !== '');
+  return texts.length ? texts.join('\n\n') : undefined;
+}
+
 /**
- * Every follow-up's text, oldest first — what the prompt carries.
+ * The text the **next attempt** carries: the follow-ups still owed one, oldest first.
  *
- * Delivered ones are included on purpose: a retry of an attempt that already carried the operator's words
- * still needs them, which is why `userInput` has always outlived the attempt that first used it.
+ * Only those. Two messages queued before anything ran are two things one attempt has to answer and belong
+ * together, but a message queued *after* an attempt has already carried an earlier one replaces it: that is
+ * what `cao resume --task X --input` has always done with a second answer, and a second answer to a second
+ * question is not a longer version of the first. A retry does not come through here at all - it re-reads
+ * the `userInput` written when the message was queued, which is why that has always outlived the attempt
+ * that first used it.
  */
 export function followUpText(state: TaskRunState): string | undefined {
-  const texts = (state.followUps ?? []).map((d) => d.text).filter((t) => t.trim() !== '');
-  return texts.length ? texts.join('\n\n') : undefined;
+  return deliveryText(pendingFollowUps(state));
 }
 
 export interface QueueFollowUpOptions extends DeliveryOrigin {
