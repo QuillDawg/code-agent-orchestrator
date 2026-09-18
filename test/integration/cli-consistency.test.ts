@@ -458,7 +458,12 @@ describe('the request inbox, from another process', () => {
     // watcher drains it on a tick, or `executeRun` answers what is left on its way out. Which one wins here
     // depends on where the run ends inside the 500 ms tick, so this pins the guarantee rather than one of
     // the paths; the shutdown sentence itself is checked in test/unit/requests.test.ts.
-    const late = controlRequest('prompt', { taskId: 'implement-api', text: 'carry on' });
+    //
+    // The task the request names is one this run does not have, deliberately: both paths then answer the
+    // same way, so the assertion below is about *being* answered rather than about which answer. A prompt
+    // for `implement-api` would be drained as `accepted` on one tick and `rejected` on the next, and the
+    // accepted one would stop and restart the task on its way past — a race, not a guarantee.
+    const late = controlRequest('prompt', { taskId: 'no-such-task', text: 'carry on' });
     const writer = (async () => {
       await until(async () => (await store.listRuns().catch(() => []))[0] !== undefined, 30_000);
       const runId = (await store.listRuns())[0]!.runId;
