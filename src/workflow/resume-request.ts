@@ -19,6 +19,8 @@ export type ResumeRequest =
   | { kind: 'from'; taskId: string }
   /** `cao resume --task <id> --input <text>`: answer a task in `needs_input` and carry on. */
   | { kind: 'answer'; taskId: string; text: string }
+  /** The composer on an ended run (§3.5): carry a follow-up into the task's next attempt. */
+  | { kind: 'followUp'; taskId: string; text: string; freshSession?: boolean }
   /** `cao resume --approve <id>` / `--reject <id>`: settle a paused approval gate. */
   | { kind: 'approve'; taskId: string }
   | { kind: 'reject'; taskId: string };
@@ -34,6 +36,8 @@ export function resumeRequestLabel(request: ResumeRequest): string {
       return `Resume from ${request.taskId}`;
     case 'answer':
       return `Answer ${request.taskId} and resume`;
+    case 'followUp':
+      return `Continue ${request.taskId} with your message`;
     case 'approve':
       return `Approve ${request.taskId}`;
     case 'reject':
@@ -55,6 +59,8 @@ export function resumeRequestArguments(request: ResumeRequest): string[] {
       return ['--from', request.taskId];
     case 'answer':
       return ['--task', request.taskId, '--input', '<your answer>'];
+    case 'followUp':
+      return ['task', 'prompt', request.taskId, '--message', '<your message>', ...(request.freshSession ? ['--fresh-session'] : [])];
     case 'approve':
       return ['--approve', request.taskId];
     case 'reject':

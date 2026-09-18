@@ -187,11 +187,11 @@ function displayStopRequest(request: Partial<ControlRequest> | StopRequest, defa
 }
 
 /**
- * What the inbox watcher really acts on, and therefore what a run may advertise (§2.3). `prompt` is accepted
- * from disk and answered, but the controller does not deliver one yet, so it is not here: §4.2.3's rule is
- * that a run advertises what it actually does, not what it can parse.
+ * What the inbox watcher really acts on, and therefore what a run may advertise (§2.3). §4.2.3's rule is
+ * that a run advertises what it actually does, not what it can parse, so a kind arrives here only once the
+ * controller carries it out.
  */
-export const INBOX_REQUEST_KINDS: readonly CapabilityToken[] = ['stop', 'kill', 'restart', 'edit'];
+export const INBOX_REQUEST_KINDS: readonly CapabilityToken[] = ['stop', 'kill', 'restart', 'edit', 'prompt'];
 
 export interface StopWatcherOptions {
   paths: RunPaths;

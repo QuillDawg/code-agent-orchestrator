@@ -109,6 +109,7 @@ const scheduler = {
   peek: () => entries,
   transcript: () => entries,
   capturedDiff: async () => undefined,
+  steerable: () => false,
   attemptTranscript: async () => [],
   readReport: async () => null,
 };

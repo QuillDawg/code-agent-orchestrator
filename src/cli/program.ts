@@ -10,6 +10,7 @@ import { peekCommand } from './commands/peek.js';
 import { taskCommand } from './commands/task.js';
 import { taskControlCommand } from './commands/task-control.js';
 import { taskEditCommand } from './commands/task-edit.js';
+import { taskPromptCommand } from './commands/task-prompt.js';
 import { diffCommand } from './commands/diff.js';
 import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
@@ -149,6 +150,7 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
       'cao task stop review                    # cancel the attempt it is running',
       'cao task restart review                 # run a finished, unsuccessful task again',
       'cao task edit review --model claude-opus-5   # change what it will run with',
+      'cao task prompt review --message "also update the changelog"  # say something to it',
     ],
     exits: '0 done  2 usage error, or a control the run refused',
   },
@@ -170,6 +172,15 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
       'cao task edit 002 review --model claude-opus-5 --restart   # stop it, apply, start it again',
     ],
     exits: '0 applied  2 rejected, no such run or task, or usage error',
+  },
+  'task prompt': {
+    examples: [
+      'cao task prompt review --message "also update the changelog"',
+      'cao task prompt review --file notes.md --steer',
+      'cao task prompt 002 review --message "try again with -O2" --stop-and-continue',
+      'cao task prompt review --message "start over from the spec" --fresh-session',
+    ],
+    exits: '0 delivered, queued or started  2 refused, no such run or task, or usage error',
   },
   'task restart': {
     examples: ['cao task restart review', 'cao task restart 002 review --wait 60'],
@@ -418,7 +429,7 @@ export function buildProgram(): Command {
   // is reached through `cao task show <name>` - which the help below says in as many words.
   const task = program
     .command('task')
-    .description('Show one task, or steer it: show (default) | stop | restart | edit')
+    .description('Show a task, or steer it: show | stop | restart | edit | prompt')
     .addHelpText(
       'after',
       [
@@ -457,6 +468,21 @@ export function buildProgram(): Command {
     .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
     .option('--repository <dir>', 'repository containing .orchestrator')
     .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('restart', refs ?? [], opts)));
+
+  task
+    .command('prompt')
+    .description('Send a task a message: steer the worker it is running, or start it again carrying the text')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('-m, --message <text>', 'the message to send')
+    .option('--file <path>', 'read the message from a file instead')
+    .option('--steer', 'speak to the worker running now; refused when its transport has no live channel')
+    .option('--follow-up', 'start a stopped task again carrying the message')
+    .option('--stop-and-continue', 'stop the worker, then start the task again carrying the message')
+    .option('--fresh-session', 'start from a new session instead of continuing the one the task reported')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--no-tui', 'plain output when the message has to resume the run to reach the task')
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskPromptCommand(refs ?? [], opts)));
 
   task
     .command('edit')

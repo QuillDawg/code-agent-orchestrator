@@ -368,6 +368,9 @@ export function createRunObserver(deps: RunObserverDeps): RunObserver {
       for (let n = attempt; n >= 1; n -= 1) files.push(eventsFile(taskId, n));
       return readOlderAcrossAttempts(files, oldest, count);
     },
+    // Nothing is executing this run here, so no worker of it has a channel this process can reach.
+    steerable: () => false,
+
     async capturedDiff(taskId): Promise<{ attempt: number; diff: AttemptDiff; patch: string } | null> {
       const attempts = [...(run.tasks[taskId]?.attempts ?? [])].reverse().filter((a) => a.kind === 'task');
       for (const a of attempts) {

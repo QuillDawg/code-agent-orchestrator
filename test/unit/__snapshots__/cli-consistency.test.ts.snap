@@ -25,7 +25,7 @@ Inspect:
   report [options] [run]         Render a run as a document to paste into a pull request
 
 Task controls:
-  task                           Show one task, or steer it: show (default) | stop | restart | edit
+  task                           Show a task, or steer it: show | stop | restart | edit | prompt
 
 Diagnostics:
   doctor [options] [config]      Check this machine: Node, git, the agent CLIs, and what past runs

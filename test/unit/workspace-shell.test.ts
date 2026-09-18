@@ -318,9 +318,9 @@ describe('the keys the footer and ? agree on', () => {
 
 describe('the panels a later stage fills', () => {
   it('says which stage fills each of them', () => {
-    // Session is half filled in: the editor is here (§3.4), the composer is not, and the panel says both.
-    expect(PLACEHOLDER_TEXT.session?.join(' ')).toContain('E edits the selected task');
-    expect(PLACEHOLDER_TEXT.session?.join(' ')).toContain('the composer');
+    // Session is filled in now (§3.5), so it has no placeholder at all: an empty panel is a bug, and a
+    // placeholder for a panel that has content is a sentence nobody will ever read.
+    expect(PLACEHOLDER_TEXT.session).toBeUndefined();
     expect(PLACEHOLDER_TEXT.logs?.[0]).toContain('stage 3');
     expect(PLACEHOLDER_TEXT.diagnostics?.[0]).toContain('stage 3');
     // And what answers the same question today, so the panel is never merely empty.
@@ -329,10 +329,10 @@ describe('the panels a later stage fills', () => {
 
   it('wraps that prose to the panel instead of cutting the half that says what to do instead', () => {
     for (const columns of [60, 84, 120]) {
-      const lines = wrapLines(PLACEHOLDER_TEXT.session!, columns);
+      const lines = wrapLines(PLACEHOLDER_TEXT.logs!, columns);
       for (const line of lines) expect([...line].length, `${columns}: ${line}`).toBeLessThanOrEqual(Math.max(20, columns));
       // Nothing is lost in the wrapping: the sentence naming today's answer survives whole.
-      expect(lines.join(' ')).toContain('cao task <id> shows everything recorded about it.');
+      expect(lines.join(' ')).toContain('cao logs <task> prints it.');
     }
   });
 

@@ -81,7 +81,16 @@ import {
   restartPlanFor,
   type AgentReadiness,
 } from './control/edit.js';
-import { applyDelivery, deliveryReason, findDelivery, newDelivery, recordDelivery, steerRejection } from './control/prompt.js';
+import { applyDelivery, deliveryReason, findDelivery, newDelivery, recordDelivery, selectPromptMode, steerRejection } from './control/prompt.js';
+import {
+  checkFollowUpSession,
+  followUpText,
+  markFollowUpsDelivered,
+  pendingFollowUps,
+  queueFollowUp,
+  sessionResumable,
+} from './control/follow-up.js';
+import { detectSessionPresence, type SessionProbe } from '../runners/sessions.js';
 
 export type StopCause = 'signal' | 'on_failure' | 'pause';
 
@@ -146,6 +155,11 @@ export interface SchedulerDeps {
    * shells out; the default probes the agent exactly as `cao run` does before the first token.
    */
   agentReadiness?: AgentReadiness;
+  /**
+   * Whether the session a follow-up would continue is still on disk (§3.5, `[D25]`). Injected so no test
+   * needs a real `~/.claude` or `~/.codex`; the default looks where each agent files its transcripts.
+   */
+  sessionProbe?: SessionProbe;
 }
 
 /** spec.md §4.2.3 — what this run announces about itself. */
@@ -212,10 +226,6 @@ export function transientBackoffMs(n: number, baseMs: number, maxMs: number): nu
   return Math.min(maxMs, baseMs * 2 ** exp);
 }
 
-function sessionResumable(task: ResolvedTask): boolean {
-  return task.retry.resumeSession && (task.agent !== 'claude' || task.claude.sessionPersistence !== false);
-}
-
 /**
  * Agent-controlled text, reduced to one bounded line with no control characters. Used for a hook's
  * environment (hooks run through a shell, so a hook that forgets to quote the variable has much less to
@@ -258,6 +268,24 @@ function answerPrompt(question: string | undefined, answer: string): string {
       : 'You ended your previous turn in this session needing a human decision.',
     `The operator answered:\n\n${answer}`,
     'The task and its context are unchanged. Continue from where you left off using this answer, and end with the single JSON completion object required by the contract.',
+  ].join('\n\n');
+}
+
+/**
+ * Prompt for a session continued by a follow-up (§3.5): the operator's message, and the question it answers
+ * when there was one.
+ *
+ * A task that stopped holding a question gets exactly the prompt `cao resume --input` has always written —
+ * that path is a follow-up now, and its wording must not change with it. A task that stopped for any other
+ * reason was not asking anything, and saying it "needed a human decision" would be inventing one.
+ */
+function followUpPrompt(question: string | undefined, text: string): string {
+  if (question) return answerPrompt(question, text);
+  return [
+    '# Follow-up From The Operator',
+    'The operator has sent you a message about this task:',
+    text,
+    'The task and its context are unchanged. Take this into account, continue from where you left off, and end with the single JSON completion object required by the contract.',
   ].join('\n\n');
 }
 
@@ -350,6 +378,7 @@ export class WorkflowScheduler {
   private finished = false;
   private readonly emit?: EmitAnnouncement;
   private readonly agentReadiness: AgentReadiness;
+  private readonly sessionProbe: SessionProbe;
   /** Registry writes are serialized so a heartbeat can never land on top of the terminal entry (§4.2.4). */
   private announceChain: Promise<void> = Promise.resolve();
   private announcing = false;
@@ -372,6 +401,10 @@ export class WorkflowScheduler {
     this.completion = deps.completion;
     this.emit = deps.emit;
     this.agentReadiness = deps.agentReadiness ?? detectAgentReadiness(deps.environment);
+    // The process environment under the workflow's own: `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are set in the
+    // operator's shell far more often than in a workflow file, and a probe that could not see them would
+    // call every session of a relocated config directory missing.
+    this.sessionProbe = deps.sessionProbe ?? detectSessionPresence({ ...process.env, ...deps.environment });
     this.taskDefs = new Map(this.workflow.tasks.map((t) => [t.id, t]));
     this.graph = new TaskGraph(this.workflow.tasks.map((t) => ({ id: t.id, dependsOn: t.dependsOn, docIndex: t.docIndex })));
     const layers = this.graph.layers();
@@ -480,6 +513,19 @@ export class WorkflowScheduler {
    * finished yet). A merge-resolution attempt is skipped, exactly as `cao diff` skips it: its patch spans
    * the whole merge, which is never the answer to "what did this task change".
    */
+  /**
+   * Whether the attempt running for this task has a live channel to steer through (§3.5).
+   *
+   * A read, not a control: the Session panel's header says which mode a message would use, and only the
+   * scheduler knows whether the worker in front of it offered a channel. Without this the panel would have
+   * to guess from the agent name — the one thing §4 forbids the TUI to do — and would offer to steer a
+   * deny-mode Claude the controller is about to refuse.
+   */
+  steerable(taskId: string): boolean {
+    const entry = this.inflight.get(taskId);
+    return entry?.kind === 'task' && Boolean(entry.channel);
+  }
+
   async capturedDiff(taskId: string): Promise<{ attempt: number; diff: AttemptDiff; patch: string } | null> {
     const attempts = [...(this.run.tasks[taskId]?.attempts ?? [])].reverse().filter((a) => a.kind === 'task');
     for (const a of attempts) {
@@ -817,6 +863,19 @@ export class WorkflowScheduler {
     this.markLive(false);
   }
 
+  /**
+   * The operator's follow-up in the task's live transcript, as the `user` entry `[D26]` calls for.
+   *
+   * Sanitized like every other agent-adjacent string that reaches a terminal, and carrying the delivery id
+   * so the composer can line the message up with the state it is in.
+   */
+  private noteUser(taskId: string, attempt: number, delivery: PromptDelivery): void {
+    const entry: TranscriptEntry = { kind: 'user', ts: nowIso(), text: sanitizeText(delivery.text), deliveryId: delivery.id };
+    this.bufferFor(taskId).push(entry);
+    this.bus.emit({ type: 'task.transcript', taskId, attempt, entry });
+    this.markLive(false);
+  }
+
   /** `release` is the shared-tree lock `launchReady` already holds for a shared-mode task. */
   private async launch(task: ResolvedTask, release?: () => void): Promise<void> {
     const state = this.run.tasks[task.id]!;
@@ -835,13 +894,17 @@ export class WorkflowScheduler {
     // conversation about the prompt the operator has just replaced, which is the one thing an edit must not
     // do. The previous attempt keeps its own `sessionId`; this attempt simply does not reuse it.
     const editPending = editPendingOnTask(state);
-    const answering = Boolean(state.userInput) && lastAttempt?.outcome === 'needs_input' && !editPending;
+    // A follow-up waiting to be carried is what makes this attempt an answer rather than a retry (§3.5).
+    // `cao resume --input` queues one too, so the question-answering case and the general one are one path
+    // and cannot drift: `queueFollowUp` already decided which session this attempt should continue.
+    const followUps = editPending ? [] : pendingFollowUps(state);
+    const answering = followUps.length > 0;
     const resumable = !editPending && (lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering);
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
     const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
     state.resumeSessionId = undefined;
-    // `answering`, not merely "an answer exists": the answer stays on the task so a later retry still has
-    // it, and an attempt that retries a failed answering attempt is a retry, not a second answer.
+    // `answering`, not merely "an answer exists": the text stays on the task so a later retry still has it,
+    // and an attempt that retries a failed answering attempt is a retry, not a second answer.
     const triggeredBy: TaskAttempt['triggeredBy'] = answering
       ? 'user_input'
       : lastAttempt
@@ -858,6 +921,9 @@ export class WorkflowScheduler {
     const revision = markRevisionsApplied(state, number);
     if (revision !== undefined) attempt.revision = revision;
     state.attempts.push(attempt);
+    // The follow-ups this attempt carries stop being queued the moment it exists: a crash between here and
+    // the worker starting must not deliver the same message twice on the retry.
+    for (const delivery of markFollowUpsDelivered(state, number)) this.emitPrompted(task.id, number, delivery);
     state.currentAttempt = number;
     state.retryNotBefore = undefined;
     state.startedAt ??= attempt.startedAt;
@@ -897,7 +963,7 @@ export class WorkflowScheduler {
       for (const w of ctx.warnings) this.bus.emit({ type: 'workflow.warning', code: 'context', message: w, taskId: task.id });
       const prompt = resumeSessionId
         ? answering
-          ? answerPrompt(attemptQuestion(lastAttempt), state.userInput!)
+          ? followUpPrompt(attemptQuestion(lastAttempt), followUpText(state) ?? '')
           : nudge
             ? nudgePrompt(lastAttempt)
             : resumePrompt(lastAttempt)
@@ -916,6 +982,10 @@ export class WorkflowScheduler {
         number,
         nudge ? `asking ${task.agent} for the completion object` : resumeSessionId ? `${answering ? 'answering the' : 'resuming'} ${task.agent} session` : `starting ${task.agent}`,
       );
+      // The operator's own words in the live transcript, next to the worker's (§3.5, `[D26]`). The record
+      // that survives a reload is the `PromptDelivery` on the task and this attempt's `prompt.md`, which is
+      // where the text really went; the attempt's own events.jsonl belongs to the runner.
+      for (const delivery of followUps) this.noteUser(task.id, number, delivery);
       const promise = runner.run(
         {
           runId: this.run.runId,
@@ -1378,40 +1448,52 @@ export class WorkflowScheduler {
   }
 
   /**
-   * `prompt` with `mode: 'steer'` (§3.5, `[D23]`): hand the text to the live channel of the attempt that is
-   * running, and record what the transport said about it.
+   * `prompt` (§3.5, `[D23]`-`[D26]`): the whole matrix, from one command.
+   *
+   * The mode is chosen from the task's state and whether the attempt in front of it has a live channel, and
+   * a mode the caller *named* is honoured only where that row agrees — asking to steer a task that has
+   * already stopped is a different thing done to a different attempt, and doing it silently is how an
+   * operator loses the session they meant to continue.
+   */
+  private async decidePrompt(command: Extract<ControlCommand, { kind: 'prompt' }>, envelope: ControlEnvelope): Promise<ControlDecision> {
+    const { taskId } = command;
+    const state = this.run.tasks[taskId];
+    const task = this.taskDefs.get(taskId);
+    if (!state || !task) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    const entry = this.inflight.get(taskId);
+    const channel = entry?.kind === 'task' ? entry.channel : undefined;
+    const chosen = selectPromptMode(state, { hasChannel: Boolean(channel), requested: command.mode });
+    if (!chosen.mode) return { status: 'rejected', reason: chosen.reason ?? steerRejection(state, Boolean(channel))! };
+    if (chosen.mode === 'steer') return this.decideSteer(command, envelope, state, entry!.attempt, channel!);
+    return this.decideFollowUp(command, envelope, task, state, chosen.mode === 'stopAndContinue');
+  }
+
+  /**
+   * The steer row: hand the text to the live channel of the attempt that is running, and record what the
+   * transport said about it.
    *
    * The send happens here, inside the loop, rather than in `apply`, because the ack is the answer: an
    * operator is told `accepted`, `queued` or the server's own refusal, and none of those is knowable before
    * the message has actually been offered to the worker. Nothing about the run's state changes either way,
    * so there is nothing for a crash between the two to leave half-done - `apply` only writes the record.
-   *
-   * The other two modes of the matrix (follow-up, stop-and-continue) start a new attempt rather than speak
-   * to a running one, and are not wired yet.
    */
-  private async decidePrompt(command: Extract<ControlCommand, { kind: 'prompt' }>, envelope: ControlEnvelope): Promise<ControlDecision> {
-    const { taskId, mode } = command;
-    const state = this.run.tasks[taskId];
-    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
-    if (mode !== 'steer') {
-      return {
-        status: 'rejected',
-        reason: `Only steering a running worker is wired up so far; a ${mode === 'followUp' ? 'follow-up' : 'stop-and-continue'} for "${taskId}" is not. Steer it while it runs, or restart it with "cao task restart ${taskId}".`,
-      };
-    }
-    const entry = this.inflight.get(taskId);
-    const channel = entry?.kind === 'task' ? entry.channel : undefined;
-    const rejection = steerRejection(state, Boolean(channel));
-    if (rejection) return { status: 'rejected', reason: rejection };
-    const attempt = state.attempts.find((a) => a.number === entry!.attempt);
+  private async decideSteer(
+    command: Extract<ControlCommand, { kind: 'prompt' }>,
+    envelope: ControlEnvelope,
+    state: TaskRunState,
+    attemptNumber: number,
+    channel: AttemptChannel,
+  ): Promise<ControlDecision> {
+    const taskId = command.taskId;
+    const attempt = state.attempts.find((a) => a.number === attemptNumber);
     if (!attempt || attempt.endedAt) {
       return { status: 'rejected', reason: `The worker of "${taskId}" has finished its turn, so there is nothing left to steer.` };
     }
 
-    const delivery = newDelivery({ source: envelope.source, mode, text: command.text });
+    const delivery = newDelivery({ source: envelope.source, mode: 'steer', text: command.text });
     // No `turnId` from here: the attempt's own runner is the only thing that knows which turn is running,
     // and a scheduler that guessed would refuse a perfectly good steer over a stale number.
-    applyDelivery(delivery, await channel!.steer(command.text, { id: delivery.id }));
+    applyDelivery(delivery, await channel.steer(command.text, { id: delivery.id }));
     const reason = deliveryReason(taskId, delivery);
     // A transport that refused took nothing: there is no delivery to record, and the ack carries its words.
     if (delivery.state === 'rejected' || delivery.state === 'failed') return { status: 'rejected', reason };
@@ -1424,6 +1506,98 @@ export class WorkflowScheduler {
         await this.persist();
       },
     };
+  }
+
+  /**
+   * The follow-up and stop-and-continue rows (§3.5, `[D25]`): the message becomes the task's **next**
+   * attempt, continuing the session it last reported where that is possible.
+   *
+   * Stop-and-continue is the same thing with a cancel in front of it, and it is one command with one ack:
+   * the worker is aborted here rather than through `decideCancelTask`, because a second ack for the stop
+   * would be a second answer to a request that only asked once. The restart is owed the moment the worker's
+   * death lands, which `restartAfterCancel` is already how the editor says it.
+   *
+   * The session is checked against the disk before anything is stopped. A session that is gone is refused
+   * with the fresh-session option spelled out, never swapped silently for a new one `[D25]`.
+   */
+  private async decideFollowUp(
+    command: Extract<ControlCommand, { kind: 'prompt' }>,
+    envelope: ControlEnvelope,
+    task: ResolvedTask,
+    state: TaskRunState,
+    stopFirst: boolean,
+  ): Promise<ControlDecision> {
+    const taskId = command.taskId;
+    const mode = stopFirst ? 'stopAndContinue' : 'followUp';
+    if (this.stop) {
+      return {
+        status: 'rejected',
+        reason: `The run is stopping, so "${taskId}" cannot be started again with your message. Send it once the run has ended: "cao task prompt ${this.run.runId} ${taskId} --message ..." resumes the run to carry it.`,
+      };
+    }
+    if (this.pendingMerges.has(taskId) || this.inflight.get(taskId)?.kind === 'merge') {
+      return { status: 'rejected', reason: `"${taskId}" is merging its work back into the shared tree; send the follow-up once that has finished.` };
+    }
+    const entry = stopFirst ? this.inflight.get(taskId) : undefined;
+    if (stopFirst) {
+      const attempt = entry ? state.attempts.find((a) => a.number === entry.attempt) : undefined;
+      if (!entry || !attempt || attempt.endedAt) {
+        return { status: 'rejected', reason: `The worker of "${taskId}" has already finished; send a follow-up once the task is showing as finished.` };
+      }
+    } else if (this.inflight.has(taskId)) {
+      return { status: 'rejected', reason: `Task "${taskId}" still has an attempt in flight, so a follow-up has nothing to start. Stop it first, or send the message with --stop-and-continue.` };
+    }
+
+    const session = await checkFollowUpSession(task, state, { probe: this.sessionProbe, freshSession: command.freshSession === true });
+    if (session.rejection) return { status: 'rejected', reason: session.rejection };
+
+    const continues = session.sessionId
+      ? `Its next attempt continues session ${session.sessionId}.`
+      : 'Its next attempt starts a fresh session with your message in the prompt.';
+    const reason = stopFirst
+      ? `Stopping the worker of "${taskId}" and continuing with your message. ${continues}`
+      : `Starting "${taskId}" again with your message. ${continues}`;
+
+    return {
+      status: 'accepted',
+      reason,
+      apply: async () => {
+        const delivery = queueFollowUp(state, { source: envelope.source, mode, text: command.text, sessionId: session.sessionId });
+        this.emitPrompted(taskId, state.attempts[state.attempts.length - 1]?.number ?? 0, delivery);
+        if (stopFirst) this.cancelForFollowUp(taskId);
+        await this.persist();
+        if (!stopFirst) await this.startFollowUp(taskId);
+      },
+    };
+  }
+
+  /** Abort the worker of a task being stopped-and-continued, denying whatever it was asking a human first. */
+  private cancelForFollowUp(taskId: string): void {
+    const entry = this.inflight.get(taskId);
+    if (!entry) return;
+    this.cancelRequests.add(taskId);
+    this.restartAfterCancel.add(taskId);
+    this.settleTaskInteractions(taskId, 'The task was stopped to be continued with a follow-up');
+    entry.abort.abort(new Error(`task "${taskId}" was stopped to continue with a follow-up`));
+  }
+
+  /**
+   * Put a stopped task back in the queue so its follow-up gets an attempt.
+   *
+   * `applyRestart` in all but name, except that `needs_input` is not a terminal state and so is not
+   * restartable — and it is the state most follow-ups are sent to. The retry window is reset for the same
+   * reason a restart resets it: a task that has spent its retries must still be able to run the attempt the
+   * operator just asked for.
+   */
+  private async startFollowUp(taskId: string): Promise<void> {
+    const state = this.run.tasks[taskId];
+    if (!state || this.stop || this.inflight.has(taskId)) return;
+    state.blockedBy = undefined;
+    state.endedAt = undefined;
+    state.retryNotBefore = undefined;
+    state.retryWindowStart = (state.attempts[state.attempts.length - 1]?.number ?? 0) + 1;
+    this.setState(state, 'pending', undefined, 'a follow-up was sent by the operator');
+    await this.persist();
   }
 
   /**
@@ -1809,7 +1983,9 @@ export class WorkflowScheduler {
     if (TERMINAL_TASK_STATES.has(state.state)) return;
     state.endedAt = nowIso();
     state.retryNotBefore = undefined;
-    state.resumeSessionId = undefined;
+    // ...unless a follow-up is waiting for this task: it has already chosen the session its attempt
+    // continues (§3.5), and clearing it here is what would turn a stop-and-continue into a fresh start.
+    if (!pendingFollowUps(state).length) state.resumeSessionId = undefined;
     this.setState(state, 'cancelled', 'user_interrupt', 'cancelled by the operator');
     this.bus.emit({ type: 'task.cancelled', taskId: task.id, attempt: attempt.number, reason: 'user_interrupt' });
     await this.persist();
@@ -1940,7 +2116,7 @@ export class WorkflowScheduler {
         return;
       }
     }
-    state.resumeSessionId = undefined;
+    if (!pendingFollowUps(state).length) state.resumeSessionId = undefined;
 
     const failedAttempts = budget.counted;
     const retriesLeft = task.retry.attempts - (failedAttempts - 1);

@@ -63,6 +63,10 @@ async function steerOneTask(repo: string, yaml: string, environment: Record<stri
 }
 
 const CLAUDE_YAML = 'name: steer\nexecution:\n  workspaceStrategy: shared\n  maxConcurrency: 2\n  allowUnsafeSharedParallel: true\ntasks:\n  - id: a\n    parallelGroup: g\n    prompt: do it\n';
+/** `a` fails once and `b` steers forever, so the run stays alive with `a` in a followable state. */
+const FOLLOW_UP_YAML =
+  'name: follow-up\nexecution:\n  workspaceStrategy: shared\n  maxConcurrency: 2\n  allowUnsafeSharedParallel: true\ntasks:\n  - id: a\n    parallelGroup: g\n    retries: 0\n    onFailure: continue\n    prompt: do it\n  - id: b\n    parallelGroup: g\n    prompt: hold\n';
+
 const CODEX_YAML = 'name: steer\nagent: codex\nexecution:\n  workspaceStrategy: shared\ncodex:\n  transport: appServer\n  approvals: host\ntasks:\n  - id: a\n    model: fake-codex\n    prompt: do it\n';
 
 const HAS_GIT = await gitAvailable('prompting end-to-end suite');
@@ -111,6 +115,49 @@ describe.skipIf(!HAS_GIT)('prompting a running task through the controller', () 
     expect(lines).toHaveLength(2);
     for (const line of lines) expect(line).not.toContain(MESSAGE);
   });
+
+  it('carries a follow-up into the next attempt, resuming the session the task reported', async () => {
+    const repo = await tmpGitRepo('cao-followup-claude-');
+    const configPath = path.join(repo, 'workflow.yaml');
+    // `a` fails its first attempt and `b` holds the run open, so the follow-up is taken by a live run.
+    await fs.writeFile(configPath, `${FOLLOW_UP_YAML}`, 'utf8');
+    const prepared = await prepareWorkflow(configPath, { launchDirectory: repo, claudeCommand: FAKE_CLAUDE });
+    requireValid(prepared);
+    const store = new FileRunStore(prepared.workflow.repositoryRoot);
+    const created = await createRun(store, { workflow: prepared.workflow, rawConfig: prepared.loaded.raw, selection: {} });
+    const runtime = createRuntime({
+      run: created,
+      environment: {
+        FAKE_CLAUDE_TASK_MODES: JSON.stringify({ b: 'steer' }),
+        FAKE_CLAUDE_FAIL_UNTIL_ATTEMPT: JSON.stringify({ a: 2 }),
+        FAKE_CLAUDE_STEER_WAIT_MS: '10000',
+        // The fake CLI files no transcript anywhere, so `[D25]`'s check is pointed at a directory with no
+        // `projects/` in it: the probe cannot tell, which is never a reason to refuse a follow-up.
+        CLAUDE_CONFIG_DIR: path.join(repo, '.claude'),
+      },
+      secrets: [],
+      logger: silentLogger,
+      interactionHandler: async () => ({ kind: 'deny', message: 'no' }),
+    });
+    const finished = runtime.scheduler.execute();
+    await waitFor(() => created.tasks['a']?.state === 'failed');
+    const session = created.tasks['a']!.attempts[0]!.sessionId ?? created.tasks['a']!.attempts[0]!.usage?.sessionId;
+    expect(session).toBeTruthy();
+
+    const ack = await runtime.controller.submit({ kind: 'prompt', taskId: 'a', text: MESSAGE, mode: 'followUp' }, controlEnvelope('tui'));
+    expect(ack).toMatchObject({ status: 'accepted', reason: expect.stringContaining(`continues session ${session}`) });
+
+    await waitFor(() => created.tasks['a']!.attempts.length === 2 && Boolean(created.tasks['a']!.attempts[1]!.endedAt), 20_000);
+    const second = created.tasks['a']!.attempts[1]!;
+    // The real CLI was launched with `--resume <session>` and the operator's words in its prompt.
+    expect(second).toMatchObject({ triggeredBy: 'user_input', resumedSessionId: session });
+    const promptFile = await fs.readFile(path.join(store.paths.attemptDir(created.runId, 'a', 2), 'prompt.md'), 'utf8');
+    expect(promptFile).toContain(MESSAGE);
+    expect(created.tasks['a']!.followUps![0]).toMatchObject({ mode: 'followUp', state: 'delivered', carriedByAttempt: 2, source: 'tui' });
+
+    await runtime.controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli'));
+    await finished;
+  }, 40_000);
 
   it('refuses a follow-up to a task that has already succeeded, which is immutable', async () => {
     const repo = await tmpGitRepo('cao-steer-done-');

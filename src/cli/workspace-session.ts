@@ -430,6 +430,8 @@ export function resumeRequestOptions(request: ResumeRequest): Partial<StartRunti
       return { from: [request.taskId] };
     case 'answer':
       return { task: [request.taskId], input: request.text };
+    case 'followUp':
+      return { task: [request.taskId], followUp: { taskId: request.taskId, text: request.text, source: 'tui', freshSession: request.freshSession } };
     case 'approve':
       return { approve: [request.taskId] };
     case 'reject':

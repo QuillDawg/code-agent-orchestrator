@@ -234,6 +234,32 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   `queued` until the next turn begins. The run log gets a `task.prompted` line carrying the state and the
   transport and **never the message**. Sending one is not wired to a command yet: `cao task prompt` and the
   Session composer are the next change.
+- **`cao task prompt [run] <task>` and the Session composer.** A message can now be sent to a task from the
+  command line or from the workspace, and which of three things that means is decided from the task's state
+  and from whether its worker has a live channel — the command prints the one it chose. A running worker
+  with a channel is **steered**; one without (headless Claude, `codex exec`) is **stopped and continued**,
+  one command with one answer; a task that has stopped (`failed`, `blocked`, `cancelled`, `needs_input`)
+  gets a **follow-up**: a new attempt that continues the session the task last reported where
+  `retry.resumeSession` allows and the agent gave one, and otherwise carries the message in a fresh prompt
+  under `# User Input`. `--steer`, `--follow-up` and `--stop-and-continue` name a mode and are refused where
+  the task's state does not offer it. A task waiting on a permission prompt is told to answer that first,
+  one that has not started is pointed at `cao task edit`, and a succeeded or skipped task is immutable.
+  **A session that is no longer on disk is a refusal, not a silent restart**: the answer names
+  `--fresh-session`, which starts the task from the top with the message in its prompt. Every message is
+  recorded on the run with its mode, transport, state and reason, and the run log gets a `task.prompted`
+  line carrying all of that and never the text. Routes are the same as `cao task edit`: the controller in
+  this process, a request file for another one, and — with nobody executing the run — a resume that carries
+  the follow-up (the workspace when the terminal is interactive, plain output otherwise). A run started by
+  this `cao` now advertises `prompt` among its capabilities, so a second terminal's request is answered.
+- **The Session panel and its composer.** The Session tab now shows the selected task's identity (agent,
+  model as reported, session id, attempt, revision), its transcript in the same renderer `cao logs` uses,
+  what it is waiting on, the list of messages already sent to it with each one's state, and a multiline
+  composer. `Enter` opens it and `Enter` sends; the header says which mode the message will use and, for a
+  follow-up, which session it resumes. `Ctrl+J` or a trailing `\` before `Enter` inserts a newline
+  (`Shift+Enter` too, where the terminal reports it), `Ctrl+O` opens the draft in `$VISUAL`/`$EDITOR`,
+  `Ctrl+Z` undoes the last edit, `Ctrl+W` deletes the word before the cursor, and `Esc` closes it keeping
+  the draft until you quit. A paste arrives whole and one over 20 lines is shown as `[pasted N lines]` with
+  every byte kept. Inside the composer every printable key is text, so `q` types a `q`.
 
 ### Changed
 
@@ -256,6 +282,12 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 - A control request that names a task is now aimed at that task: a `stop` request carrying a `taskId`
   cancels that one attempt instead of stopping the whole run. `stop.json` and a `stop` request with no task
   are the run-level stop they have always been.
+- **`Esc` in the workspace no longer drops focus back to the task list from inside the composer.** Ink's
+  focus manager clears the active panel on `Esc`; the composer is now taken out of that manager while it is
+  open, as an overlay already was, so `Esc` closes the composer and leaves the panel it was in focused.
+  Nothing else about `Esc` changes.
+- The Session tab's placeholder is gone, because the panel is filled in. `?` and the footer list the
+  composer's keys under it.
 
 - **The workspace stays open when the run ends.** `cao run` and `cao resume` used to leave 50 ms after the
   run finished, which meant the screen showing a failure was the screen that disappeared. The workspace now

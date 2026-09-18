@@ -581,9 +581,11 @@ the run's outcome, then a task table (state, elapsed, agent, context size, cost,
 **activity column** showing the tool, command or line of prose a worker is on right now — after 30 seconds
 of silence the cell gains `… 2m idle`, so a thinking worker is distinguishable from a stuck one), then the
 selected task's full detail. `E` on any unfinished task opens the editor described under
-[Editing an unfinished task](#editing-an-unfinished-task). The rest of Session, and Logs, are placeholders
-in this beta; each says what to use instead (`F` for the transcript, `cao task <id>`, `cao logs`) until they
-arrive.
+[Editing an unfinished task](#editing-an-unfinished-task). **Session** shows the selected task's identity
+(agent, model as reported, session id, attempt, revision), its transcript, anything it is waiting on, every
+message you have sent it, and the composer described under [Prompting a task](#prompting-a-task). Logs and
+Diagnostics are placeholders in this beta; each says what to use instead (`F` for the transcript,
+`cao logs`) until they arrive.
 
 When a worker needs you, a prompt appears in the workspace (it reopens itself if minimised, and the terminal
 bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny with a reason. Questions list
@@ -631,9 +633,9 @@ has ended `Q` leaves at once, with that run's exit code; watching another termin
 the window. See [above](#the-workspace-stays-open-when-the-run-ends) for the ended-run actions (`S` `R`
 `>` `A` `X`) and the observer's controls (`S` `K` `R`).
 
-`Ctrl+C`, `Ctrl+P`, `Ctrl+J` for a newline in the answer field and the prompt, and `Ctrl+O` for the prompt
-in `$VISUAL`/`$EDITOR` are the chords the workspace reads; the transcript viewer adds `Ctrl+A` to scroll up.
-Every other `Ctrl`+key is left to the terminal.
+`Ctrl+C`, `Ctrl+P`, `Ctrl+J` for a newline in the answer field, the prompt and the composer, `Ctrl+O` for
+any of the three in `$VISUAL`/`$EDITOR`, and `Ctrl+Z`/`Ctrl+W` in the composer are the chords the workspace
+reads; the transcript viewer adds `Ctrl+A` to scroll up. Every other `Ctrl`+key is left to the terminal.
 Below 100 columns the sidebar collapses to a one-line task strip, and the footer gives up its freshness
 chip first, then its quota chip, then the focused panel's own keys — `? help` and the way out survive
 last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than
@@ -651,6 +653,9 @@ stopping the run and without editing the workflow file.
 cao task edit review --prompt-file better-prompt.md    # the resolved prompt; context is still automatic
 cao task edit review --model claude-opus-5 --restart   # stop the worker, apply, start it again
 cao task edit 002 review --retries 3 --timeout 90m
+cao task prompt review --message "also update the changelog"   # the mode the task allows, printed
+cao task prompt review --file notes.md --stop-and-continue     # stop the worker, start again with it
+cao task prompt review --message "start over" --fresh-session  # do not continue the old session
 ```
 
 What is edited is the **resolved** task: the prompt with defaults, templates and `foreach` already applied,
@@ -688,6 +693,46 @@ the validator's message inline under the row that caused it, the context section
 prompt, and `Ctrl+O` to write the prompt in `$VISUAL`/`$EDITOR` (the workspace steps off the alternate
 screen and waits for it). `Enter` on **Save** sends the edit, asking "restart now?" first when the task is
 running or waiting. On a succeeded or skipped task `E` says why there is nothing to edit.
+
+### Prompting a task
+
+```bash
+cao task prompt review --message "also update the changelog"     # the mode the task allows, printed
+cao task prompt review --file notes.md --steer                   # only where the worker has a live channel
+cao task prompt 002 review --message "try -O2" --stop-and-continue
+cao task prompt review --message "start over" --fresh-session    # do not continue the old session
+```
+
+What "prompt" means depends on the task, and the command prints which of the three it chose:
+
+| The task is | What happens |
+|---|---|
+| running, with a steerable worker (Claude in `ask` mode, Codex app-server) | **steer** — the message goes into the running session and is taken up at the end of the current turn |
+| running, with no live channel (headless Claude, `codex exec`) | **stop and continue** — the attempt is stopped and the task starts again carrying the message |
+| `failed`, `blocked`, `cancelled` or `needs_input` | **follow-up** — a new attempt, continuing the session the task reported where it can, else with the message under `# User Input` |
+| waiting on a permission prompt or a question | nothing — answer that first; a prompt and an answer are not the same thing |
+| `pending` or `ready` | nothing — edit its prompt instead |
+| `success` or `skipped` | nothing — immutable; add a task or start a new run |
+
+`--steer`, `--follow-up` and `--stop-and-continue` name a mode and are refused where the task does not offer
+it, rather than quietly doing the other thing. If the session a follow-up would continue is no longer on
+disk, the command refuses and offers `--fresh-session` instead of resuming into a worker that has silently
+forgotten everything. `cao resume --task <id> --input "<answer>"` is the same follow-up path and behaves
+exactly as it always has.
+
+Every message is recorded on the run — mode, transport, state and reason — and the run's `events.jsonl`
+gets a `task.prompted` line carrying all of that and never the text.
+
+In the workspace the same thing is the **composer** at the bottom of the Session panel:
+
+- `Enter` opens it; `Enter` sends. The header says which mode will be used and, for a follow-up, which
+  session it resumes.
+- `Ctrl+J`, or a trailing `\` then `Enter`, inserts a newline (`Shift+Enter` too, where the terminal
+  supports it).
+- `Ctrl+O` opens the draft in `$VISUAL`/`$EDITOR`; `Ctrl+Z` undoes the last edit; `Ctrl+W` deletes the word
+  before the cursor; `Esc` closes it and keeps the draft until you quit.
+- A paste arrives whole; one over 20 lines is shown as `[pasted N lines]` with every byte kept.
+- Inside the composer every printable key is text, so `q` types a `q`.
 
 <details>
 <summary><strong>Transcript viewer keys</strong> (<code>F</code> in the workspace, or <code>cao logs --follow</code>)</summary>
@@ -825,6 +870,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao peek [run] <task>` | What a worker is doing right now, with context size, cost and files. `--follow`, `--json` |
 | `cao task [run] <task>` | Everything recorded about one task: status, model, attempts, PID, cwd, branch, dependencies, usage, changed files, interactions. `--json`. This is `cao task show`, the default subcommand; a task whose own name is a subcommand is reached with `cao task show <name>` |
 | `cao task stop\|restart [run] <task>` | Cancel the attempt a task is running, or run a finished, unsuccessful task again. Applied by the process that owns the run: directly when that is this one, otherwise through a request it answers. `--wait <seconds>` (default 30), `--repository <dir>` |
+| `cao task prompt [run] <task>` | Say something to a task: steer the worker it is running, stop and continue it, or start a stopped task again carrying the message. Without a mode flag the one the task's state allows is chosen and printed. `--message <text>` or `--file <path>`, `--steer`, `--follow-up`, `--stop-and-continue`, `--fresh-session`, `--wait <seconds>` (default 30), `--no-tui`, `--repository <dir>`. A session that is no longer on disk is refused rather than silently replaced; with nobody executing the run a follow-up resumes it to carry the message |
 | `cao task edit [run] <task>` | Change an unfinished task's prompt, agent, model, effort, timeout, retries or budget. Validated before anything stops. `--prompt <text>` or `--prompt-file <path>`, `--agent claude\|codex`, `--model <id>`, `--effort <level>`, `--timeout <duration>`, `--retries <n>`, `--budget <usd>`, `--restart`, `--wait <seconds>` (default 30), `--repository <dir>`. With nobody executing the run the edit is written into it and the resume that applies it is named; `--restart` is refused there |
 | `cao diff [run] [task]` | What a task changed, as a unified diff `git apply` accepts. `--stat`, `--name-only`, `--file <path>`, `--attempt N`, `--json` |
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |

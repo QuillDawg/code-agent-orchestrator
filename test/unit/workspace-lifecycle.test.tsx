@@ -73,7 +73,7 @@ function endedRun(tasks: Record<string, TaskShape>, state = 'failed') {
   };
 }
 
-const controllerStub = { peek: () => [], transcript: () => [], capturedDiff: async () => null, attemptTranscript: async () => [], readReport: async () => null };
+const controllerStub = { peek: () => [], transcript: () => [], capturedDiff: async () => null, steerable: () => false, attemptTranscript: async () => [], readReport: async () => null };
 const shared = (): DashboardShared => ({ queue: [], listeners: new Set(), notify: () => undefined, remove: () => false });
 
 interface MountOptions {

@@ -191,7 +191,20 @@ export interface TaskRunState {
   startedAt?: string;
   endedAt?: string;
   lastActivity?: string;
+  /**
+   * The text of every follow-up this task has been sent, oldest first, joined by a blank line.
+   *
+   * Derived from `followUps` and kept because it is what the *prompt* carries: a fresh attempt puts it under
+   * `# User Input`, and it outlives the delivery that queued it so a later retry still has the operator's
+   * words. Written by `queueFollowUp`; cleared when the task succeeds.
+   */
   userInput?: string;
+  /**
+   * Every follow-up queued for this task (§3.5, `[D25]`), oldest first: `queued` until an attempt carries
+   * it, then `delivered` with `carriedByAttempt` set. A steer is recorded on the attempt it was sent into
+   * (`TaskAttempt.prompts`) instead, because it never waits for one.
+   */
+  followUps?: PromptDelivery[];
   approval?: { decision: 'approved' | 'rejected'; at: string; note?: string };
   /** Set while state === 'waiting': what the worker is waiting on. */
   pendingInteraction?: InteractionRecord;

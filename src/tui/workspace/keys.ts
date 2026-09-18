@@ -171,11 +171,29 @@ const reportKeys = (): KeyHelp[] => [
 
 const placeholderKeys = (): KeyHelp[] => [{ keys: LR(), what: 'another tab; this one is not filled in yet', short: 'tab' }];
 
-/** What the Session tab answers today: the editor, and the rest of it in stage 2's prompting task. */
+/** The Session tab: the transcript, what has been sent, and the composer (§3.5). */
 const sessionKeys = (): KeyHelp[] => [
+  { keys: 'Enter', what: 'open the composer; the header says which mode the message will use', short: 'compose' },
   { keys: 'E', what: 'edit the selected task (the form opens over this panel)', short: 'edit' },
-  { keys: LR(), what: 'another tab; the transcript and the composer are not filled in yet', short: 'tab' },
+  { keys: 'F', what: "the full transcript in the viewer, with earlier attempts", short: 'transcript' },
+  { keys: LR(), what: 'another tab', short: 'tab' },
+  ...composerKeys(),
 ];
+
+/**
+ * The composer's keys (§3.2, `[D15]`), listed under the Session panel because `?` cannot be pressed from
+ * inside the composer — in a field every printable key is text, `?` included.
+ */
+export function composerKeys(): KeyHelp[] {
+  return [
+    { keys: 'Enter', what: 'send the message', short: 'send' },
+    { keys: 'Ctrl+J', what: 'a newline (a trailing backslash then Enter does the same; Shift+Enter where the terminal reports it)' },
+    { keys: 'Ctrl+O', what: 'write the message in $VISUAL / $EDITOR; the workspace waits for it' },
+    { keys: `Ctrl+Z / Ctrl+W`, what: 'undo the last edit / delete the word before the cursor' },
+    { keys: `${LR()} / ${UD()} / Home / End`, what: 'move the cursor; Ctrl with an arrow moves by word' },
+    { keys: 'Esc', what: 'close the composer; the draft is kept until you quit' },
+  ];
+}
 
 const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
   ({

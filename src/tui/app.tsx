@@ -19,7 +19,7 @@
  *   and the controller's answer becomes the notice.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { render, Box, Text, useInput, useApp, useFocus, useFocusManager, useIsScreenReaderEnabled, useWindowSize, type Instance, type Key } from 'ink';
+import { render, Box, Text, useInput, usePaste, useApp, useFocus, useFocusManager, useIsScreenReaderEnabled, useWindowSize, type Instance, type Key } from 'ink';
 import { useStore } from 'zustand';
 import {
   type WorkflowRun,
@@ -82,6 +82,30 @@ import { Overview } from './workspace/overview.js';
 import { AnswerField, DiagnosticsPanel, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
 import { EDIT_CURSOR, EDIT_ROWS, EditForm, editDraftKey, initialDrafts, SAVE_ROW, validateDraft } from './workspace/edit.js';
 import { editPromptExternally } from './workspace/prompt-editor.js';
+import { SessionPanel, composerDraftKey } from './workspace/session.js';
+import { promptRow } from '../workflow/control/prompt.js';
+import {
+  backspace,
+  composerFromText,
+  composerText,
+  deleteForward,
+  deleteWordLeft,
+  insertNewline,
+  insertPaste,
+  insertText,
+  isEmpty,
+  moveDown,
+  moveEnd,
+  moveHome,
+  moveLeft,
+  moveRight,
+  moveUp,
+  replaceAll,
+  undo,
+  wordLeft,
+  wordRight,
+  type ComposerState,
+} from './composer.js';
 import { endedActionFor, endedActions } from './workspace/ended.js';
 import { leadTaskId } from './workspace/detail.js';
 import { answerElsewhere, observerActionFor, observerActions, pendingLines, type ObserverAction } from './workspace/observer.js';
@@ -189,6 +213,14 @@ const SHIFT_TAB_SS3 = 'OZ';
 /** What Ctrl+J is by the time `useInput` sees it: a line feed, named `enter`, with no `ctrl` flag (§3.2). */
 const LINE_FEED = '\n';
 
+/**
+ * How much transcript the Session panel asks the buffer for.
+ *
+ * A bound, not a row count: the panel renders far fewer than this, and the renderer wraps, so it asks for
+ * enough entries to fill a tall terminal and slices what it drew. `F` is still the way to read all of it.
+ */
+const SESSION_TRANSCRIPT_LINES = 60;
+
 function taskUsage(st: TaskRunState) {
   return addUsage(...st.attempts.map((a) => a.usage));
 }
@@ -255,6 +287,16 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const [usageSort, setUsageSort] = useState<'order' | 'cost'>('order');
   const [pastAttempt, setPastAttempt] = useState<{ taskId: string; attempt: number; entries: TranscriptEntry[] } | null>(null);
   const [report, setReport] = useState<string | null | undefined>(undefined);
+  /**
+   * The composer, when one is open (§3.5, `[D14]`).
+   *
+   * Held here rather than in the store because its cursor and undo stack are not something another panel
+   * has to agree about, and mirroring a hundred undo snapshots through a zustand set on every keystroke
+   * costs a re-render of the whole shell per character. The **text** is mirrored into the store's drafts,
+   * which is the part the spec asks to survive — a draft is kept per task and lost only on quit.
+   */
+  const [composer, setComposer] = useState<{ taskId: string; state: ComposerState } | null>(null);
+  const [sendingNote, setSendingNote] = useState<string | undefined>(undefined);
   const frame = useRef(0);
   const entriesCache = useRef<{ taskId: string; value: TranscriptEntry[] } | undefined>(undefined);
 
@@ -274,21 +316,31 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const { activeId, focus: focusPanel, focusPrevious, enableFocus, disableFocus } = useFocusManager();
   const focus: FocusRegion = activeId === 'tabs' ? 'tabs' : activeId === 'main' ? 'main' : 'tasks';
   const overlayOpen = overlay.kind !== 'none';
+  /**
+   * The composer holds the keys exactly as an overlay does (§3.2, `[D15]`), even though it is part of a
+   * panel rather than drawn over one: inside it Tab is text and Esc closes it.
+   *
+   * It has to be taken out of Ink's focus manager for both of those to be true. Ink answers Tab itself, and
+   * it clears the active focus on **Esc** — so without this the Esc that closes the composer also dropped
+   * the workspace back to the task list, and the panel the operator was in was gone when it reopened.
+   */
+  const composerHasFocus = Boolean(composer) && tab === 'session' && !overlayOpen;
+  const keysTaken = overlayOpen || composerHasFocus;
   // Ink's focus manager answers Tab itself, including inside a text field; while one is open the panels are
   // taken out of the cycle so a Tab in the palette cannot silently move the focus behind it.
   useEffect(() => {
-    if (overlayOpen) disableFocus();
+    if (keysTaken) disableFocus();
     else enableFocus();
-  }, [overlayOpen, enableFocus, disableFocus]);
+  }, [keysTaken, enableFocus, disableFocus]);
   const lastPanel = useRef<string>('tasks');
   useEffect(() => {
-    if (overlayOpen) return;
+    if (keysTaken) return;
     if (activeId) lastPanel.current = activeId;
     if (storedFocus !== focus) store.getState().setFocus(focus);
-  }, [activeId, focus, overlayOpen, storedFocus, store]);
+  }, [activeId, focus, keysTaken, storedFocus, store]);
   useEffect(() => {
-    if (!overlayOpen) focusPanel(lastPanel.current);
-  }, [overlayOpen, focusPanel]);
+    if (!keysTaken) focusPanel(lastPanel.current);
+  }, [keysTaken, focusPanel]);
 
   // ------------------------------------------------------------------ effects
   useEffect(() => {
@@ -454,6 +506,114 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     store.getState().setOverlay({ kind: 'edit', taskId: task.id });
   };
 
+  // ------------------------------------------------------------------ the composer (§3.5)
+
+  /** The mode a message to this task would use right now — the same table the scheduler decides with. */
+  const promptModeFor = (taskId: string) => promptRow(run.tasks[taskId]!, !observing && !props.finished && controller.steerable(taskId));
+
+  /** Put the composer's text where a re-render, a tab change and a resume can all find it again. */
+  const saveComposerDraft = (taskId: string, state: ComposerState): void => {
+    store.getState().setDraft(composerDraftKey(taskId), composerText(state));
+  };
+
+  const editComposer = (fn: (state: ComposerState) => ComposerState): void => {
+    setComposer((current) => {
+      if (!current) return current;
+      const next = fn(current.state);
+      saveComposerDraft(current.taskId, next);
+      return { taskId: current.taskId, state: next };
+    });
+  };
+
+  /**
+   * Open the composer over the Session panel, refusing where the matrix has nothing to offer (§3.5).
+   *
+   * The refusal is asked for here rather than after a message has been typed: a succeeded task is
+   * immutable `[D27]`, and finding that out on Enter is finding it out after the work of writing it.
+   */
+  const openComposer = (task: ResolvedTask | undefined): void => {
+    if (!task) return;
+    const state = run.tasks[task.id];
+    if (!state) return;
+    const row = promptModeFor(task.id);
+    if (!row.mode) {
+      setNotice(row.reason ?? `There is nothing to send "${task.id}".`);
+      return;
+    }
+    setSendingNote(undefined);
+    setComposer({ taskId: task.id, state: composerFromText(store.getState().drafts[composerDraftKey(task.id)] ?? '') });
+  };
+
+  const closeComposer = (): void => {
+    setComposer((current) => {
+      if (current) saveComposerDraft(current.taskId, current.state);
+      return null;
+    });
+  };
+
+  /**
+   * Send what the composer holds (§3.5).
+   *
+   * On a live run this is one controller command and its ack is the answer. On an ended one there is no
+   * scheduler to take it, so a follow-up becomes the resume that carries it — the same `startRuntime` path
+   * every other ended-state action uses (§2.4, `[D36]`), and the only way a message reaches a run that has
+   * already let go of its lock.
+   */
+  const submitPrompt = (taskId: string, text: string): void => {
+    const state = run.tasks[taskId];
+    if (!state) return;
+    if (observing) {
+      setNotice(`This window is watching ${props.observer?.ownerPid !== undefined ? `pid ${props.observer.ownerPid}` : 'another process'}; send the message from the terminal that owns the run, or with "cao task prompt ${taskId} --message ...".`);
+      return;
+    }
+    const row = promptModeFor(taskId);
+    if (!row.mode) {
+      setNotice(row.reason ?? `There is nothing to send "${taskId}".`);
+      return;
+    }
+    if (props.finished || controller.ended) {
+      if (row.mode !== 'followUp' || !canResume) {
+        setNotice(`Run ${run.runId} has ended, so nothing is executing "${taskId}". Send the message with "cao task prompt ${taskId} --message ...", which resumes the run to carry it.`);
+        return;
+      }
+      store.getState().setDraft(composerDraftKey(taskId), '');
+      setComposer(null);
+      resume({ kind: 'followUp', taskId, text });
+      return;
+    }
+    const envelope = controlEnvelope('tui', { attempt: state.attempts[state.attempts.length - 1]?.number ?? 0 });
+    recordControl(envelope.id, `prompt ${taskId}`);
+    setSendingNote(`sending${glyph('ellipsis')}`);
+    void controller
+      .submit({ kind: 'prompt', taskId, text, mode: row.mode }, envelope)
+      .then((ack) => {
+        store.getState().settleControl(envelope.id, ack.status, ack.reason);
+        setSendingNote(ack.reason ?? ack.status);
+        setNotice(ack.reason ?? (ack.status === 'rejected' ? `"${taskId}" did not take the message.` : `Sent to "${taskId}".`));
+        // The draft is only cleared once the run has taken it: a rejection an operator has to act on must
+        // not also cost them what they wrote.
+        if (ack.status !== 'rejected') {
+          store.getState().setDraft(composerDraftKey(taskId), '');
+          setComposer((current) => (current?.taskId === taskId ? { taskId, state: composerFromText('') } : current));
+        }
+      })
+      .catch((err: unknown) => {
+        store.getState().settleControl(envelope.id, 'rejected', (err as Error).message);
+        setSendingNote(undefined);
+        setNotice(`Could not send to ${taskId}: ${(err as Error).message}`);
+      });
+  };
+
+  /** Ctrl+O in the composer: the draft in `$VISUAL`/`$EDITOR`, the same handover the task editor uses. */
+  const composeInEditor = (): void => {
+    const current = composer;
+    if (!current) return;
+    void editPromptExternally(composerText(current.state)).then((result) => {
+      if (result.text !== undefined) editComposer((state) => replaceAll(state, result.text!));
+      setNotice(result.notice);
+    });
+  };
+
   /** Send the form's edit to the controller and let its ack be the answer, exactly as `restart` does. */
   const submitEdit = (taskId: string, restartNow: boolean): void => {
     const task = tasks.find((t) => t.id === taskId);
@@ -606,6 +766,20 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
       ...(props.finished || observing ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
       ...(observing ? [] : [{ id: 'action:edit', label: 'Edit the selected task', hint: 'E', run: () => openEdit(selected) }]),
+      ...(observing
+        ? []
+        : [
+            {
+              id: 'action:prompt',
+              label: 'Send the selected task a message',
+              hint: 'Session tab, Enter',
+              run: () => {
+                store.getState().setTab('session');
+                focusPanel('main');
+                openComposer(selected);
+              },
+            },
+          ]),
       { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
       { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
       { id: 'action:quit', label: props.finished ? 'Quit the workspace' : 'Quit: stay, stop and quit, or plain output', hint: 'Q', run: requestQuit },
@@ -630,6 +804,96 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   // ------------------------------------------------------------------ keys
   const inWorkspace = view.kind === 'dashboard' && !pending;
+  // The composer owns the keys while it is up: inside it a printable key is text, whatever it means
+  // outside (§3.2, `[D15]`). Only Esc, Ctrl+P, Ctrl+O, Ctrl+J and Ctrl+C are chords there.
+  const composerOpen = composerHasFocus && inWorkspace;
+
+  /**
+   * Bracketed paste `[D16]`: the whole block arrives as one string and goes in verbatim.
+   *
+   * Only while the composer is up. Ink enables bracketed paste for as long as this hook is active, and a
+   * workspace that enabled it everywhere would change what every other panel's keys look like for the sake
+   * of one field.
+   */
+  usePaste((text) => editComposer((state) => insertPaste(state, text)), { isActive: composerOpen });
+
+  /**
+   * The composer's keys (§3.2, `[D15]`).
+   *
+   * Enter submits, Ctrl+J and a trailing backslash before Enter are the two newlines every terminal can
+   * type, and Shift+Enter is the third where the kitty protocol reports it — documented as a bonus, never
+   * required. Everything else printable is text.
+   */
+  const composerKey = (input: string, key: Key, open: { taskId: string; state: ComposerState }): void => {
+    if (key.ctrl && input === 'o') {
+      composeInEditor();
+      return;
+    }
+    if (key.escape) {
+      closeComposer();
+      return;
+    }
+    if (input === LINE_FEED || (key.return && key.shift)) {
+      editComposer(insertNewline);
+      return;
+    }
+    if (key.return) {
+      const line = open.state.lines[open.state.line] ?? '';
+      if (line.endsWith('\\')) {
+        // `\` then Enter: the backslash becomes the newline, as it does in the task editor and the answer
+        // field, so one habit works in all three.
+        editComposer((state) => insertNewline(backspace(state)));
+        return;
+      }
+      if (isEmpty(open.state)) {
+        setNotice('Type a message first, or press Esc to close the composer.');
+        return;
+      }
+      submitPrompt(open.taskId, composerText(open.state));
+      return;
+    }
+    if (key.ctrl && input === 'z') {
+      editComposer(undo);
+      return;
+    }
+    if (key.ctrl && input === 'w') {
+      editComposer(deleteWordLeft);
+      return;
+    }
+    if (key.backspace) {
+      editComposer(key.meta ? deleteWordLeft : backspace);
+      return;
+    }
+    if (key.delete) {
+      editComposer(deleteForward);
+      return;
+    }
+    if (key.leftArrow) {
+      editComposer(key.ctrl || key.meta ? wordLeft : moveLeft);
+      return;
+    }
+    if (key.rightArrow) {
+      editComposer(key.ctrl || key.meta ? wordRight : moveRight);
+      return;
+    }
+    if (key.upArrow) {
+      editComposer(moveUp);
+      return;
+    }
+    if (key.downArrow) {
+      editComposer(moveDown);
+      return;
+    }
+    if (key.home) {
+      editComposer(moveHome);
+      return;
+    }
+    if (key.end) {
+      editComposer(moveEnd);
+      return;
+    }
+    if (input && !key.ctrl && !key.meta && !key.tab) editComposer((state) => insertText(state, input));
+  };
   // The review view owns its own keys (Esc leaves the hunk pane before it leaves the view), so it is not here.
   const detailKeys = (view.kind === 'usage' || view.kind === 'detail') && !pending;
 
@@ -665,7 +929,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           store.getState().setListCursor('palette', 0, paletteEntries.length);
           store.getState().setOverlay({ kind: 'palette' });
         }
-      } else if (!overlayOpen && input === SHIFT_TAB_SS3 && !key.ctrl && !key.meta) focusPrevious();
+      } else if (!overlayOpen && !composerOpen && input === SHIFT_TAB_SS3 && !key.ctrl && !key.meta) focusPrevious();
     },
     { isActive: inWorkspace },
   );
@@ -816,6 +1080,12 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   useInput(
     (input, key) => {
       if (overlayOpen) return;
+      // Before the chord guard below: Ctrl+J and Ctrl+O are the composer's, and a `return` there would eat
+      // them. The composer answers every key it is given and nothing falls through to the panel.
+      if (composerOpen && composer) {
+        composerKey(input, key, composer);
+        return;
+      }
       const state = store.getState();
       // Ctrl+C is handled above and every other chord belongs to the terminal, not to this screen. Without
       // this line Ctrl+C also arrives here as a plain `c` and opens the Changes tab over the frame that was
@@ -867,7 +1137,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         else if (list === 'report') state.setListCursor('report', 10_000, 10_000);
         else state.setCursor(visible.length - 1);
       } else if (key.return) {
-        if (focus === 'tabs') focusPanel('main');
+        if (focus === 'main' && tab === 'session') openComposer(selected);
+        else if (focus === 'tabs') focusPanel('main');
         else {
           const waiting = tasks.find((t) => run.tasks[t.id]?.state === 'waiting');
           if (waiting && props.shared.queue.length) return; // the modal is about to show
@@ -1066,6 +1337,21 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             focused={focus === 'main'}
           />
         );
+      case 'session':
+        return (
+          <SessionPanel
+            task={selected ?? null}
+            state={selected ? (run.tasks[selected.id] ?? null) : null}
+            entries={selected ? controller.peek(selected.id, SESSION_TRANSCRIPT_LINES) : []}
+            hasChannel={Boolean(selected) && !observing && !props.finished && controller.steerable(selected!.id)}
+            composer={composer?.taskId === selected?.id ? (composer?.state ?? null) : null}
+            focused={composerOpen && composer?.taskId === selected?.id}
+            sending={sendingNote}
+            rows={layout.mainRows}
+            columns={layout.mainWidth}
+            theme={theme}
+          />
+        );
       case 'diagnostics':
         return <DiagnosticsPanel controls={controls} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
       default:
@@ -1141,7 +1427,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       </Box>
       <Footer
         hints={
-          overlayOpen
+          composerOpen
+            ? `Enter send   Ctrl+J newline   Ctrl+O $EDITOR   Ctrl+Z undo   Esc close`
+            : overlayOpen
             ? overlay.kind === 'answer'
               ? 'Enter send   Ctrl+J newline   Esc cancel'
               : overlay.kind === 'edit'
@@ -1151,7 +1439,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                 : `Esc close   ${glyph('up')}${glyph('down')} move   Enter choose`
             : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })
         }
-        always={overlayOpen ? undefined : alwaysHintCells(mode)}
+        always={overlayOpen || composerOpen ? undefined : alwaysHintCells(mode)}
         columns={columns}
         theme={theme}
         columnsShown={layout.footerColumns}

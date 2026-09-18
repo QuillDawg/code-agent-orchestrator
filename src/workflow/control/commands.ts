@@ -35,7 +35,8 @@ export type ControlCommand =
   /** Return a terminal non-success task to `pending` so the run picks it up again. */
   | { kind: 'restart'; taskId: string }
   | { kind: 'edit'; taskId: string; changes: TaskEdit; restart: boolean }
-  | { kind: 'prompt'; taskId: string; text: string; mode: PromptDeliveryMode }
+  /** §3.5. `freshSession` is the explicit half of `[D25]`: start over rather than continue the session. */
+  | { kind: 'prompt'; taskId: string; text: string; mode: PromptDeliveryMode; freshSession?: boolean }
   | { kind: 'approve'; taskId: string; note?: string }
   | { kind: 'reject'; taskId: string; note?: string }
   | { kind: 'answer'; taskId: string; interactionId: string; answer: InteractionAnswer };
@@ -146,7 +147,7 @@ export function commandForRequest(request: ControlRequest): RequestTranslation {
       const text = typeof request.text === 'string' ? request.text : '';
       if (text.trim() === '') return { ok: false, reason: 'A prompt request has to carry the text to deliver, and this one is empty.' };
       const mode = request.mode !== undefined && (PROMPT_DELIVERY_MODES as readonly string[]).includes(request.mode) ? request.mode : 'followUp';
-      return { ok: true, command: { kind: 'prompt', taskId, text, mode } };
+      return { ok: true, command: { kind: 'prompt', taskId, text, mode, ...(request.freshSession === true ? { freshSession: true } : {}) } };
     }
     case 'approve':
     case 'reject':

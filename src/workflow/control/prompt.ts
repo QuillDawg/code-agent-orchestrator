@@ -5,14 +5,23 @@
  * refused with. The mechanism lives behind `AttemptChannel` in the runners, and nothing here knows which
  * agent is on the other end — `transport` is the only thing a runner tells the orchestrator about itself.
  *
- * Mode selection across the whole §3.5 matrix (follow-ups, stop-and-continue) is not here yet: this stage
- * wires the transport half, and `steer` is the row that needs one.
+ * Mode selection across the whole §3.5 matrix lives here too (`promptRow`): one table, read by the CLI when
+ * no mode flag was given, by the composer's header, and by the scheduler when a mode was named and the row
+ * does not offer it.
  */
 import { ACTIVE_TASK_STATES, TERMINAL_TASK_STATES } from 'code-agent-orchestrator-protocol';
-import type { PromptDelivery, PromptDeliveryMode, TaskAttempt, TaskRunState } from 'code-agent-orchestrator-protocol';
+import type { PromptDelivery, PromptDeliveryMode, TaskAttempt, TaskRunState, TaskState } from 'code-agent-orchestrator-protocol';
 import type { SteerResult } from '../../runners/task-runner.js';
 import { ulid } from '../../util/ulid.js';
 import { nowIso } from '../../util/misc.js';
+
+/**
+ * The states a follow-up may be sent to (§3.5).
+ *
+ * `interrupted` is not among them because it is not a task state: a run interrupted by Ctrl+C lands its
+ * tasks as `cancelled`, which is.
+ */
+export const FOLLOW_UP_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled', 'needs_input']);
 
 /** How a follow-up reached (or failed to reach) a worker, with no live channel as an honest answer. */
 export const NO_TRANSPORT = 'none' satisfies PromptDelivery['transport'];
@@ -65,25 +74,81 @@ export function findDelivery(state: TaskRunState, id: string): { attempt: TaskAt
  * answer, not the scheduler's, and it comes back as `transport: 'none'`.
  */
 export function steerRejection(state: TaskRunState, hasChannel: boolean): string | undefined {
-  if (state.state === 'success' || state.state === 'skipped') {
-    return `Task "${state.id}" finished as ${state.state} and is immutable. Add a task or start a new run to take this further.`;
-  }
-  if (state.state === 'pending' || state.state === 'ready') {
-    return `Task "${state.id}" has not started, so there is no session to steer. Edit its prompt instead with "cao task edit ${state.id}".`;
-  }
-  if (TERMINAL_TASK_STATES.has(state.state)) {
+  if (TERMINAL_TASK_STATES.has(state.state) && state.state !== 'success' && state.state !== 'skipped') {
     return `Task "${state.id}" finished as ${state.state}, so there is no live session to steer. Send it a follow-up instead, which starts a new attempt.`;
   }
+  const row = promptRow(state, hasChannel);
+  if (row.reason) return row.reason;
+  if (row.mode === 'steer') return undefined;
+  return selectPromptMode(state, { hasChannel, requested: 'steer' }).reason;
+}
+
+/**
+ * What the §3.5 matrix offers for a task in this state, and why when it offers nothing.
+ *
+ * `hasChannel` is the runner's answer, not the scheduler's: whether the attempt that is running right now
+ * has a live transport. A Claude deny-mode attempt and a `codex exec` attempt are both `running` with no
+ * channel, which is the stop-and-continue row.
+ */
+export interface PromptRow {
+  mode?: PromptDeliveryMode;
+  /** Present exactly when `mode` is absent: the row's own sentence. */
+  reason?: string;
+}
+
+export function promptRow(state: TaskRunState, hasChannel: boolean): PromptRow {
+  if (state.state === 'success' || state.state === 'skipped') {
+    return { reason: `Task "${state.id}" finished as ${state.state} and is immutable. Add a task or start a new run to take this further.` };
+  }
+  if (state.state === 'pending' || state.state === 'ready') {
+    return { reason: `Task "${state.id}" has not started, so there is no session to speak to. Edit its prompt instead with "cao task edit ${state.id}".` };
+  }
   if (state.state === 'waiting') {
-    return `Task "${state.id}" is waiting on you. Answer the pending request first; a prompt and an answer are not the same thing.`;
+    return { reason: `Task "${state.id}" is waiting on you. Answer the pending request first; a prompt and an answer are not the same thing.` };
   }
-  if (!ACTIVE_TASK_STATES.has(state.state)) {
-    return `Task "${state.id}" is ${state.state} and has no worker running, so there is nothing to steer.`;
+  if (state.state === 'awaiting_approval') {
+    return { reason: `Task "${state.id}" is waiting for an approval decision, not for a prompt. Approve or reject it first.` };
   }
-  if (!hasChannel) {
-    return `The worker running "${state.id}" has no channel to steer through: this agent and transport cannot be spoken to mid-turn. Stop it and continue with the message instead.`;
+  if (ACTIVE_TASK_STATES.has(state.state)) return { mode: hasChannel ? 'steer' : 'stopAndContinue' };
+  if (FOLLOW_UP_STATES.has(state.state)) return { mode: 'followUp' };
+  return { reason: `Task "${state.id}" is ${state.state}, which is not a state a prompt can reach.` };
+}
+
+/** What each mode is called in a sentence an operator reads. */
+export const MODE_LABEL: Record<PromptDeliveryMode, string> = {
+  steer: 'steer',
+  followUp: 'follow-up',
+  stopAndContinue: 'stop and continue',
+};
+
+/**
+ * The mode to use, or the sentence to refuse with (§3.5).
+ *
+ * A caller that named no mode gets the row's. A caller that named one gets it only where the row agrees:
+ * asking to steer a task that has already stopped is not a smaller version of a follow-up, it is a different
+ * thing done to a different attempt, and doing it silently is how an operator loses a session they meant to
+ * continue.
+ */
+export function selectPromptMode(state: TaskRunState, opts: { hasChannel: boolean; requested?: PromptDeliveryMode }): PromptRow {
+  const row = promptRow(state, opts.hasChannel);
+  if (!opts.requested || !row.mode || row.mode === opts.requested) return row;
+  if (opts.requested === 'steer') {
+    return {
+      reason:
+        state.state === 'running'
+          ? `The worker running "${state.id}" has no channel to steer through: this agent and transport cannot be spoken to mid-turn. Stop it and continue with the message instead (--stop-and-continue).`
+          : `Task "${state.id}" is ${state.state}, so there is no live turn to steer. Send it a follow-up instead (--follow-up), which starts a new attempt.`,
+    };
   }
-  return undefined;
+  if (opts.requested === 'stopAndContinue' && row.mode === 'followUp') {
+    return { reason: `Task "${state.id}" is ${state.state} and has no worker to stop. Send it a follow-up instead (--follow-up).` };
+  }
+  if (opts.requested === 'followUp' && (row.mode === 'steer' || row.mode === 'stopAndContinue')) {
+    return {
+      reason: `Task "${state.id}" is still running, so a follow-up has no attempt to start. ${row.mode === 'steer' ? 'Steer it (--steer)' : 'Stop it and continue (--stop-and-continue)'}, or stop it first.`,
+    };
+  }
+  return { reason: `Task "${state.id}" is ${state.state}; ${MODE_LABEL[opts.requested]} does not apply to it.` };
 }
 
 /** The ack sentence for a delivery, in the state the transport left it. */

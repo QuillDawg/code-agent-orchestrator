@@ -64,6 +64,7 @@ const controllerStub = {
   peek: () => [],
   transcript: () => [],
   capturedDiff: async () => null,
+  steerable: () => false,
   attemptTranscript: async () => [],
   readReport: async () => '# Run report\n\nTask **implement-parser** succeeded.\n',
 };
@@ -140,7 +141,7 @@ describe('the workspace at each terminal size', () => {
     it(`opens every tab at ${size.name} and each one says what it is`, async () => {
       const expected: Record<WorkspaceTab, string> = {
         overview: 'Status:',
-        session: 'E edits the selected task',
+        session: 'Enter opens the composer',
         logs: 'arrives in stage 3',
         changes: 'no diff captured',
         report: 'Run report',

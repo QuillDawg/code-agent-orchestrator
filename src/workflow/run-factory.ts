@@ -1,5 +1,7 @@
 /** Creates new runs and reconciles persisted runs for `cao resume`. */
-import type { WorkflowRun, RunSelection, TaskRunState, ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
+import { TERMINAL_TASK_STATES } from 'code-agent-orchestrator-protocol';
+import type { ControlSource, ResolvedTask, WorkflowRun, RunSelection, TaskRunState, ResolvedWorkflow } from 'code-agent-orchestrator-protocol';
+import { adoptLegacyFollowUp, queueFollowUp, resumableSessionId } from './control/follow-up.js';
 import type { RunStore } from '../persistence/run-store.js';
 import { sha256, nowIso, isProcessAlive } from '../util/misc.js';
 import { killTree } from '../execution/process-manager.js';
@@ -43,6 +45,13 @@ export interface ResumeOptions {
   approve?: string[];
   reject?: string[];
   input?: { taskId: string; text: string };
+  /**
+   * A follow-up to carry into the next attempt of one task (spec §3.5, `[D25]`).
+   *
+   * The same errand as `input` with the `needs_input` restriction lifted: a follow-up reaches any task that
+   * has stopped, and `input` is the one row of it that also answers a question. Both end in `queueFollowUp`.
+   */
+  followUp?: { taskId: string; text: string; source?: ControlSource; freshSession?: boolean; sessionId?: string };
   selection?: RunSelection;
 }
 
@@ -52,6 +61,42 @@ export interface ResumeReconciliation {
   orphansKilled: number[];
 }
 
+/** The resolved task behind a run state; the stored workflow is what a resume executes. */
+function taskDef(run: WorkflowRun, taskId: string): ResolvedTask {
+  return run.workflow.tasks.find((t) => t.id === taskId)!;
+}
+
+/**
+ * A follow-up carried into the next attempt of a task that has stopped (§3.5).
+ *
+ * Applied after the state machine above, so the state it reads is the one this resume will execute: a
+ * `running` task has already become `pending` and a `failed` one has already been given its retry budget.
+ */
+function applyFollowUp(run: WorkflowRun, followUp: NonNullable<ResumeOptions['followUp']>, rerun: string[], notes: string[]): void {
+  const st = run.tasks[followUp.taskId];
+  const task = taskDef(run, followUp.taskId);
+  if (!st || !task) {
+    notes.push(`there is no task "${followUp.taskId}" to send a follow-up to`);
+    return;
+  }
+  queueFollowUp(st, {
+    source: followUp.source ?? 'cli',
+    mode: 'followUp',
+    text: followUp.text,
+    sessionId: followUp.freshSession ? undefined : (followUp.sessionId ?? resumableSessionId(task, st)),
+  });
+  if (TERMINAL_TASK_STATES.has(st.state) || st.state === 'needs_input') {
+    st.state = 'pending';
+    st.reason = undefined;
+    st.message = undefined;
+    st.blockedBy = undefined;
+    st.endedAt = undefined;
+    st.retryNotBefore = undefined;
+    st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
+  }
+  if (!rerun.includes(st.id)) rerun.push(st.id);
+}
+
 /** Mutates `run` so the scheduler can continue it. Running attempts become `interrupted`. */
 export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions = {}): Promise<ResumeReconciliation> {
   const notes: string[] = [];
@@ -59,6 +104,9 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
   const orphansKilled: number[] = [];
   const retryFailed = opts.retryFailed ?? true;
   const named = new Set([...(opts.selection?.only ?? []), ...(opts.selection?.from ?? [])]);
+  // A run written before follow-ups were records still has its answer in `userInput` alone; give it the
+  // delivery it always was, so this resume reads the task the same way a run started today would.
+  for (const st of Object.values(run.tasks)) adoptLegacyFollowUp(st);
 
   for (const st of Object.values(run.tasks)) {
     switch (st.state) {
@@ -126,7 +174,12 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
         break;
       case 'needs_input':
         if (opts.input && opts.input.taskId === st.id) {
-          st.userInput = opts.input.text;
+          queueFollowUp(st, {
+            source: 'cli',
+            mode: 'followUp',
+            text: opts.input.text,
+            sessionId: resumableSessionId(taskDef(run, st.id), st),
+          });
           st.state = 'pending';
           st.reason = undefined;
           st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
@@ -169,6 +222,8 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
     }
     run.selection = opts.selection;
   }
+
+  if (opts.followUp) applyFollowUp(run, opts.followUp, rerun, notes);
 
   run.resumeCount += 1;
   run.state = run.state === 'cancelled' ? 'cancelled' : run.state;

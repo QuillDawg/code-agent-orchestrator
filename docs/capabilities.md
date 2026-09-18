@@ -328,6 +328,46 @@ records the revision it ran. The fourth route is **no owner**: with nothing exec
 written straight into it and the resume that applies it is named, and `--restart` is refused there because a
 resume is what starts the task.
 
+`cao task prompt <task>` says something to a task. Which of three things that means is decided from the
+task's state and from whether its worker has a live channel, and the command prints the one it chose:
+
+- **steer** — a running Claude worker in `ask` mode, or a Codex app-server turn. The message goes into the
+  session that is running now and the worker takes it up at the end of its current turn. Its state is shown
+  as it moves: `queued`, then `accepted` once the CLI acknowledges it, or the server's own refusal.
+- **stop and continue** — a running worker with no channel: headless Claude, or `codex exec`. One command
+  and one answer: the attempt is stopped and the task starts again carrying your message.
+- **follow-up** — a task that has stopped (`failed`, `blocked`, `cancelled` or `needs_input`). A new attempt
+  is started, continuing the session the task last reported where `retry.resumeSession` allows and the agent
+  gave one, and otherwise with your message in the fresh prompt under `# User Input`. This is the path
+  `cao resume --task <id> --input "<answer>"` has always taken, and that command still does exactly what it
+  documents.
+
+A task that has not started is refused with a pointer to `cao task edit`, one that is waiting on a
+permission prompt or a question is told to answer that first (a prompt and an answer are not the same
+thing), and a succeeded or skipped task is immutable. `--steer`, `--follow-up` and `--stop-and-continue`
+name a mode explicitly and are refused where the task's state does not offer it, rather than quietly doing
+the other thing.
+
+**The session is checked before anything is stopped.** If the transcript a follow-up would continue is no
+longer on disk, the command refuses and offers `--fresh-session` instead of resuming into a worker that has
+silently forgotten everything. `--fresh-session` starts the task from the top with your message in its
+prompt.
+
+Every message is recorded: a `PromptDelivery` on the attempt (steer) or on the task (follow-up) with its
+mode, transport, state and reason, and a `task.prompted` line in the run's `events.jsonl` carrying all of
+that and **never the text**. `cao task <id>` and the workspace's Session panel show the list.
+
+The routes are the same three as `cao task stop`, plus the fourth: with nobody executing the run, a
+follow-up resumes it to carry the message — the workspace when the terminal is interactive, plain output
+otherwise — because a resume is the only thing that can start an attempt.
+
+In the workspace the same thing is the **composer** at the bottom of the Session panel. `Enter` opens it and
+`Enter` sends; its header says which of the three modes the message will use and, for a follow-up, which
+session it will resume. `Ctrl+J` (or a trailing `\` then `Enter`) is a newline, `Ctrl+O` opens the draft in
+`$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, and `Esc` closes it keeping the draft. A paste arrives
+whole; one over 20 lines is shown as `[pasted N lines]` with every byte kept. Inside the composer every
+printable key is text, so `q` types a `q`.
+
 `cao emit status` prints what a run started by this `cao` will accept, on its `Controls:` row.
 
 `cao resume` takes the same overrides as `cao run`: `--max-concurrency`, `--permission-mode` and

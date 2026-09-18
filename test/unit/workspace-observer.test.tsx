@@ -53,7 +53,7 @@ function liveRun(tasks: Record<string, TaskShape>, state = 'running') {
   };
 }
 
-const controllerStub = { peek: () => [], transcript: () => [], capturedDiff: async () => null, attemptTranscript: async () => [], readReport: async () => null };
+const controllerStub = { peek: () => [], transcript: () => [], capturedDiff: async () => null, steerable: () => false, attemptTranscript: async () => [], readReport: async () => null };
 const shared = (): DashboardShared => ({ queue: [], listeners: new Set(), notify: () => undefined, remove: () => false });
 
 /** The owner, as this window can reach it: a list of what it was asked, and whatever it was told to answer. */

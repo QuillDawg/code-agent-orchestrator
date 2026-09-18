@@ -23,14 +23,6 @@ import { windowOf } from '../window.js';
 
 /** What each unfilled tab is for, and when it arrives. Kept here so `?`, the tab and the docs agree. */
 export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
-  session: [
-    'E edits the selected task: its prompt, agent, model, effort, timeout, retries and budget.',
-    'A task that is running is stopped, edited and started again from a fresh session; the form asks first.',
-    '',
-    'The rest of this panel arrives with the composer: the live transcript, the session identity and',
-    'sending a worker a follow-up. Until then: F follows the selected task, and cao task <id> shows',
-    'everything recorded about it.',
-  ],
   logs: [
     'The Logs panel arrives in stage 3.',
     "It will hold this run's own log: the orchestrator's events, the runner's stderr and the doctor probes.",

@@ -340,7 +340,8 @@ describe('run controller: run-level commands', () => {
     await waitFor(() => h.run.tasks.a!.state === 'running');
 
     // §3.5: a worker whose runner offered no live channel cannot be steered, and the refusal says so
-    // rather than pretending the feature does not exist. Only `steer` is wired in this stage.
+    // rather than pretending the feature does not exist. A follow-up to a task that is still running has no
+    // attempt to start, and is refused with the row that does apply to it.
     const prompt = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'hi', mode: 'steer' }, tui());
     const followUp = await h.controller.submit({ kind: 'prompt', taskId: 'a', text: 'hi', mode: 'followUp' }, tui());
     const approve = await h.controller.submit({ kind: 'approve', taskId: 'a' }, tui());
@@ -348,7 +349,7 @@ describe('run controller: run-level commands', () => {
 
     for (const ack of [prompt, followUp, approve, answer]) expect(ack.status).toBe('rejected');
     expect(prompt.reason).toContain('has no channel to steer through');
-    expect(followUp.reason).toContain('a follow-up for "a" is not');
+    expect(followUp.reason).toContain('so a follow-up has no attempt to start');
     expect(approve.reason).toContain('Approve or reject "a" in the terminal that owns this run');
     expect(answer.reason).toContain('Answer "a" in the terminal that owns this run');
     // Nothing was touched by any of them.

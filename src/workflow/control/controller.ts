@@ -35,6 +35,11 @@ export interface RunControllerReads {
   olderTranscript(taskId: string, attempt: number, oldest: TranscriptEntry | undefined, count?: number): Promise<TranscriptEntry[]>;
   olderTaskTranscript(taskId: string, attempt: number, oldest: TranscriptEntry | undefined, count?: number): Promise<TranscriptEntry[]>;
   capturedDiff(taskId: string): Promise<{ attempt: number; diff: AttemptDiff; patch: string } | null>;
+  /**
+   * Whether the worker running this task can be spoken to mid-turn (§3.5). False for every task of a run
+   * this process is not executing, which is the truth: a window watching from outside has no channel.
+   */
+  steerable(taskId: string): boolean;
   /** `report.md` from the run directory, or null while the run has not written one. */
   readReport(): Promise<string | null>;
   /** Last-resort synchronous persistence on a force-kill; the crash handler's only chance to save state. */
@@ -89,6 +94,7 @@ export function createRunController(deps: RunControllerDeps): RunController {
     olderTranscript: (taskId, attempt, oldest, count) => scheduler.olderTranscript(taskId, attempt, oldest, count),
     olderTaskTranscript: (taskId, attempt, oldest, count) => scheduler.olderTaskTranscript(taskId, attempt, oldest, count),
     capturedDiff: (taskId) => scheduler.capturedDiff(taskId),
+    steerable: (taskId) => scheduler.steerable(taskId),
     readReport: () => scheduler.readReport(),
     persistInterruptedSync: () => scheduler.persistInterruptedSync(),
 

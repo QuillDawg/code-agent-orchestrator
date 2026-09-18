@@ -92,6 +92,12 @@ export interface ControlRequest {
    * a stop from another terminal has always meant the cancelling kind, as Ctrl+C does.
    */
   mode?: PromptDeliveryMode;
+  /**
+   * `prompt` only: start the next attempt from a fresh session instead of continuing the one the task last
+   * reported. The explicit half of `[D25]` — a missing or incompatible session is refused, never silently
+   * swapped, and this is how the operator says "start over" once they have read the refusal.
+   */
+  freshSession?: boolean;
   /** Refuse the request if the task has moved on (§2.2). */
   expected?: ControlExpectation;
 }

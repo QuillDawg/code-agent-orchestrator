@@ -2,7 +2,7 @@
 import { loadWorkflow, type LoadedWorkflow } from '../config/loader.js';
 import { normalizeWorkflow, type Diagnostic } from '../config/normalize.js';
 import { validateWorkflow, assertValid, buildGraph, type ValidationResult } from '../workflow/validator.js';
-import type { PermissionMode, ResolvedWorkflow, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import type { ControlSource, PermissionMode, ResolvedWorkflow, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { FileRunStore } from '../persistence/run-store.js';
 import { ProcessManager } from '../execution/process-manager.js';
 import { RunnerRegistry } from '../runners/task-runner.js';
@@ -171,6 +171,12 @@ export interface StartRuntimeOptions {
   approve?: string[];
   reject?: string[];
   input?: string;
+  /**
+   * A follow-up to carry into the next attempt of one task (§3.5, `[D25]`): what `cao task prompt` sends to
+   * a run nobody is executing, and what the workspace's composer sends on an ended run. `input` is the same
+   * errand restricted to a task holding a question, and is left exactly as documented.
+   */
+  followUp?: { taskId: string; text: string; source?: ControlSource; freshSession?: boolean };
   task?: string[];
   from?: string[];
   maxConcurrency?: number;
@@ -261,13 +267,27 @@ export async function startRuntime(runRef: string | undefined, opts: StartRuntim
   const lock = await store.acquireLock(runId);
   if (!lock.ok) throw new RunLockedError(runId, lock.lock.pid, lock.lock.heartbeatAt);
 
-  const selection = only.length || from.length ? { only: input ? [] : only, from } : undefined;
+  if (opts.followUp) {
+    const target = run.tasks[opts.followUp.taskId];
+    if (!target) throw new UsageError(`Run ${runId} has no task "${opts.followUp.taskId}"`);
+  }
+  // A follow-up continues the run around the task it names, exactly as an answer does: `--task` is how the
+  // task is named, not a request to run only it.
+  const restrict = input || opts.followUp ? [] : only;
+  const selection = only.length || from.length ? { only: restrict, from } : undefined;
   if (run.state === 'completed' && !selection) {
     await store.releaseLock(runId);
     return { kind: 'nothing-to-do', run, message: `Run ${runId} already completed. Use --task <id> or --from <id> to re-run specific tasks.` };
   }
 
-  const reconciliation = await reconcileForResume(run, { retryFailed: opts.retryFailed, approve: parseList(opts.approve), reject: parseList(opts.reject), input, selection });
+  const reconciliation = await reconcileForResume(run, {
+    retryFailed: opts.retryFailed,
+    approve: parseList(opts.approve),
+    reject: parseList(opts.reject),
+    input,
+    followUp: opts.followUp,
+    selection,
+  });
   for (const n of reconciliation.notes) note(n);
 
   return { kind: 'ready', run, store, environment, secrets, runners, layers: buildGraph(run.workflow).layers(), rerun: reconciliation.rerun };

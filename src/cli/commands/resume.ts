@@ -2,7 +2,7 @@ import { executeRun } from './run.js';
 import { renderHeader } from '../render/plain.js';
 import { startRuntime } from '../app.js';
 import { warnLine } from '../../util/marks.js';
-import type { PermissionMode } from 'code-agent-orchestrator-protocol';
+import type { ControlSource, PermissionMode } from 'code-agent-orchestrator-protocol';
 
 export interface ResumeOptions {
   repository?: string;
@@ -10,6 +10,11 @@ export interface ResumeOptions {
   approve?: string[];
   reject?: string[];
   input?: string;
+  /**
+   * A follow-up carried into one task's next attempt (§3.5). Not a flag of its own: `cao task prompt` is
+   * the command that sends one, and it resumes the run through here so there is a single resume path.
+   */
+  followUp?: { taskId: string; text: string; source?: ControlSource; freshSession?: boolean };
   task?: string[];
   from?: string[];
   verbose?: boolean;

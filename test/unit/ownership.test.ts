@@ -286,7 +286,7 @@ describe('what a run advertises decides what is offered (§2.3)', () => {
   it('falls back to what an owner of this build acts on when there is no entry', async () => {
     const value = await run();
     // No `CAO_HOME` fixture and no entry for this run: the fallback is the inbox kinds, not silence.
-    expect(await advertisedCapabilities(value, RUN_ID)).toEqual(['stop', 'kill', 'restart', 'edit']);
+    expect(await advertisedCapabilities(value, RUN_ID)).toEqual(['stop', 'kill', 'restart', 'edit', 'prompt']);
   });
 
   it('hides a control the run never claimed, and invents none from an unknown token', async () => {

@@ -58,6 +58,7 @@ async function mountWorkspace(over: (run: WorkflowRun) => void = () => undefined
     peek: () => [],
     transcript: () => [],
     capturedDiff: async () => null,
+    steerable: () => false,
     attemptTranscript: async () => [],
     readReport: async () => null,
     submit: async (command: { kind: string }): Promise<ControlAck> => {
