@@ -346,10 +346,20 @@ describe('Codex app-server: turn/steer', () => {
     expect(run.stderr.some((line) => line.includes('turn/settings/update'))).toBe(false);
   });
 
-  it('refuses to resume a thread another writer holds, in the server\'s words', async () => {
+  it('refuses to resume a thread another writer holds, and offers the fresh session `[D25]`', async () => {
     const run = await steerThrough('codex', 'success', [], { FAKE_CODEX_RESUME_CONFLICT: '1' }, appServer, 'held-thread');
 
     expect(run.outcome).toMatchObject({ kind: 'error', message: expect.stringMatching(/already has an active writer/) });
+    // §3.5 lists this beside "the transcript is gone": a session this attempt cannot have gets an
+    // actionable error *and* the explicit fresh-session option, never a silent switch.
+    const message = (run.outcome as { message: string }).message;
+    expect(message).toContain('held-thread');
+    expect(message).toContain('--fresh-session');
+    expect(message).toContain('Start a fresh session');
+    // ...and not the sentence for a misconfigured workflow, which is what it used to say: nothing in the
+    // YAML is wrong and editing the `codex:` block fixes nothing.
+    expect(message).not.toContain('rejected the configuration this run sent it');
+    expect(message).not.toContain('the codex: block of this task');
     // Nothing was steered anywhere: the thread never opened, so no channel was ever offered.
     expect(run.channelOffered).toBe(false);
   });

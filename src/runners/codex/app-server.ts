@@ -13,7 +13,7 @@ import type { AttemptChannel, RunnerHooks, RunnerInput, RunnerOutcome, SteerExpe
 import { splitCommand } from '../claude/detect.js';
 import { CODEX_COMPLETION_CONTRACT } from '../contract.js';
 import { agentTextEvents, completionTranscript } from '../completion-text.js';
-import { codexFailureMetadata, codexProtocolRejection, normalizeCodexFailure } from './failure.js';
+import { codexActiveWriterConflict, codexFailureMetadata, codexProtocolRejection, normalizeCodexFailure } from './failure.js';
 import { configErrorOutcome, killedMessage, openToolMessage, type ConfigRejection } from '../outcomes.js';
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
@@ -177,6 +177,8 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
    * carried as a rejection with the workflow key behind it rather than as a bare crash message.
    */
   let protocolError: ConfigRejection | undefined;
+  /** See `codexActiveWriterConflict`: a session refused, which is not the same thing as a bad workflow. */
+  let sessionConflict: string | undefined;
   let blocked: BlockedOnHuman | undefined;
   let killed: string | undefined;
   let nextId = 1;
@@ -353,8 +355,14 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
       }
       if (message.id === threadRequestId) {
         if (message.error) {
-          const detail = `${input.resumeSessionId ? 'thread/resume' : 'thread/start'} failed: ${String(message.error.message ?? JSON.stringify(message.error))}`;
-          protocolError = codexProtocolRejection({ message: detail, key: 'the codex: block of this task' }) ?? { detail };
+          const said = String(message.error.message ?? JSON.stringify(message.error));
+          // A thread somebody else is writing to is a session this attempt cannot have, not a workflow that
+          // is wrong (§3.5, `[D25]`): it gets its own sentence, with the fresh-session option in it.
+          sessionConflict = codexActiveWriterConflict(said, input.resumeSessionId);
+          if (!sessionConflict) {
+            const detail = `${input.resumeSessionId ? 'thread/resume' : 'thread/start'} failed: ${said}`;
+            protocolError = codexProtocolRejection({ message: detail, key: 'the codex: block of this task' }) ?? { detail };
+          }
           void proc.kill('graceful');
           return;
         }
@@ -516,6 +524,10 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
   else if (exit.timedOut) {
     const message = `timed out after ${input.timeoutMs}ms`;
     outcome = blocked ? blockedOutcome(`the turn was still running ${message} and the process had to be killed`) : { kind: 'error', outcome: 'timeout', message, exitCode: exit.code, usage };
+  } else if (sessionConflict) {
+    // Not retryable: a second attempt would ask the same other process for the same thread. The operator
+    // closes it or starts fresh, and the message says both.
+    outcome = { kind: 'error', outcome: 'config_error', message: sessionConflict, exitCode: exit.code, signal: exit.signal, usage, failure: { retryable: false, providerCode: 'threadHasActiveWriter', sessionId: input.resumeSessionId } };
   } else if (protocolError) outcome = configErrorOutcome('Codex app-server', protocolError, { exitCode: exit.code, signal: exit.signal, usage });
   else if (!terminal) {
     // The turn never completed. Whether the process was killed from outside or simply went away, the most

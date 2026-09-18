@@ -129,6 +129,26 @@ export function codexConfigRejection(input: { exitCode?: number | null; stderr?:
  * the server cannot accept; an `initialize`/`thread/start` mismatch is the same thing one layer up, and both
  * are passed here by the transport with the key that produced them.
  */
+/**
+ * "thread <id> already has an active writer" (§7.2): one writer per thread, and somebody else has it.
+ *
+ * Spec §3.5 lists this beside "the transcript file is gone" and "the provider refuses --resume": a session
+ * this attempt cannot have, which gets an actionable error and the explicit fresh-session option `[D25]` -
+ * never a silent switch. Left to `codexProtocolRejection` it came out as "Codex app-server rejected the
+ * configuration this run sent it ... It comes from the codex: block of this task", which is wrong twice
+ * over: nothing in the workflow is misconfigured, and the thing to do about it is not to edit the YAML.
+ */
+const ACTIVE_WRITER = /already has an active writer/i;
+
+export function codexActiveWriterConflict(message: string, sessionId?: string): string | undefined {
+  if (!ACTIVE_WRITER.test(message)) return undefined;
+  const which = sessionId ? ` "${sessionId}"` : '';
+  return (
+    `The Codex thread${which} this attempt would continue already has an active writer: another process is holding it open, and Codex allows only one. ` +
+    'Close the other one and send the message again, or send it with --fresh-session ("Start a fresh session" in the composer) to run the task from the top with your message in its prompt.'
+  );
+}
+
 export function codexProtocolRejection(input: { code?: number; message: string; key?: string }): ConfigRejection | undefined {
   if (input.code !== undefined && input.code !== JSON_RPC_INVALID_PARAMS) return undefined;
   if (SCHEMA_REJECTION.test(input.message)) {

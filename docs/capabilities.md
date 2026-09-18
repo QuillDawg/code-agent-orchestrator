@@ -350,7 +350,8 @@ the other thing.
 
 **The session is checked before anything is stopped.** If the transcript a follow-up would continue is no
 longer on disk, the command refuses and offers `--fresh-session` instead of resuming into a worker that has
-silently forgotten everything. `--fresh-session` starts the task from the top with your message in its
+silently forgotten everything. A Codex thread another process is already writing to is refused the same
+way, with the same option, rather than reported as a broken workflow. `--fresh-session` starts the task from the top with your message in its
 prompt. The same check guards the resume that carries a follow-up, so the workspace's composer on an ended
 run gets the same refusal rather than a quietly fresh session; there the refusal names `Ctrl+F` instead,
 because there is no command line to type a flag into.

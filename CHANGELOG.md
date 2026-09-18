@@ -248,7 +248,9 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   **A session that is no longer on disk is a refusal, not a silent restart**: the answer names
   `--fresh-session` (or `Ctrl+F` when the message came from the composer, which has no flags to type),
   which starts the task from the top with the message in its prompt. The resume that carries a follow-up
-  makes the same check, so the composer on an ended run is refused there too. Every message is
+  makes the same check, so the composer on an ended run is refused there too, and a Codex thread another
+  process is already writing to gets the same answer instead of being reported as a misconfigured
+  workflow. Every message is
   recorded on the run with its mode, transport, state and reason, and the run log gets a `task.prompted`
   line carrying all of that and never the text. Routes are the same as `cao task edit`: the controller in
   this process, a request file for another one, and — with nobody executing the run — a resume that carries
