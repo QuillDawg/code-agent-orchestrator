@@ -100,12 +100,12 @@ modelling a CLI too old to echo a steered message back.
 | `success` (default), `invalid`, `api-error`, `hang` | the exec and app-server outcome paths; `invalid` and `api-error` recover when the session is resumed, so a run exercises nudge-then-success and transient-then-resume |
 | `interim` | a completion object mid-turn, more work, then a different one: the object is protocol, not prose, and only the last one is the outcome |
 | `schema-rejected`, `open-command` | the API refusing the output schema (a `config_error` on both transports), and a command the stream never completes (a `crash` naming it) |
-| `exec-approval`, `exec-user-input` | **exec only**: the CLI rejecting a command approval and a `request_user_input` the way the real binary does, which is H3.7 row 10. Both are skipped on `exec resume`, modelling an answer that resolved the request |
+| `exec-approval`, `exec-user-input` | **exec only**: the CLI rejecting a command approval and a `request_user_input` the way the real binary does. Both are skipped on `exec resume`, modelling an answer that resolved the request |
 | `approval`, `approval-always`, `approval-decline`, `file-approval`, `question`, `question-multi` | **app-server only**: command, file-change and `requestUserInput` requests, and each decision the protocol allows. Responses are validated against codex-cli's own response schemas, so an answer of the wrong shape fails the turn |
 | `question-recovers`, `question-then-resume`, `unknown-request` | a worker that finishes without its answer, one that finishes when the session is resumed with it, and a request CAO must refuse with `-32601` |
 | `failure`, `interrupted`, `mcp-failure`, `overload-once` | typed turn failures, an interrupted turn, a required MCP server that will not start, a `-32001` overload on `thread/start` |
 | `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope CAO did not ask for |
-| `steer` | **app-server only**: holds a turn open for a `turn/steer`. `FAKE_CODEX_STEER` selects one of the server's refusals instead of success (`no-turn`, `review`, `compact`, `empty-input`, `schema`), covering every rejection row of spec §3.5; `FAKE_CODEX_STEER_WAIT_MS` bounds how long the turn waits |
+| `steer` | **app-server only**: holds a turn open for a `turn/steer`. `FAKE_CODEX_STEER` selects one of the server's refusals instead of success (`no-turn`, `review`, `compact`, `empty-input`, `schema`), covering every rejection the server can give; `FAKE_CODEX_STEER_WAIT_MS` bounds how long the turn waits |
 
 `FAKE_CODEX_RESUME_CONFLICT=1` makes a `thread/resume` answer "already has an active writer", modelling a
 thread another process still has open.
@@ -185,10 +185,14 @@ processes and reads git output on both.
 
 Also:
 
-- Update the docs whose surface you changed — `README.md` for the CLI table and keys,
-  [docs/capabilities.md](docs/capabilities.md) for what a workflow can express,
-  [docs/configuration.md](docs/configuration.md) for schema keys,
-  [docs/architecture.md](docs/architecture.md) for internals.
+- Update the docs whose surface you changed. Each one owns a surface, and only one owns each:
+  `README.md` for the command list and the first-run path, [docs/capabilities.md](docs/capabilities.md)
+  for what a workflow can express and for the workspace's tabs and keys,
+  [docs/configuration.md](docs/configuration.md) for schema keys and environment variables,
+  [docs/models.md](docs/models.md) for agents, models and effort,
+  [docs/agent-cli-integration.md](docs/agent-cli-integration.md) for the argv an agent receives, and
+  [docs/architecture.md](docs/architecture.md) for internals. A new command needs a row in the README's
+  CLI reference and a mention in capabilities.md's "Finding the right command", both of which are tested.
 - Add a line under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), written for someone who will hit the
   behaviour rather than for someone reading the diff.
 - The pull request template's checklist is the whole list; fill it in.

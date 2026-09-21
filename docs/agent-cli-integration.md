@@ -395,7 +395,7 @@ the turn that is already running, or **stop and continue**, which cancels the at
 one carrying the message — and only two of the four transports have a live channel to steer through. The
 other two always take the stop-and-continue path while the task is running; naming the wrong mode
 explicitly (`--steer` on a transport with no channel, `--stop-and-continue` on a task that has already
-stopped) is refused rather than silently redirected `[D23]`.
+stopped) is refused rather than silently redirected.
 
 | Transport | Channel | What a message does | Delivery states |
 |---|---|---|---|
@@ -406,7 +406,7 @@ stopped) is refused rather than silently redirected `[D23]`.
 
 - **Stop and continue is the fallback, not a smaller steer.** It is one controller command with one
   acknowledgment: the in-flight attempt's `AbortController` fires, whatever it was asking a human is denied
-  first (the same settling `cancelTask` does on its own, `[D22]`), and the task is put back to `pending` so
+  first (the same settling `cancelTask` does on its own), and the task is put back to `pending` so
   the ordinary attempt launch carries the queued message — the same `--resume <session>` /
   `codex exec resume <thread>` a follow-up to a stopped task already uses (see
   [Permissions and live prompts](#permissions-and-live-prompts)), not a special case of it. `cao task prompt`

@@ -1,5 +1,12 @@
 # Architecture
 
+> **For contributors.** This page describes the inside of the repository: module paths, internal
+> type names, and which file owns which decision. It is written to be read with a checkout open,
+> and it is the one document here that goes stale when the code moves rather than when the
+> behaviour does. If you are using `cao` rather than changing it, you want
+> [capabilities.md](capabilities.md) for what you can express and
+> [configuration.md](configuration.md) for the schema.
+
 `cao` is a lightweight workflow engine whose workers are disposable Claude Code or Codex CLI processes. The engine owns all state; workers only receive a prompt and return a structured result.
 
 ```
@@ -36,8 +43,8 @@
 src/
   bin.ts, index.ts            CLI entry / library exports
   cli/                        commander program, commands/ (run, validate, resume, ui, stop, status, list, logs, peek, task,
-                              task-control (`task stop|restart`), task-edit (`task edit`, §3.4), task-prompt (`task prompt`, §3.5),
-                              diff, report, clean, doctor, diagnostics (`cao diagnostics`, §3.7), emit)
+                              task-control (`task stop|restart`), task-edit (`task edit`), task-prompt (`task prompt`),
+                              diff, report, clean, doctor, diagnostics (`cao diagnostics`), emit)
     app.ts                    service layer: prepareWorkflow(), createRuntime(), startRuntime() (the prepared runtime shared by
                               `cao resume` and a workspace action, so the two cannot validate a resume differently)
     ownership.ts              the owner/observer classifier: `readOrchestrator`'s answer turned into self/owned/abandoned/ended,
@@ -49,7 +56,7 @@ src/
     render/plain.ts           non-TTY line renderer, startup header, summary
     render/diff.ts            reads a captured diff.patch: section lookup by path (git's quoting undone), stat and colour
   config/                     schema.ts (zod), loader.ts (YAML, repository/launch dir, env), normalize.ts (defaults, templates, foreach, DAG rules)
-  workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts, resume-request.ts (the ResumeRequest union an ended run's actions become — resume/re-run/resume-from/answer/follow-up/approve/reject, §2.4, `[D36]` — read by both `cao resume` and the workspace's ended-run actions so there is one resume path, not two)
+  workflow/                   graph.ts (Kahn layers, cycles), validator.ts, states.ts (transition tables), scheduler.ts, plan.ts, run-factory.ts (create/resume), completion-store.ts (state: completed markers), report.ts (the run document, shared by cao report and the report.md every run writes), run-view.ts, resume-request.ts (the ResumeRequest union an ended run's actions become — resume/re-run/resume-from/answer/follow-up/approve/reject — read by both `cao resume` and the workspace's ended-run actions so there is one resume path, not two)
     control/                  commands.ts (the ControlCommand union and its envelope), controller.ts (RunController: the only way
                               anything outside workflow/ changes execution state while a scheduler is running), observer.ts (watches a run another process
                               owns: polls workflow.json + live.json into the same presentation store, sends stop/kill/restart
@@ -60,19 +67,19 @@ src/
                               writing a request to itself), edit.ts (what an edit of an unfinished task means: which fields,
                               which states, which dependents block one, the workflow validator run over the edited task, and
                               appending the TaskRevision - shared by the scheduler, `cao task edit` and the TUI form so the
-                              three cannot answer differently), prompt.ts (what a `prompt` command means, §3.5: the `PromptDelivery`
+                              three cannot answer differently), prompt.ts (what a `prompt` command means: the `PromptDelivery`
                               record appended to an attempt, the refusal sentences a steer fails with, and `promptRow` — the one
-                              §3.5 matrix read by the CLI when no mode flag was given, the composer's header, and the scheduler),
-                              follow-up.ts (a follow-up as the next attempt rather than a live channel, §3.5 `[D25]`: which session
+                              matrix read by the CLI when no mode flag was given, the composer's header, and the scheduler),
+                              follow-up.ts (a follow-up as the next attempt rather than a live channel: which session
                               it continues when `retry.resumeSession` allows and one was reported, and the fresh-`# User Input`
                               path otherwise — the general form of what `cao resume --input` always did)
-  runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts, sessions.ts (SessionProbe: whether the session/thread a task reported is still resumable, shared by doctor's `sessions` row and a follow-up's fresh-session check); claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, transient, detect, steer.ts = steering a live stream-json session through its open stdin and inferring delivery from `--replay-user-messages` or the next turn boundary, §3.5, session-file.ts = whether `~/.claude/projects/<slug>/<id>.jsonl` for a reported session still exists); codex/ (exec runner, app-server, permissions, failure normalization, detect, quota = the session-long app-server that reads account/rateLimits for the footer, session-file.ts = the same presence check over a Codex thread's rollout file); quota.ts (the runner-neutral set of provider quota readers the workspace starts)
+  runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts, sessions.ts (SessionProbe: whether the session/thread a task reported is still resumable, shared by doctor's `sessions` row and a follow-up's fresh-session check); claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, transient, detect, steer.ts = steering a live stream-json session through its open stdin and inferring delivery from `--replay-user-messages` or the next turn boundary, session-file.ts = whether `~/.claude/projects/<slug>/<id>.jsonl` for a reported session still exists); codex/ (exec runner, app-server, permissions, failure normalization, detect, quota = the session-long app-server that reads account/rateLimits for the footer, session-file.ts = the same presence check over a Codex thread's rollout file); quota.ts (the runner-neutral set of provider quota readers the workspace starts)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
   conditions/evaluator.ts     safe `when` expression grammar
   templates/engine.ts         safe {{path}} substitution
   workspace/                  git.ts (explicit git wrapper), workspace-manager.ts (shared + git worktree strategies, merge-back), diff.ts (tree snapshots through a throwaway index, diff.patch/diff.json capture)
-  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl), log-pager.ts (reads the tail of an unbounded file, and the page before it, backwards in chunks — what the Logs panel opens `stdout.log`/`stderr.log` with, §3.7), requests.ts (reads and writes the request inbox: requests/<ULID>-<kind>.json, requests/acks/<ULID>.json, requests/rejected/; the CLI-side sendControlRequest, called by `cao task stop|restart|edit|prompt` from another terminal and by the workspace observer's S/K/R), registry.ts (the user-level `~/.cao` registry: an announced run's pointer entry, and `readConfig`/`writeConfig` over `~/.cao/config.json`'s `protocol`/`emit`/`retainDays` keys; `tui/render-options.ts` reads the same file's `altScreen` key separately)
+  persistence/                run-store.ts (atomic snapshots, events, live.json, lock, heartbeat), paths.ts (the protocol package's run-directory layout, normalised to the platform separator), run-id.ts, transcript-log.ts (pages older entries back out of an attempt's events.jsonl), log-pager.ts (reads the tail of an unbounded file, and the page before it, backwards in chunks — what the Logs panel opens `stdout.log`/`stderr.log` with), requests.ts (reads and writes the request inbox: requests/<ULID>-<kind>.json, requests/acks/<ULID>.json, requests/rejected/; the CLI-side sendControlRequest, called by `cao task stop|restart|edit|prompt` from another terminal and by the workspace observer's S/K/R), registry.ts (the user-level `~/.cao` registry: an announced run's pointer entry, and `readConfig`/`writeConfig` over `~/.cao/config.json`'s `protocol`/`emit`/`retainDays` keys; `tui/render-options.ts` reads the same file's `altScreen` key separately)
   events/event-bus.ts         typed synchronous event bus
   logging/                    logger.ts, redact.ts
   tui/                        app.tsx (the persistent workspace shell: header, sidebar, tabbed main panel, footer, all fed by the
@@ -85,7 +92,7 @@ src/
                               `--no-alt-screen` flag, `CAO_ALT_SCREEN` env, `~/.cao/config.json`'s `altScreen`, then the default),
                               window.ts (windowing shared by the sidebar, tables, the review list and the picker), composer.ts (the
                               multiline composer's buffer: `string[]` lines, a code-point cursor, undo — a pure state machine the
-                              component only draws, §3.2/§3.5 `[D14]`/`[D16]`), terminal.ts (leaving and restoring the alternate
+                              component only draws), terminal.ts (leaving and restoring the alternate
                               screen from anywhere execution is not ordinary — a crash, a force-kill, a second Ctrl+C — plus
                               `suspendTerminal()`, the escape hatch `$VISUAL`/`$EDITOR` and the composer's Ctrl+O use), history.ts
                               (attempt and interaction tables, shared by `cao task` and the detail view; revisionRows renders the
@@ -104,7 +111,7 @@ src/
                               observer's stop/kill/restart controls, sent as requests), panels.tsx (the Report tab, the
                               command palette, the contextual help, the quit prompt and the answer field), session.tsx (the
                               Session tab: transcript, session identity, pending interactions, prompt deliveries and the
-                              composer, §3.5), logs.tsx (the Logs tab: the run's files as sources, the four views, the filters and
+                              composer), logs.tsx (the Logs tab: the run's files as sources, the four views, the filters and
                               the page-at-a-time pager over persistence/log-pager.ts), diagnostics.tsx (the Diagnostics tab:
                               agents and transports, effective configuration, retries, RunnerFailure, controls and quotas as
                               one scrollable list), edit.tsx (the task editor `E`
@@ -185,8 +192,7 @@ the scheduler's wake queue as a `control` wake, so it is applied *between* two o
 events and never inside one — two commands sent in the same tick apply in the order they were sent, and
 the second sees what the first did.
 
-- **Commands:** `stop` (`wait` | `cancel`), `kill`, `cancelTask`, `restart`, `edit` (§3.4), `prompt`
-  (§3.5), and, declared but not yet applied, `approve`, `reject` and `answer`.
+- **Commands:** `stop` (`wait` | `cancel`), `kill`, `cancelTask`, `restart`, `edit`, `prompt`, and, declared but not yet applied, `approve`, `reject` and `answer`.
 - **Envelope:** a ULID `id`, the `source` (`tui` | `cli` | `inbox` | `desktop`), the sender's pid, a
   timestamp and an optional `expected` (attempt, revision). The id deduplicates for the life of the run —
   persisted under `run.controls.seen` in `workflow.json`, capped at the last 1000 — so a resend after a lost
