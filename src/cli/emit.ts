@@ -43,10 +43,11 @@ const ORDER = new Map<string, number>(CAPABILITIES.map((c, i) => [c as string, i
 /**
  * §4.2.3 — the capability list for an entry, derived from what was wired.
  *
- * Today this is empty for every run `cao` starts: the registry writer announces a run, and nothing yet polls
- * `requests/`, writes interaction payloads or gates on presence. An empty list is the correct answer, not a
- * gap — §4.5's rule is that a surface enables each affordance by token, so a phase-2 run is shown and not
- * controlled, which is exactly what phase 2 promises (§7).
+ * A run names what it wired, never what this release can do. `cao run` polls `requests/` and acts on every
+ * `INBOX_REQUEST_KINDS` kind, so those tokens are written; nothing writes interaction payloads or gates on
+ * presence yet, so `interactions` and `presence` stay absent, and a run with the announcement alone still
+ * claims nothing. §4.5's rule is that a surface enables each affordance by token, so a token claimed and
+ * not honoured is a dead button in somebody else's window.
  */
 export function wiredCapabilities(wired: WiredSurface = {}): CapabilityToken[] {
   const tokens = new Set<CapabilityToken>();

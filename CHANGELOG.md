@@ -493,9 +493,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   was 133 columns and wrapped even there and is now two lines.
 - **An announced run now advertises what it accepts.** A registry entry's `capabilities` was always `[]`,
   because nothing polled for requests; a run started by this release writes
-  `["requests", "stop", "kill", "restart"]`, which is exactly what its inbox acts on. `edit` and `prompt`
-  are parsed and answered but not applied yet, so they are deliberately not in the list — a surface enables
-  an affordance by token, and a run must not claim one it cannot honour.
+  `["requests", "stop", "kill", "restart", "edit", "prompt"]`, which is exactly what its inbox acts on. A
+  kind reaches that list only once the controller carries it out — a surface enables an affordance by
+  token, and a run must not claim one it cannot honour — so `interactions`, `presence`, `answer` and
+  `approve` are still absent.
 - **An attempt the orchestrator cancelled now ends its transcript with the cancellation.** The attempt's
   `events.jsonl` used to stop at whatever the worker said last, so `cao logs` on a cancelled attempt ended
   mid tool call and gave no sign of why; it now closes with `cancelled by the orchestrator`, like every
@@ -925,7 +926,7 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   applied" and left them out of what `wiredCapabilities()` reports — both are wired and applied now, and
   every quoted `Controls:` line was re-checked against `cao emit status`'s real output.
   [docs/capabilities.md](docs/capabilities.md)'s Session panel description still said its live transcript,
-  session identity and composer were unfilled; only Logs and Diagnostics remain placeholders.
+  session identity and composer were unfilled.
   [docs/models.md](docs/models.md) said flatly "there is no `--model` flag", which stopped being true the
   moment `cao task edit --model/--effort` shipped; it now says so and points at the editor. `CONTRIBUTING.md`'s
   fake-agent mode tables gained the `steer`/`steer-exit` (Claude) and `steer` (Codex app-server) rows,

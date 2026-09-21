@@ -5,6 +5,7 @@ import path from 'node:path';
 import { PROTOCOL_VERSION, isFutureProtocol, stamp, type PresenceFile, type RegistryEntry } from 'code-agent-orchestrator-protocol';
 import { buildProgram } from '../../src/cli/program.js';
 import { planEmit, wiredCapabilities } from '../../src/cli/emit.js';
+import { INBOX_REQUEST_KINDS } from '../../src/execution/signals.js';
 import { emitCommand, emitStatusLines, readEmitStatus } from '../../src/cli/commands/emit.js';
 import { configFile, machineIdentity, presenceDir, registryKey, runsDir, setRegistryWarner, writeConfig } from '../../src/persistence/registry.js';
 import { captureCli, tmpDir } from '../helpers/index.js';
@@ -205,6 +206,21 @@ describe('emit: capabilities are what the run wired up (§4.2.3)', () => {
 
   it('keeps a token it does not know rather than dropping it (§4.5)', () => {
     expect(wiredCapabilities({ requests: true, requestKinds: ['stop', 'teleport'] })).toEqual(['requests', 'stop', 'teleport']);
+  });
+
+  /**
+   * The list a reader builds its buttons from is quoted in two documents, and a kind added to the inbox
+   * moves the code without moving the prose. A desktop app that believed a stale list would hide two
+   * controls the run honours, which is the same failure as claiming one it does not.
+   */
+  it('is the list the documentation quotes, wherever it quotes it', async () => {
+    const quoted = `[${wiredCapabilities({ requests: true, requestKinds: INBOX_REQUEST_KINDS }).map((c) => `"${c}"`).join(', ')}]`;
+    for (const file of ['CHANGELOG.md', 'docs/desktop.md', 'README.md']) {
+      const text = await fs.readFile(path.join(process.cwd(), file), 'utf8');
+      const arrays = [...text.matchAll(/\["requests"[^\]]*\]/g)].map((m) => m[0]);
+      for (const array of arrays) expect(array, file).toBe(quoted);
+    }
+    expect((await fs.readFile(path.join(process.cwd(), 'docs', 'desktop.md'), 'utf8')).includes(quoted)).toBe(true);
   });
 });
 
