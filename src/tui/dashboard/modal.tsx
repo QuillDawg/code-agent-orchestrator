@@ -13,7 +13,8 @@ import {
   type InteractionAnswer,
   canAllowAlways,
 } from 'code-agent-orchestrator-protocol';
-import { paint, sanitizeText } from '../../cli/color.js';
+import { sanitizeText } from '../../cli/color.js';
+import { resolveTheme, type Theme } from '../theme.js';
 
 export type PendingItem =
   | { kind: 'approval'; id: string; task: ResolvedTask; resolve: (r: { decision: 'approved' | 'rejected'; note?: string } | 'defer') => void }
@@ -25,6 +26,8 @@ export interface ModalProps {
   width: number;
   height: number;
   onDone: () => void;
+  /** The workspace's theme. Defaulted so a test may mount the modal on its own. */
+  theme?: Theme;
 }
 
 const MAX_INPUT_LINES = 12;
@@ -104,7 +107,7 @@ function useTextInput(active: boolean, onSubmit: (text: string) => void, onCance
   return { value };
 }
 
-function ApprovalBody(props: { item: Extract<PendingItem, { kind: 'approval' }>; onDone: () => void }): React.JSX.Element {
+function ApprovalBody(props: { item: Extract<PendingItem, { kind: 'approval' }>; theme: Theme; onDone: () => void }): React.JSX.Element {
   const [note, setNote] = useState<'approve' | 'reject' | null>(null);
   const text = useTextInput(
     note !== null,
@@ -133,14 +136,12 @@ function ApprovalBody(props: { item: Extract<PendingItem, { kind: 'approval' }>;
   );
   return (
     <Box flexDirection="column">
-      <Text color="yellow" bold>
-        ⏸ Approval required: {props.item.task.id}
-      </Text>
+      <Text>{props.theme.paint(`⏸ Approval required: ${props.item.task.id}`, ['warn', 'bold'])}</Text>
       <Text>{props.item.task.prompt}</Text>
       <Text> </Text>
       {note !== null ? (
         <Text>
-          {note === 'approve' ? 'Approve' : 'Reject'} with note: <Text color="cyan">{text.value}</Text>
+          {note === 'approve' ? 'Approve' : 'Reject'} with note: <Text color={props.theme.ink('accent2')}>{text.value}</Text>
           <Text dimColor>▏  Enter confirm   Esc back</Text>
         </Text>
       ) : (
@@ -152,7 +153,7 @@ function ApprovalBody(props: { item: Extract<PendingItem, { kind: 'approval' }>;
   );
 }
 
-function PermissionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; onDone: () => void }): React.JSX.Element {
+function PermissionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; theme: Theme; onDone: () => void }): React.JSX.Element {
   const { interaction } = props;
   const [denying, setDenying] = useState(false);
   // "Allow for the rest of this task" is only offered when the CLI supplied a rule scoped to this request;
@@ -187,27 +188,25 @@ function PermissionBody(props: { interaction: Interaction; resolve: (a: Interact
   const titleLines = clampText(interaction.title, Math.max(2, Math.min(8, props.height - 16)), props.width);
   return (
     <Box flexDirection="column">
-      <Text color="yellow" bold>
-        ? {interaction.taskId} wants to use {sanitizeText(interaction.toolName)}
-      </Text>
+      <Text>{props.theme.paint(`? ${interaction.taskId} wants to use ${sanitizeText(interaction.toolName)}`, ['warn', 'bold'])}</Text>
       {titleLines.map((l, i) => (
         <Text key={i}>{l}</Text>
       ))}
       {interaction.description && interaction.description !== interaction.title && (
         <Text dimColor>{clampText(interaction.description, 3, props.width).join('\n')}</Text>
       )}
-      {interaction.decisionReason && <Text color="magenta">{sanitizeText(interaction.decisionReason)}</Text>}
-      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1} marginBottom={1}>
+      {interaction.decisionReason && <Text color={props.theme.ink('agent')}>{sanitizeText(interaction.decisionReason)}</Text>}
+      <Box flexDirection="column" borderStyle="round" borderColor={props.theme.ink('warn')} paddingX={1} marginTop={1} marginBottom={1}>
         {lines.map((l, i) => (
           <Text key={i} wrap="truncate-end">
-            {paint(l, 'yellow')}
+            {props.theme.paint(l, 'warn')}
           </Text>
         ))}
         {lines.length === 0 && <Text dimColor>(no input)</Text>}
       </Box>
       {denying ? (
         <Text>
-          Deny with reason: <Text color="cyan">{text.value}</Text>
+          Deny with reason: <Text color={props.theme.ink('accent2')}>{text.value}</Text>
           <Text dimColor>▏  Enter send   Esc back</Text>
         </Text>
       ) : (
@@ -228,7 +227,7 @@ function PermissionBody(props: { interaction: Interaction; resolve: (a: Interact
   );
 }
 
-function QuestionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; onDone: () => void }): React.JSX.Element {
+function QuestionBody(props: { interaction: Interaction; resolve: (a: InteractionAnswer) => void; width: number; height: number; theme: Theme; onDone: () => void }): React.JSX.Element {
   const questions = props.interaction.questions ?? [];
   const [qi, setQi] = useState(0);
   const [cursor, setCursor] = useState(0);
@@ -308,7 +307,7 @@ function QuestionBody(props: { interaction: Interaction; resolve: (a: Interactio
   );
 
   if (!q) {
-    return <Text color="red">Question without content; press N to decline.</Text>;
+    return <Text color={props.theme.ink('danger')}>Question without content; press N to decline.</Text>;
   }
   const allAnswered = questions.every((_, i) => answerOf(i) !== undefined);
   // The options list is the part that has to stay on screen, so the question text yields to it first.
@@ -318,8 +317,8 @@ function QuestionBody(props: { interaction: Interaction; resolve: (a: Interactio
   const shown = optionWindow(q.options.length, cursor, optionRows);
   return (
     <Box flexDirection="column">
-      <Text color="yellow" bold>
-        ? {props.interaction.taskId} asks{questions.length > 1 ? ` (${qi + 1}/${questions.length})` : ''}: {sanitizeText(q.header ?? '')}
+      <Text>
+        {props.theme.paint(`? ${props.interaction.taskId} asks${questions.length > 1 ? ` (${qi + 1}/${questions.length})` : ''}: ${sanitizeText(q.header ?? '')}`, ['warn', 'bold'])}
       </Text>
       {clampText(q.question, questionLines, props.width).map((l, i) => (
         <Text key={i}>{l}</Text>
@@ -338,12 +337,12 @@ function QuestionBody(props: { interaction: Interaction; resolve: (a: Interactio
           );
         })}
         {shown.to < q.options.length && <Text dimColor>↓ {q.options.length - shown.to} more below</Text>}
-        {free[qi] !== undefined && <Text color="green">Free text: {free[qi]}</Text>}
+        {free[qi] !== undefined && <Text color={props.theme.ink('ok')}>Free text: {free[qi]}</Text>}
         {q.multiSelect && <Text dimColor>(multiple answers allowed)</Text>}
       </Box>
       {typing ? (
         <Text>
-          Your answer: <Text color="cyan">{text.value}</Text>
+          Your answer: <Text color={props.theme.ink('accent2')}>{text.value}</Text>
           <Text dimColor>▏  Enter confirm   Esc back</Text>
         </Text>
       ) : (
@@ -363,14 +362,17 @@ function QuestionBody(props: { interaction: Interaction; resolve: (a: Interactio
 
 export function Modal(props: ModalProps): React.JSX.Element {
   const { item } = props;
+  // A prompt is the one surface that takes the keys from everything else, so it is bordered in the theme's
+  // warning colour rather than its chrome: it is not a panel of the workspace, it is the workspace stopping.
+  const theme = props.theme ?? resolveTheme();
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="yellow" paddingX={1}>
+    <Box flexDirection="column" borderStyle="double" borderColor={theme.ink('warn')} paddingX={1}>
       {item.kind === 'approval' ? (
-        <ApprovalBody item={item} onDone={props.onDone} />
+        <ApprovalBody item={item} theme={theme} onDone={props.onDone} />
       ) : item.interaction.kind === 'question' ? (
-        <QuestionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} onDone={props.onDone} />
+        <QuestionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} theme={theme} onDone={props.onDone} />
       ) : (
-        <PermissionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} onDone={props.onDone} />
+        <PermissionBody interaction={item.interaction} resolve={item.resolve} width={props.width - 8} height={props.height} theme={theme} onDone={props.onDone} />
       )}
       {props.queued > 0 && <Text dimColor>{props.queued} more waiting</Text>}
     </Box>

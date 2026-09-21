@@ -18,12 +18,17 @@ import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { createRunController } from '../../src/workflow/control/controller.js';
 import { stripAnsi } from '../../src/cli/color.js';
+import { glyph } from '../../src/util/glyphs.js';
 import { render as renderInk } from 'ink-testing-library';
-import { Sidebar } from '../../src/tui/workspace/chrome.js';
+import { Footer, Sidebar } from '../../src/tui/workspace/chrome.js';
+import { alwaysHintCells, footerHints } from '../../src/tui/workspace/keys.js';
+import { footerColumnsFor } from '../../src/tui/workspace/layout.js';
 import { Overview } from '../../src/tui/workspace/overview.js';
 import { resolveTheme } from '../../src/tui/theme.js';
 
 const ESC = String.fromCharCode(27);
+/** Any SGR that sets a colour: the sixteen, the 256-colour cube and truecolor, foreground or background. */
+const SGR_COLOUR = new RegExp(`${ESC}\\[[0-9;]*?(3[0-7]|4[0-7]|9[0-7]|10[0-7]|[34]8;[25];)`);
 const NL = String.fromCharCode(10);
 const ts = '2026-09-17T09:12:34.000Z';
 
@@ -291,10 +296,15 @@ describe('navigation', () => {
         expect(flat, `${small.columns} cut a help row`).toContain('stop the run and stay here; again within 20s forces it');
         expect(flat, `${small.columns} cut a help row`).toContain('restart a failed, blocked, cancelled or skipped task');
         // The longest row in the table, and the one an 80-column panel has no room for on a single line.
-        tree.write(KEYS.pageDown);
-        tree.write(KEYS.pageDown);
-        await wait();
-        expect(tree.lastText().replace(/\s+/g, ' '), `${small.columns} cut the longest help row`).toContain('allow, allow for the rest of the task, deny, deny with a reason');
+        // Paged to rather than counted to: the panel grows a section whenever the spec does, and a fixed
+        // number of PgDn presses is a test that goes red for the wrong reason the next time it does.
+        let found = '';
+        for (let page = 0; page < 12 && !found.includes('allow, allow for the rest of the task'); page += 1) {
+          tree.write(KEYS.pageDown);
+          await wait();
+          found = tree.lastText().replace(/\s+/g, ' ');
+        }
+        expect(found, `${small.columns} cut the longest help row`).toContain('allow, allow for the rest of the task, deny, deny with a reason');
         fits(tree, small);
       } finally {
         tree.unmount();
@@ -501,7 +511,7 @@ describe('navigation', () => {
 describe('modes', () => {
   const size = { columns: 120, rows: 40 };
 
-  it('paints nothing under --theme mono, and every state still reads as a glyph and a word', async () => {
+  it('paints no colour under --theme mono, and every state still reads as a glyph and a word', async () => {
     const tree = mount(runWith(['implement-parser', 'implement-renderer', 'review']), size, {});
     try {
       await wait();
@@ -525,8 +535,10 @@ describe('modes', () => {
     );
     try {
       await wait();
-      // Nothing is painted at all: the frame is its own stripped text.
-      expect(mono.lastFrame()).toBe(mono.lastText());
+      // `mono` has bold, dim and inverse and no colour at all: that is what makes focus and selection
+      // visible on a terminal that cannot paint them (§3.2). Nothing in the frame sets a colour.
+      expect(mono.lastFrame()).not.toMatch(SGR_COLOUR);
+      expect(mono.lastFrame()).not.toBe(mono.lastText());
       const frame = mono.lastText();
       expect(frame).toContain('Running');
       expect(frame).toContain('Failed');
@@ -658,11 +670,76 @@ describe('the panels on their own', () => {
     const calm = renderInk(<Sidebar tasks={(quiet as { workflow: { tasks: never[] } }).workflow.tasks} run={quiet} cursor={0} width={40} rows={6} theme={theme} focused runningGlyph=">" />).lastFrame() ?? '';
     const loud = renderInk(<Sidebar tasks={(loudRun as { workflow: { tasks: never[] } }).workflow.tasks} run={loudRun} cursor={1} width={40} rows={6} theme={theme} focused runningGlyph=">" />).lastFrame() ?? '';
     // `runWith` makes the second task the failed one, so its row is the one with a badge.
-    expect(loud).toContain('claude|sonnet !');
-    expect(loud).not.toContain('claude|sonnet!');
+    // Stripped: under `mono` the agent cell is dim and the badge is bold, so the two are no longer
+    // adjacent characters in the raw frame even when they are adjacent columns on screen.
+    expect(stripAnsi(loud)).toContain('claude|sonnet !');
+    expect(stripAnsi(loud)).not.toContain('claude|sonnet!');
     // With nothing to badge, the task names get the column back.
-    expect(calm).not.toContain('claude|sonnet !');
-    expect(calm).toContain('implement-renderer');
+    expect(stripAnsi(calm)).not.toContain('claude|sonnet !');
+    expect(stripAnsi(calm)).toContain('implement-renderer');
+  });
+
+  it('keeps the footer inside the terminal once the focus mark is on it', () => {
+    // The mark is part of the line, so the cells have to be fitted into what is left after it. Fitted into
+    // the whole width instead, the footer came out exactly two columns too long on every frame and Ink cut
+    // the last chip mid-word - which is the failure `fitCells` exists to prevent.
+    const hints = footerHints('main', 'overview');
+    for (const columns of [50, 80, 120, 200]) {
+      for (const focused of [false, true]) {
+        const frame = stripAnsi(
+          renderInk(
+            <Footer
+              hints={hints}
+              always={alwaysHintCells('executing')}
+              columns={columns}
+              theme={theme}
+              columnsShown={footerColumnsFor(columns)}
+              snapshotAge={0}
+              focused={focused}
+            />,
+          ).lastFrame() ?? '',
+        );
+        for (const line of frame.split(NL)) expect([...line].length, `${columns} focused=${focused}: ${line}`).toBeLessThanOrEqual(columns);
+      }
+    }
+  });
+
+  it('pulses the gutter of a task that just produced output, and only on the frame that is on', () => {
+    // §3.2: two frames, on the sidebar row of a task that has said something in the last second. The
+    // cursor wins the gutter when the row is selected - two columns, one meaning at a time - and under
+    // reduced motion `pulsing` is never handed over at all, so nothing in the gutter ever changes.
+    const ids = ['implement-parser', 'implement-renderer'];
+    const r = runWith(ids) as never;
+    const sidebar = (over: { pulsing?: ReadonlySet<string>; pulseOn?: boolean }) =>
+      stripAnsi(
+        renderInk(
+          <Sidebar
+            tasks={(r as { workflow: { tasks: never[] } }).workflow.tasks}
+            run={r}
+            cursor={0}
+            width={40}
+            rows={6}
+            theme={theme}
+            focused
+            runningGlyph=">"
+            {...over}
+          />,
+        ).lastFrame() ?? '',
+      );
+
+    const pulse = glyph('pulse');
+    const quiet = sidebar({});
+    const on = sidebar({ pulsing: new Set(['implement-renderer']), pulseOn: true });
+    const off = sidebar({ pulsing: new Set(['implement-renderer']), pulseOn: false });
+    expect(quiet).not.toContain(`${pulse} implement-renderer`);
+    expect(on).toContain(`${pulse} `);
+    expect(off).not.toContain(`${pulse} `);
+    // The pulse never takes the cursor's place on the selected row, and never changes the row's width.
+    const selected = sidebar({ pulsing: new Set(ids), pulseOn: true });
+    expect(selected.split(NL)[1]).toContain(`${glyph('cursor')} `);
+    for (const frame of [quiet, on, off]) {
+      for (const line of frame.split(NL)) expect([...line].length).toBeLessThanOrEqual(40);
+    }
   });
 
   it('draws no more rows than the Overview panel was given', () => {

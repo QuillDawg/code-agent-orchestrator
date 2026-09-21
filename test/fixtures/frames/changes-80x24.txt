@@ -1,7 +1,7 @@
-stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
 [██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
- Overview │ Session │ Logs │[Changes]│ Report │ Diagnostics
-Task #/# ✓ implement-parser  Completed  claude|opus-#
+   Overview │ Session │ Logs │▸[Changes]│ Report │ Diagnostics
+  Task #/# ✓ implement-parser  Completed  claude|opus-#
 ✓ implement-parser  # file seen while it ran; no patch captured
   ▶ M src/parser.ts  edited
 ✗ implement-renderer  no diff captured
@@ -21,4 +21,4 @@ Task #/# ✓ implement-parser  Completed  claude|opus-#
 
 
 ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
-Ctrl+P palette   ? help   Q quit
+  Ctrl+P palette   ? help   Q quit

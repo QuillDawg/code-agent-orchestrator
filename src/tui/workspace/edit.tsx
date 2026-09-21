@@ -229,7 +229,7 @@ export function EditForm({ task, state, workflow, tasks, drafts, cursor, rows, c
   }
 
   if (validation.errors.form) push(`${glyph('subArrow')} ${validation.errors.form}`, 'danger');
-  for (const warning of validation.warnings) push(`${glyph('subArrow')} ${warning}`, 'warning');
+  for (const warning of validation.warnings) push(`${glyph('subArrow')} ${warning}`, 'warn');
 
   const context = contextPreview(workflow, tasks, task);
   push(' ');
@@ -255,8 +255,8 @@ export function EditForm({ task, state, workflow, tasks, drafts, cursor, rows, c
       </Text>
       {confirmRestart ? (
         <Box flexDirection="column">
-          <Text wrap="truncate-end">{theme.paint(`${task.id} is ${state.state}. Restart it now with the edit applied?`, 'warning')}</Text>
-          {confirmRestart.note ? <Text wrap="truncate-end">{theme.paint(truncateVisible(confirmRestart.note, width), 'warning')}</Text> : null}
+          <Text wrap="truncate-end">{theme.paint(`${task.id} is ${state.state}. Restart it now with the edit applied?`, 'warn')}</Text>
+          {confirmRestart.note ? <Text wrap="truncate-end">{theme.paint(truncateVisible(confirmRestart.note, width), 'warn')}</Text> : null}
           <Text wrap="truncate-end">{theme.paint('Y stop it and start again   N apply the edit only   Esc go back to the form', 'muted')}</Text>
         </Box>
       ) : null}

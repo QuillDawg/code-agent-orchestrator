@@ -944,7 +944,7 @@ Read by `cao` itself. Everything else in your environment passes through to the 
 | `CAO_DEBUG` | Debug-level logging into `orchestrator.log` (and onto stderr without a workspace), the stack trace when a command fails, and the Diagnostics tab when the workspace opens. `--debug` on `cao run` and `cao resume` sets it |
 | `CAO_ASCII` | Draw tables, status marks and the workspace's own glyphs in ASCII. Guessed on a Windows terminal without a UTF-8 code page; `CAO_UNICODE=1` forces glyphs back on |
 | `CAO_ALT_SCREEN` | `0` draws the workspace in the normal buffer instead of the alternate screen, like `--no-alt-screen` |
-| `CAO_THEME` | `default` or `mono` for the workspace; `--theme` overrides it and `NO_COLOR` forces `mono` |
+| `CAO_THEME` | `cyberpunk` (the default) or `mono` for the workspace; `--theme` overrides it, a `"theme"` key in `~/.cao/config.json` is read below it, and `NO_COLOR` forces `mono`. `default` is still accepted as the old name of `cyberpunk` |
 | `CAO_REDUCED_MOTION` | `1` stops the spinner and the activity pulse; `TERM=dumb` and a screen reader do the same |
 | `NO_COLOR` / `FORCE_COLOR` | Disable or force ANSI colour. `--color auto\|always\|never` wins where a command has it |
 | `COLUMNS` | Table width when there is no terminal to ask, for piped output and CI logs |

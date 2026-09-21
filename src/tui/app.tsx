@@ -54,6 +54,7 @@ import { bar, contextRatio, formatCost, formatTokens } from './format.js';
 import { currentAttempt, elapsedCell } from './history.js';
 import {
   ANSWER_DRAFT,
+  PULSE_WINDOW_MS,
   attachStore,
   selectDrafts,
   setDrafts,
@@ -66,6 +67,7 @@ import {
   selectListCursor,
   selectNotice,
   selectOverlay,
+  selectActivity,
   selectQuotas,
   selectSnapshot,
   selectTab,
@@ -320,6 +322,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const editCursor = useStore(store, selectListCursor(EDIT_CURSOR));
   const controls = useStore(store, selectControls);
   const quotas = useStore(store, selectQuotas);
+  const activity = useStore(store, selectActivity);
   const logsSearch = useStore(store, selectDraft('logs-search'));
   const diagnosticsCursor = useStore(store, selectListCursor('diagnostics'));
 
@@ -441,8 +444,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   // ------------------------------------------------------------------ layout
   // Computed here rather than beside the frame it sizes: the Logs pager below needs to know how many rows
   // its window has before it can decide when the page above is worth fetching.
-  const headerRows = headerRowsFor(run);
-  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) });
+  const headerRows = headerRowsFor(run, screenReader);
+  // The notice folds into the footer's one line under a screen reader, so it costs no row of its own.
+  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) && !screenReader });
 
   // ------------------------------------------------------------------ the Logs tab (§3.7)
   const paths = useMemo(() => createNativeRunPaths(run.repositoryRoot), [run.repositoryRoot]);
@@ -1425,7 +1429,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     : undefined;
   const spinner = spinnerFrames();
   const runningGlyph = motion ? spinner[frame.current % spinner.length]! : stateGlyph('running');
-  const header = <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} badge={props.badge} attention={attention} />;
+  // The activity pulse (§3.2): the tasks that produced output inside the window, and the slow half of the
+  // spinner's tick. Four spinner frames per pulse frame, because the spinner runs at ~8 Hz and a two-frame
+  // mark at that rate is a strobe rather than a pulse.
+  const pulsing = motion ? new Set(Object.entries(activity).filter(([, at]) => now - at <= PULSE_WINDOW_MS).map(([taskId]) => taskId)) : undefined;
+  const pulseOn = Math.floor(frame.current / 4) % 2 === 0;
+  const header = (
+    <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} badge={props.badge} attention={screenReader ? undefined : attention} screenReader={screenReader} />
+  );
 
   if (pending) {
     return (
@@ -1435,6 +1446,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         <Modal
           key={pending.id}
           item={pending}
+          theme={theme}
           queued={props.shared.queue.length - 1}
           width={columns}
           height={Math.max(4, rows - headerRows - 1)}
@@ -1492,6 +1504,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         width={columns}
         height={rows}
         color={theme.color}
+        theme={theme}
         onSelectTask={(id) => {
           store.getState().setView({ kind: 'follow', taskId: id });
           store.getState().setCursor(Math.max(0, tasks.findIndex((t) => t.id === id)));
@@ -1554,6 +1567,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             width={layout.mainWidth}
             height={layout.mainRows}
             color={theme.color}
+            theme={theme}
             root={run.repositoryRoot}
             loadDiff={loadDiff}
             isActive={focus === 'main' && !overlayOpen}
@@ -1632,10 +1646,19 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   return (
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
       {header}
-      <TabBar tab={tab} focused={focus === 'tabs'} theme={theme} columns={columns} />
+      <TabBar tab={tab} focused={focus === 'tabs'} mainFocused={focus === 'main'} theme={theme} columns={columns} />
       <Box flexDirection="column" height={layout.bodyRows} overflow="hidden">
         {layout.compact && (
-          <TaskStrip tasks={visible} run={run} cursor={Math.min(cursor, Math.max(0, visible.length - 1))} columns={columns} theme={theme} focused={focus === 'tasks'} runningGlyph={runningGlyph} />
+          <TaskStrip
+            tasks={visible}
+            run={run}
+            cursor={Math.min(cursor, Math.max(0, visible.length - 1))}
+            columns={columns}
+            theme={theme}
+            focused={focus === 'tasks'}
+            runningGlyph={runningGlyph}
+            screenReader={screenReader}
+          />
         )}
         <Box flexDirection="row" height={layout.mainRows} overflow="hidden">
           {!layout.compact && (
@@ -1650,6 +1673,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                 focused={focus === 'tasks'}
                 runningGlyph={runningGlyph}
                 search={searching ? search : undefined}
+                pulsing={pulsing}
+                pulseOn={pulseOn}
+                screenReader={screenReader}
               />
               <Text> </Text>
             </>
@@ -1718,6 +1744,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         quotas={quotas}
         now={now}
         focused={focus === 'footer' && !overlayOpen && !composerOpen}
+        screenReader={screenReader}
       />
     </Box>
   );
@@ -1787,7 +1814,7 @@ function UsageView({ run, theme, columns, rows, sort, header, headerRows }: Usag
       {slice.items.map(({ t, st, u }) => {
         const ratio = contextRatio(u);
         const ctx = u.contextTokens !== undefined ? `${formatTokens(u.contextTokens)}${u.contextWindow ? `/${formatTokens(u.contextWindow)}` : ''}` : '';
-        const ctxToken = ratio === undefined ? 'muted' : ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'success';
+        const ctxToken = ratio === undefined ? 'muted' : ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warn' : 'ok';
         // Cache reads and cache writes share one cell: two more full columns would push the context bar off
         // an 80-column terminal, and the pair is only ever read together.
         const cache = u.cacheReadTokens !== undefined || u.cacheCreationTokens !== undefined ? `${formatTokens(u.cacheReadTokens ?? 0)}/${formatTokens(u.cacheCreationTokens ?? 0)}` : '';
@@ -1797,7 +1824,7 @@ function UsageView({ run, theme, columns, rows, sort, header, headerRows }: Usag
             {taskCell(t.id)}  <Text color={theme.stateColor(st.state)}>{STATE_LABEL[st.state].padEnd(11)}</Text> {(u.costUsd !== undefined ? formatCost(u.costUsd) : '').padStart(7)} {(u.inputTokens !== undefined ? formatTokens(u.inputTokens) : '').padStart(7)}{' '}
             {(u.outputTokens !== undefined ? formatTokens(u.outputTokens) : '').padStart(7)}
             {narrow ? '' : ` ${cache.padStart(11)} ${String(u.numTurns ?? '').padStart(5)} ${(u.durationMs !== undefined ? formatDurationShort(u.durationMs) : '').padStart(6)} `}
-            {narrow ? '' : theme.paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'info')}
+            {narrow ? '' : theme.paint((u.toolMs !== undefined ? formatDurationShort(u.toolMs) : '').padStart(6), 'accent2')}
             {'  '}
             {ratio !== undefined ? theme.paint(`[${bar(ratio, narrow ? 5 : 8)}] `, ctxToken) : ''}
             {theme.paint(ctx, ctxToken)}

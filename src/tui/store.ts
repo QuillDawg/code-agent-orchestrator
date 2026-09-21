@@ -112,7 +112,21 @@ export interface RunSnapshot {
   /** `clock.now()` when it was taken. */
   at: number;
   run: WorkflowRun;
+  /**
+   * When each task last produced output, which is what the sidebar's activity pulse is (§3.2, [D35]).
+   *
+   * Folded into the snapshot rather than set on its own: the events that move it are the noisiest in the
+   * run, and a `setState` per line of agent output would re-render the workspace hundreds of times a second
+   * to move one character. It rides the same 80 ms coalescing window as everything else.
+   */
+  activity?: Readonly<Record<string, number>>;
 }
+
+/** The events that count as a task producing output, for the activity pulse. */
+const OUTPUT_EVENTS = new Set(['task.output', 'task.activity', 'task.transcript']);
+
+/** How long after its last line a task keeps pulsing (§3.2: "output in the last second"). */
+export const PULSE_WINDOW_MS = 1000;
 
 export interface PresentationState {
   view: View;
@@ -266,12 +280,17 @@ export function followRun(store: PresentationStore, bus: EventBus, scheduler: St
   let timer: unknown;
   let detached = false;
 
+  const activity = new Map<string, number>();
+
   const commit = (): void => {
-    store.getState().setSnapshot({ seq: bus.seq, at: clock.now(), run: scheduler.run });
+    store.getState().setSnapshot({ seq: bus.seq, at: clock.now(), run: scheduler.run, activity: Object.fromEntries(activity) });
   };
   commit();
 
-  const off = bus.onAny(() => {
+  const off = bus.onAny((event) => {
+    // Stamped on the event rather than at commit time, so a burst that ends inside the window still says
+    // when its last line actually arrived.
+    if (OUTPUT_EVENTS.has(event.type) && 'taskId' in event && typeof event.taskId === 'string') activity.set(event.taskId, clock.now());
     if (detached || timer !== undefined) return;
     timer = clock.setTimeout(() => {
       timer = undefined;
@@ -313,6 +332,9 @@ export const selectNotice = (s: PresentationState): string | null => s.notice;
 export const selectSnapshot = (s: PresentationState): RunSnapshot | null => s.snapshot;
 export const selectControls = (s: PresentationState): ControlRecord[] => s.controls;
 export const selectQuotas = (s: PresentationState): QuotaSnapshot[] => s.quotas;
+/** When each task last produced output; empty until something has. */
+export const selectActivity = (s: PresentationState): Readonly<Record<string, number>> => s.snapshot?.activity ?? EMPTY_ACTIVITY;
+const EMPTY_ACTIVITY: Readonly<Record<string, number>> = Object.freeze({});
 export const selectRun = (s: PresentationState): WorkflowRun | null => s.snapshot?.run ?? null;
 export const selectTasks = (s: PresentationState): ResolvedTask[] => taskList(s.snapshot);
 export const selectSelectedTask = (s: PresentationState): ResolvedTask | null => taskList(s.snapshot)[s.cursor] ?? null;

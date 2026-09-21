@@ -470,9 +470,11 @@ the terminal's alternate screen:
   "protocol": 1,
   "emit": true,          // set by `cao emit enable` / `cao emit disable`; never edit this by hand
   "retainDays": 14,       // how long an announced run's pointer is kept after it ends
-  "altScreen": false      // off draws the workspace in the normal buffer instead of the alternate
+  "altScreen": false,     // off draws the workspace in the normal buffer instead of the alternate
                           // screen, like --no-alt-screen or CAO_ALT_SCREEN=0; read only if this file
                           // already exists, so a cao with emit off still never touches ~/.cao
+  "theme": "mono"         // the workspace theme: "cyberpunk" (the default) or "mono"; --theme and
+                          // CAO_THEME both win over it, and NO_COLOR wins over all three
 }
 ```
 
@@ -484,6 +486,9 @@ that invocation, and `cao` never creates or writes this file except through `cao
 `cao emit disable`. The full precedence between this file, `--emit`/`--no-emit` and `CAO_EMIT`, what
 "announcing" actually writes, and how to diagnose a desktop app that shows nothing, are in
 [docs/desktop.md](desktop.md). The alternate-screen precedence (`--no-alt-screen` flag, then
-`CAO_ALT_SCREEN`, then this file's `altScreen`, then the default of on) and the rest of the
-workspace's CLI flags and environment variables are in the [README](../README.md#environment-variables)
-and [docs/capabilities.md](capabilities.md#watching-a-run).
+`CAO_ALT_SCREEN`, then this file's `altScreen`, then the default of on) is mirrored by the theme
+(`--theme`, then `CAO_THEME`, then this file's `theme`, then `cyberpunk` — except that `NO_COLOR`, a
+`TERM=dumb` terminal and any terminal that reports no colour force `mono` whatever the four say). The
+rest of the workspace's CLI flags and environment variables are in the
+[README](../README.md#environment-variables) and
+[docs/capabilities.md](capabilities.md#watching-a-run).

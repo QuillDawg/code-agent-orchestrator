@@ -10,15 +10,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { TaskState, AttemptDiff, DiffFileStatus } from 'code-agent-orchestrator-protocol';
-import { STATE_COLOR, stateGlyph, STATE_LABEL } from '../../workflow/states.js';
-import { paint, type Style } from '../../cli/color.js';
+import { stateGlyph, STATE_LABEL } from '../../workflow/states.js';
+import { plainTheme, themeFor, type Theme, type ThemeToken } from '../theme.js';
 import { summarizeDiff } from '../../cli/render/diff.js';
 import { fileLabel, recordFiles, shortenLabel, type ReviewFile } from './files.js';
 import { buildPane, EMPTY_PANE } from './pane.js';
 import { openInEditor } from './editor.js';
 import { glyph } from '../../util/glyphs.js';
 
-const STATUS_STYLE: Record<DiffFileStatus, Style> = { A: 'green', M: 'yellow', D: 'red', R: 'cyan' };
+/** The token each git status letter is drawn in: added, modified, deleted, renamed. */
+const STATUS_TOKEN: Record<DiffFileStatus, ThemeToken> = { A: 'ok', M: 'warn', D: 'danger', R: 'accent2' };
 
 /** The captured diff of one attempt: `diff.json` plus the `diff.patch` beside it. */
 export interface LoadedDiff {
@@ -44,6 +45,8 @@ export interface ReviewViewProps {
   /** Rows the view may draw into, header and footer included. */
   height: number;
   color?: boolean;
+  /** The workspace's theme; the standalone view has only `color` and gets `themeFor`'s answer. */
+  theme?: Theme;
   /** Reads a finished task's captured diff. Called once per attempt and cached; omitted in tests that only drive the list. */
   loadDiff?: (taskId: string) => Promise<LoadedDiff | null>;
   /** Directory relative paths are resolved against when opening an editor. */
@@ -97,6 +100,7 @@ function footerLine(parts: string[], width: number): string {
 
 export function ReviewView(props: ReviewViewProps): React.JSX.Element {
   const { tasks, width, height, color = false, loadDiff, isActive = true } = props;
+  const theme = themeFor(color, props.theme);
   const [cache, setCache] = useState<Record<string, LoadedDiff | null>>({});
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<'list' | 'pane'>('list');
@@ -276,7 +280,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
     const scrolled = paneLines.length > bodyHeight ? `${paneOffset + 1}-${Math.min(paneLines.length, paneOffset + bodyHeight)}/${paneLines.length}` : '';
     // The path gives up columns first: which file this is stays readable from its tail, while the attempt and
     // the position in the file list have nowhere else to be shown.
-    const counts = countsLabel(file, false);
+    const counts = countsLabel(file, plainTheme());
     const attemptText = group.attempt !== undefined ? `  attempt ${group.attempt}` : '';
     const positionText = `  file ${selectedIndex + 1}/${files.length}`;
     const label = shortenLabel(fileLabel(file), Math.max(12, width - group.taskId.length - counts.length - attemptText.length - positionText.length - 2));
@@ -286,9 +290,9 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
       // otherwise leave the key list stranded halfway up the panel.
       <Box flexDirection="column" height={height}>
         <Text wrap="truncate-end">
-          {paint(group.taskId, STATE_COLOR[group.state], color)} {paint(label, 'bold', color)} {countsLabel(file, color)}
-          {paint(attemptText, 'dim', color)}
-          {paint(positionText, 'dim', color)}
+          {theme.paint(group.taskId, theme.stateToken(group.state))} {theme.paint(label, 'bold')} {countsLabel(file, theme)}
+          {theme.paint(attemptText, 'dim')}
+          {theme.paint(positionText, 'dim')}
         </Text>
         <Text wrap="truncate-end" dimColor>
           {[position, scrolled].filter(Boolean).join('   ')}
@@ -304,11 +308,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
           </Text>
         ))}
         <Box flexGrow={1} />
-        {notice && (
-          <Text color="yellow" wrap="truncate-end">
-            {notice}
-          </Text>
-        )}
+        {notice && <Text wrap="truncate-end">{theme.paint(notice, 'warn')}</Text>}
         <Text dimColor wrap="truncate-end">
           {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn scroll`, 'g/G top/bottom', hunks.length > 1 ? 'n/p hunk' : '', files.length > 1 ? `${glyph('left')}${glyph('right')} file` : '', 'O editor', 'Esc list'], width)}
         </Text>
@@ -321,7 +321,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
   const visibleRows = rows.slice(listTop.current, listTop.current + bodyHeight);
   // What is left after the row's own furniture: two levels of indent, the cursor, the status letter, and the
   // widest counts column in the list — those are the numbers the user came for, so the path yields to them.
-  const countsWidth = Math.max(0, ...files.map((f) => countsLabel(f.file, false).length));
+  const countsWidth = Math.max(0, ...files.map((f) => countsLabel(f.file, plainTheme()).length));
   const pathWidth = Math.min(Math.max(10, width - countsWidth - 9), Math.max(0, ...files.map((f) => fileLabel(f.file).length)));
 
   return (
@@ -330,17 +330,17 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
       {visibleRows.map((row) =>
         row.kind === 'task' ? (
           <Text key={`h-${row.group.taskId}`} wrap="truncate-end">
-            {paint(stateGlyph(row.group.state), STATE_COLOR[row.group.state], color)} {paint(row.group.taskId, 'bold', color)}
-            {paint(`  ${groupSummary(row.group, width - row.group.taskId.length - 4)}`, 'dim', color)}
+            {theme.paint(stateGlyph(row.group.state), theme.stateToken(row.group.state))} {theme.paint(row.group.taskId, 'bold')}
+            {theme.paint(`  ${groupSummary(row.group, width - row.group.taskId.length - 4)}`, 'dim')}
           </Text>
         ) : (
           <Text key={`${row.group.taskId}:${row.file.path}`} wrap="truncate-end">
             {'  '}
-            {row.index === selectedIndex ? paint('▶ ', 'cyan', color) : '  '}
-            {paint(row.file.status, STATUS_STYLE[row.file.status], color)}{' '}
-            {paint(shortenLabel(fileLabel(row.file), pathWidth).padEnd(pathWidth), row.index === selectedIndex ? ['inverse', 'bold'] : [], color)}
+            {row.index === selectedIndex ? theme.paint(`${glyph('cursor')} `, 'accent') : '  '}
+            {theme.paint(row.file.status, STATUS_TOKEN[row.file.status])}{' '}
+            {row.index === selectedIndex ? theme.paint(shortenLabel(fileLabel(row.file), pathWidth).padEnd(pathWidth), 'selection') : shortenLabel(fileLabel(row.file), pathWidth).padEnd(pathWidth)}
             {'  '}
-            {countsLabel(row.file, color)}
+            {countsLabel(row.file, theme)}
           </Text>
         ),
       )}
@@ -350,11 +350,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
         </Text>
       )}
       <Box flexGrow={1} />
-      {notice && (
-        <Text color="yellow" wrap="truncate-end">
-          {notice}
-        </Text>
-      )}
+      {notice && <Text wrap="truncate-end">{theme.paint(notice, 'warn')}</Text>}
       <Text dimColor wrap="truncate-end">
         {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn select`, 'g/G first/last', 'Enter hunks', 'O editor', props.onQuit ? 'Esc back' : 'Esc/Q back'], width)}
       </Text>
@@ -363,10 +359,10 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
 }
 
 /** `+12 -4` for a captured record, `binary`, or `×3` for a file only the tool stream has seen. */
-function countsLabel(file: ReviewFile, color: boolean): string {
-  if (file.binary) return paint('binary', 'gray', color);
-  if (file.ops !== undefined) return paint(file.ops > 1 ? `×${file.ops} edits` : 'edited', 'dim', color);
-  return `${paint(`+${file.additions}`, 'green', color)} ${paint(`-${file.deletions}`, 'red', color)}`;
+function countsLabel(file: ReviewFile, theme: Theme): string {
+  if (file.binary) return theme.paint('binary', 'muted');
+  if (file.ops !== undefined) return theme.paint(file.ops > 1 ? `×${file.ops} edits` : 'edited', 'dim');
+  return `${theme.paint(`+${file.additions}`, 'ok')} ${theme.paint(`-${file.deletions}`, 'danger')}`;
 }
 
 /** The first of `candidates` that fits `room`, or the shortest one when none does. */

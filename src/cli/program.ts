@@ -22,7 +22,7 @@ import { DEFAULT_ACK_WAIT_SECONDS } from '../persistence/requests.js';
 import { DEFAULT_WORKFLOW_FILES, terminalWidth } from './util.js';
 import { OrchestratorError } from '../util/errors.js';
 import { packageInfo } from '../util/package-info.js';
-import { isThemeName, THEME_NAMES, type ThemeName } from '../tui/theme.js';
+import { themeNameOf, THEME_NAMES, type ThemeName } from '../tui/theme.js';
 import type { PermissionMode } from 'code-agent-orchestrator-protocol';
 
 const pkg = packageInfo();
@@ -66,8 +66,11 @@ function permissionMode(value: string): PermissionMode {
 }
 
 function themeName(value: string): ThemeName {
-  if (!isThemeName(value)) throw new InvalidArgumentError(`must be one of ${THEME_NAMES.join(', ')}`);
-  return value;
+  // `default` is still taken, silently: it was the name of this palette before stage 4 gave it one, and a
+  // script or an alias that still passes it should keep opening the workspace it always did.
+  const name = themeNameOf(value);
+  if (name !== undefined) return name;
+  throw new InvalidArgumentError(`must be one of ${THEME_NAMES.join(', ')}`);
 }
 
 function collect(value: string, previous: string[] = []): string[] {

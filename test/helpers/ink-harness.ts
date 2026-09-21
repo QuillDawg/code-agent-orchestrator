@@ -48,6 +48,13 @@ export interface RenderTreeOptions {
   columns?: number;
   /** Terminal height the tree lays out against; the thing `ink-testing-library` cannot give. */
   rows?: number;
+  /**
+   * Mount as if a screen reader were attached, which is what `useIsScreenReaderEnabled()` answers.
+   *
+   * Passed as a render option rather than through `INK_SCREEN_READER`, so a case that needs it does not
+   * have to set and restore a process-wide environment variable around a mount.
+   */
+  screenReader?: boolean;
 }
 
 export interface WaitForOptions {
@@ -136,6 +143,7 @@ export function renderTree(element: ReactElement, options: RenderTreeOptions = {
     interactive: true,
     exitOnCtrlC: false,
     patchConsole: false,
+    isScreenReaderEnabled: options.screenReader ?? false,
   });
 
   // Ink clears the screen through `log-update` when the width shrinks, which lands here as a write that is

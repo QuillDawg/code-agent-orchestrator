@@ -102,8 +102,10 @@ describe('markdown', () => {
   it('styles inline code and bold when colour is on', () => {
     const [line] = renderMarkdown('use `npm test` **now**', { color: true, width: 0 });
     expect(stripAnsi(line!)).toBe('use npm test now');
-    expect(line).toContain('[36m');
-    expect(line).toContain('[1m');
+    // The code span is painted with the theme's `accent2`, whose escape depends on how much colour the
+    // terminal running the test reports - so the assertion is "a colour was set", not which one [D35].
+    expect(line).toMatch(new RegExp(`${ESC}\\[(3[0-7]|9[0-7]|38;[25];)`));
+    expect(line).toContain(`${ESC}[1m`);
   });
 });
 

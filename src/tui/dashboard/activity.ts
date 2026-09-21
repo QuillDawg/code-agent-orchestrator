@@ -14,7 +14,9 @@ import {
 } from 'code-agent-orchestrator-protocol';
 import { budgetedFailures } from '../../workflow/scheduler.js';
 import { formatDurationShort } from '../../util/duration.js';
-import { paint, sanitizeText } from '../../cli/color.js';
+import { sanitizeText } from '../../cli/color.js';
+import { glyph } from '../../util/glyphs.js';
+import { themeFor, type Theme, type ThemeToken } from '../theme.js';
 
 /**
  * A worker that has produced nothing for this long is thinking, stuck in a tool, or waiting on the API —
@@ -76,27 +78,30 @@ export interface ActivityCellInput {
   pendingDeps?: readonly string[];
   now: number;
   color?: boolean;
+  /** The workspace's theme; a caller with only `color` gets `themeFor`'s answer. */
+  theme?: Theme;
 }
 
 /** The activity cell, already coloured. Empty when there is nothing worth saying about the row. */
 export function activityCell(input: ActivityCellInput): string {
   const { task, state, entries, startedAt, pendingDeps = [], now, color = true } = input;
+  const theme = themeFor(color, input.theme);
   if (state.state === 'waiting' && state.pendingInteraction) {
-    return paint(`needs you: ${sanitizeText(state.pendingInteraction.title)}`, ['yellow', 'bold'], color);
+    return theme.paint(`needs you: ${sanitizeText(state.pendingInteraction.title)}`, ['warn', 'bold']);
   }
   const retry = retryLabel(state, task, now);
-  if (retry) return paint(retry, state.reason === 'api_error' ? 'yellow' : 'dim', color);
+  if (retry) return theme.paint(retry, state.reason === 'api_error' ? 'warn' : 'dim');
 
   if (ACTIVE_TASK_STATES.has(state.state)) {
     const idle = idleMs(entries, startedAt, now);
-    const marker = idle === undefined ? '' : paint(`  … ${formatDurationShort(idle)} idle`, 'dim', color);
+    const marker = idle === undefined ? '' : theme.paint(`  ${glyph('ellipsis')} ${formatDurationShort(idle)} idle`, 'dim');
     const action = lastAction(entries);
     if (!action) return marker.trimStart();
     const line = sanitizeText(transcriptLine(action));
-    const style = action.kind === 'command' ? 'yellow' : action.kind === 'tool' ? 'cyan' : action.kind === 'error' || action.kind === 'stderr' ? 'red' : undefined;
-    return `${style ? paint(line, style, color) : line}${marker}`;
+    const token: ThemeToken | undefined = action.kind === 'command' ? 'warn' : action.kind === 'tool' ? 'accent2' : action.kind === 'error' || action.kind === 'stderr' ? 'danger' : undefined;
+    return `${token ? theme.paint(line, token) : line}${marker}`;
   }
-  if (pendingDeps.length) return paint(`waiting for: ${pendingDeps.join(', ')}`, 'dim', color);
-  if (state.message) return paint(sanitizeText(state.message).split('\n')[0] ?? '', state.state === 'failed' || state.state === 'blocked' ? 'red' : 'dim', color);
+  if (pendingDeps.length) return theme.paint(`waiting for: ${pendingDeps.join(', ')}`, 'dim');
+  if (state.message) return theme.paint(sanitizeText(state.message).split('\n')[0] ?? '', state.state === 'failed' || state.state === 'blocked' ? 'danger' : 'dim');
   return '';
 }

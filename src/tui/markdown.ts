@@ -2,23 +2,29 @@
  * Light markdown → styled terminal lines. Headings, emphasis, inline code, fenced code, bullets, numbered
  * lists, quotes and links; enough to make agent prose readable without a dependency.
  */
-import { balanceStyles, paint, sanitizeText, visibleLength } from '../cli/color.js';
+import { balanceStyles, sanitizeText, visibleLength } from '../cli/color.js';
 import { glyph, useUnicode } from '../util/glyphs.js';
+import { themeFor, type Theme } from './theme.js';
 
 export interface MarkdownOptions {
   color: boolean;
+  /**
+   * The theme to paint with. Absent from the plain-CLI callers, which have only `color`: they get the
+   * do-nothing theme when it is false and the default palette when it is true (`themeFor`).
+   */
+  theme?: Theme;
   /** Wrap width in columns; 0 disables wrapping. */
   width: number;
 }
 
-function inline(text: string, color: boolean): string {
-  if (!color) return text.replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+function inline(text: string, theme: Theme): string {
+  if (!theme.styled) return text.replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
   let out = text;
-  out = out.replace(/`([^`]+)`/g, (_, code: string) => paint(code, 'cyan'));
-  out = out.replace(/\*\*([^*]+)\*\*/g, (_, bold: string) => paint(bold, 'bold'));
-  out = out.replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:!?)]|$)/g, (_, pre: string, em: string) => `${pre}${paint(em, 'italic')}`);
-  out = out.replace(/(^|[\s(])\*([^*\s][^*]*)\*(?=[\s.,;:!?)]|$)/g, (_, pre: string, em: string) => `${pre}${paint(em, 'italic')}`);
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label: string, url: string) => `${label} ${paint(`(${url})`, 'dim')}`);
+  out = out.replace(/`([^`]+)`/g, (_, code: string) => theme.paint(code, 'accent2'));
+  out = out.replace(/\*\*([^*]+)\*\*/g, (_, bold: string) => theme.paint(bold, 'bold'));
+  out = out.replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:!?)]|$)/g, (_, pre: string, em: string) => `${pre}${theme.paint(em, 'italic')}`);
+  out = out.replace(/(^|[\s(])\*([^*\s][^*]*)\*(?=[\s.,;:!?)]|$)/g, (_, pre: string, em: string) => `${pre}${theme.paint(em, 'italic')}`);
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label: string, url: string) => `${label} ${theme.paint(`(${url})`, 'dim')}`);
   return out;
 }
 
@@ -44,50 +50,51 @@ export function wrapLine(line: string, width: number, indent = ''): string[] {
 }
 
 export function renderMarkdown(text: string, opts: MarkdownOptions): string[] {
-  const { color, width } = opts;
+  const { width } = opts;
+  const theme = themeFor(opts.color, opts.theme);
   const out: string[] = [];
   let inFence = false;
   for (const raw of sanitizeText(text).split('\n')) {
     const line = raw.replace(/\t/g, '  ');
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
-      out.push(paint(inFence ? `${glyph('treeFirst')} ${line.trim().slice(3).trim()}` : glyph('treeLast'), 'dim', color));
+      out.push(theme.paint(inFence ? `${glyph('treeFirst')} ${line.trim().slice(3).trim()}` : glyph('treeLast'), 'dim'));
       continue;
     }
     if (inFence) {
-      out.push(`${paint(`${glyph('vrule')} `, 'dim', color)}${paint(line, 'gray', color)}`);
+      out.push(`${theme.paint(`${glyph('vrule')} `, 'dim')}${theme.paint(line, 'muted')}`);
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
       const level = heading[1]!.length;
-      const body = inline(heading[2]!, color);
-      out.push(...wrapLine(level === 1 ? paint(body, ['bold', 'white'], color) : paint(body, 'bold', color), width));
+      const body = inline(heading[2]!, theme);
+      out.push(...wrapLine(level === 1 ? theme.paint(body, ['bold', 'text']) : theme.paint(body, 'bold'), width));
       continue;
     }
     const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
     if (bullet) {
       const indent = bullet[1]!;
-      out.push(...wrapLine(`${indent}${paint(useUnicode() ? '•' : '-', 'cyan', color)} ${inline(bullet[2]!, color)}`, width, `${indent}  `));
+      out.push(...wrapLine(`${indent}${theme.paint(useUnicode() ? '•' : '-', 'accent2')} ${inline(bullet[2]!, theme)}`, width, `${indent}  `));
       continue;
     }
     const numbered = /^(\s*)(\d+)[.)]\s+(.*)$/.exec(line);
     if (numbered) {
       const indent = numbered[1]!;
       const marker = `${numbered[2]}.`;
-      out.push(...wrapLine(`${indent}${paint(marker, 'cyan', color)} ${inline(numbered[3]!, color)}`, width, `${indent}${' '.repeat(marker.length + 1)}`));
+      out.push(...wrapLine(`${indent}${theme.paint(marker, 'accent2')} ${inline(numbered[3]!, theme)}`, width, `${indent}${' '.repeat(marker.length + 1)}`));
       continue;
     }
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote) {
-      out.push(...wrapLine(`${paint(useUnicode() ? '▏' : '|', 'dim', color)} ${paint(inline(quote[1]!, color), 'italic', color)}`, width, '  '));
+      out.push(...wrapLine(`${theme.paint(useUnicode() ? '▏' : '|', 'dim')} ${theme.paint(inline(quote[1]!, theme), 'italic')}`, width, '  '));
       continue;
     }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      out.push(paint(glyph('rule').repeat(Math.max(3, Math.min(40, width || 40))), 'dim', color));
+      out.push(theme.paint(glyph('rule').repeat(Math.max(3, Math.min(40, width || 40))), 'dim'));
       continue;
     }
-    out.push(...wrapLine(inline(line, color), width));
+    out.push(...wrapLine(inline(line, theme), width));
   }
   // Collapse runs of blank lines so prose stays compact in a small pane.
   const compact: string[] = [];

@@ -121,7 +121,7 @@ export function Overview(props: OverviewProps): React.JSX.Element {
         const ratio = contextRatio(usage);
         const ctx =
           usage?.contextTokens !== undefined && ACTIVE_TASK_STATES.has(state.state)
-            ? theme.paint(`ctx ${formatTokens(usage.contextTokens)}${usage.contextWindow ? `/${formatTokens(usage.contextWindow)}` : ''}`, ratio !== undefined && ratio >= 0.9 ? 'danger' : ratio !== undefined && ratio >= 0.7 ? 'warning' : 'muted')
+            ? theme.paint(`ctx ${formatTokens(usage.contextTokens)}${usage.contextWindow ? `/${formatTokens(usage.contextWindow)}` : ''}`, ratio !== undefined && ratio >= 0.9 ? 'danger' : ratio !== undefined && ratio >= 0.7 ? 'warn' : 'muted')
             : '';
         const cost = usage?.costUsd !== undefined ? theme.paint(formatCost(usage.costUsd), 'muted') : '';
         const activity = activityCell({

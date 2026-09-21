@@ -63,9 +63,9 @@ export function detailLines(input: DetailInput): DetailLine[] {
   out.push({ text: task.id, bold: true });
   out.push({
     text:
-      `Status:       ${theme.paint(`${stateGlyph(state.state)} ${STATE_LABEL[state.state]}`, theme.stateColor(state.state) ?? [])}` +
+      `Status:       ${theme.paint(`${stateGlyph(state.state)} ${STATE_LABEL[state.state]}`, theme.stateToken(state.state))}` +
       (state.message ? `  (${firstLine(sanitizeText(state.message))})` : '') +
-      (state.pendingInteraction ? theme.paint(`  waiting for you: ${sanitizeText(state.pendingInteraction.title)}`, 'warning') : ''),
+      (state.pendingInteraction ? theme.paint(`  waiting for you: ${sanitizeText(state.pendingInteraction.title)}`, 'warn') : ''),
   });
   if (attempt) {
     out.push({ text: `Attempt:      ${attempt.number}${task.retry.attempts ? ` / ${task.retry.attempts + 1}` : ''}${attempt.kind === 'merge' ? ' (merge resolution)' : ''}` });
@@ -85,7 +85,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
         `Usage:        ${usage.costUsd !== undefined ? `${formatCost(usage.costUsd)}  ` : ''}` +
         `${usage.inputTokens !== undefined ? `${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens ?? 0)} out  ` : ''}` +
         `${usage.numTurns !== undefined ? `${usage.numTurns} turns  ` : ''}` +
-        `${ratio !== undefined ? `context ${theme.paint(`[${bar(ratio, 12)}] ${Math.round(ratio * 100)}%`, ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'success')} ${formatTokens(usage.contextTokens ?? 0)}/${formatTokens(usage.contextWindow ?? 0)}` : ''}` +
+        `${ratio !== undefined ? `context ${theme.paint(`[${bar(ratio, 12)}] ${Math.round(ratio * 100)}%`, ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warn' : 'ok')} ${formatTokens(usage.contextTokens ?? 0)}/${formatTokens(usage.contextWindow ?? 0)}` : ''}` +
         `${usage.compactions ? theme.paint(`  ${usage.compactions} compaction${usage.compactions === 1 ? '' : 's'}`, 'muted') : ''}`,
     });
   }
@@ -205,7 +205,7 @@ function attentionLines(run: WorkflowRun, theme: Theme, columns: number): Detail
   if (!id || !state) return [];
   const asked = state.pendingInteraction ? `${state.pendingInteraction.kind}: ${sanitizeText(state.pendingInteraction.title)}` : firstLine(sanitizeText(state.message ?? ''));
   return [
-    { text: theme.paint(`${stateGlyph(state.state)} ${id} ${STATE_LABEL[state.state].toLowerCase()}`, 'warning'), bold: true },
+    { text: theme.paint(`${stateGlyph(state.state)} ${id} ${STATE_LABEL[state.state].toLowerCase()}`, 'warn'), bold: true },
     ...(asked ? [{ text: `  ${truncateVisible(asked, Math.max(10, columns - 2))}`, dim: true }] : []),
   ];
 }
@@ -280,7 +280,7 @@ export function actionLines(actions: readonly { key: string; label: string }[], 
 export function endedLines(run: WorkflowRun, theme: Theme, block: EndedBlock): DetailLine[] {
   const summary = summarize(run);
   const outcome = RUN_OUTCOME[run.state] ?? run.state;
-  const token = run.state === 'completed' ? 'success' : run.state === 'failed' ? 'danger' : 'warning';
+  const token = run.state === 'completed' ? 'ok' : run.state === 'failed' ? 'danger' : 'warn';
   const elapsed = run.startedAt && run.endedAt ? formatDuration(new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()) : '';
   const parts = [
     theme.paint(`Run ${outcome.toLowerCase()}`, token),
@@ -292,7 +292,7 @@ export function endedLines(run: WorkflowRun, theme: Theme, block: EndedBlock): D
   const lines: DetailLine[] = [{ text: parts.join('   '), bold: true }];
   const failure = failureLines(run, theme, { actions: false }).slice(0, -1);
   lines.push(...(failure.length ? failure : attentionLines(run, theme, block.columns)));
-  if (block.banner) for (const line of wrapPlain(block.banner, Math.max(20, block.columns - 2))) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
+  if (block.banner) for (const line of wrapPlain(block.banner, Math.max(20, block.columns - 2))) lines.push({ text: `  ${theme.paint(line, 'warn')}` });
   else for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
   lines.push({ text: ' ' });
   return lines;
@@ -321,16 +321,16 @@ export interface ObserverBlock {
 export function observerLines(run: WorkflowRun, theme: Theme, block: ObserverBlock): DetailLine[] {
   const summary = summarize(run);
   const outcome = RUN_OUTCOME[run.state] ?? run.state;
-  const token = run.state === 'running' ? 'info' : run.state === 'failed' ? 'danger' : 'warning';
+  const token = run.state === 'running' ? 'accent2' : run.state === 'failed' ? 'danger' : 'warn';
   const width = Math.max(20, block.columns - 2);
   const lines: DetailLine[] = [
     { text: [theme.paint(`Run ${outcome.toLowerCase()}`, token), `${summary.success + summary.skipped}/${summary.total} done`, ...(summary.failed + summary.blocked ? [`${summary.failed + summary.blocked} failed`] : [])].join('   '), bold: true },
   ];
-  for (const line of wrapPlain(block.banner, width)) lines.push({ text: `  ${theme.paint(line, 'warning')}` });
+  for (const line of wrapPlain(block.banner, width)) lines.push({ text: `  ${theme.paint(line, 'warn')}` });
   lines.push(...failureLines(run, theme, { actions: false }).slice(0, -1));
   for (const pending of block.pending) {
     const what = truncateVisible(`${pending.taskId} (${pending.what})`, Math.max(10, width - block.answerHint.length - 6));
-    lines.push({ text: `  ${theme.paint('?', 'warning')} ${what}  ${theme.paint(block.answerHint, 'muted')}` });
+    lines.push({ text: `  ${theme.paint('?', 'warn')} ${what}  ${theme.paint(block.answerHint, 'muted')}` });
   }
   for (const line of actionLines(block.actions, block.columns)) lines.push({ text: `  ${line}`, dim: true });
   lines.push({ text: ' ' });

@@ -24,6 +24,27 @@ import type { FooterColumn } from './layout.js';
 /** Who is driving: this process holds the run, or it is watching one another process owns (§2.1). */
 export type WorkspaceRole = 'owner' | 'observer';
 
+/**
+ * The mark in front of whichever region has the keys (§3.2).
+ *
+ * Focus used to be shown by painting the region's title with the `selection` token, which under `mono` -
+ * and on any terminal that rounds the accent to something near the text colour - is no mark at all. A
+ * glyph is one, in every theme and in both alphabets, and it costs the same two columns on every row
+ * whether or not the region has focus, so nothing moves when focus does.
+ */
+export function focusMark(focused: boolean): string {
+  return focused ? `${glyph('focus')} ` : '  ';
+}
+
+/**
+ * How a list says where the cursor is. Under a screen reader it is read aloud, so it is words rather than
+ * a fraction: "3 of 12" is a sentence and "3/12" is announced as a date on more than one reader.
+ */
+export function listPosition(index: number, total: number, screenReader = false): string {
+  const at = total ? index + 1 : 0;
+  return screenReader ? `${at} of ${total}` : `${at}/${total}`;
+}
+
 /** Tasks whose row is asking for a human rather than reporting a state. */
 const NEEDS_HUMAN = new Set(['waiting', 'awaiting_approval', 'needs_input']);
 const WENT_WRONG = new Set(['failed', 'blocked', 'cancelled']);
@@ -60,8 +81,15 @@ export function progressSegments(counts: readonly number[], total: number, width
   return segments;
 }
 
-/** How many rows the header needs this frame, so the layout can be computed before it is drawn. */
-export function headerRowsFor(run: WorkflowRun): number {
+/**
+ * How many rows the header needs this frame, so the layout can be computed before it is drawn.
+ *
+ * Under a screen reader it is one, whatever is happening: a reader announces the frame from the top on
+ * every change, and a three-row header is three lines of chrome read out before the line that changed
+ * (§3.2). The same run's facts are still there, on one line.
+ */
+export function headerRowsFor(run: WorkflowRun, screenReader = false): number {
+  if (screenReader) return 1;
   return waitingTasks(run).length > 0 ? 3 : 2;
 }
 
@@ -83,9 +111,22 @@ export interface HeaderProps {
   badge?: string;
   /** The "needs you" line, already sanitized by the caller; omitted when nothing is waiting. */
   attention?: string;
+  /** Ink says a screen reader is attached: the header collapses to one line (§3.2). */
+  screenReader?: boolean;
 }
 
-export function Header({ run, theme, columns, now, role, badge, attention }: HeaderProps): React.JSX.Element {
+/**
+ * The wordmark (§3.2): the program's name and the run it is showing, on the line the run's own facts are on.
+ *
+ * Deliberately three letters rather than banner art. The header is two rows of a terminal that has
+ * twenty-four of them, and every row an identity takes is a row of the run it is identifying. No separator
+ * glyph either: `▸` is the focus marker three rows further down and must mean one thing on a screen.
+ */
+function wordmark(theme: Theme, runId: string): string {
+  return `${theme.paint('cao', ['accent', 'bold'])} ${theme.paint(runId, 'muted')}`;
+}
+
+export function Header({ run, theme, columns, now, role, badge, attention, screenReader }: HeaderProps): React.JSX.Element {
   const summary = summarize(run);
   const running = run.workflow.tasks.filter((t) => run.tasks[t.id]?.state === 'running').length;
   const waiting = waitingTasks(run).length;
@@ -102,23 +143,40 @@ export function Header({ run, theme, columns, now, role, badge, attention }: Hea
   const segments = progressSegments([summary.success, failed, running + waiting], summary.total, width);
   const full = glyph('barFull');
   const bar =
-    theme.paint(full.repeat(segments[0]!), 'success') +
+    theme.paint(full.repeat(segments[0]!), 'ok') +
     theme.paint(full.repeat(segments[1]!), 'danger') +
-    theme.paint(full.repeat(segments[2]!), 'info') +
+    theme.paint(full.repeat(segments[2]!), 'progress') +
     theme.paint(glyph('barEmpty').repeat(Math.max(0, width - segments.reduce((a, n) => a + n, 0))), 'muted');
+
+  // A screen reader hears the whole frame again on every change, so the header is one sentence of the facts
+  // that matter rather than a wordmark, a progress bar and a row of counters.
+  if (screenReader) {
+    return (
+      <Text wrap="truncate-end">
+        {`cao ${run.workflowName}, run ${run.runId}, ${RUN_STATE_LABEL[run.state] ?? run.state}, ${done} of ${summary.total} done`}
+        {failed ? `, ${failed} failed` : ''}
+        {waiting ? `, ${waiting} waiting for you` : ''}
+        {elapsed ? `, ${elapsed} elapsed` : ''}
+        {`, ${running} of ${run.workflow.execution.maxConcurrency} running, ${badge ?? role}`}
+      </Text>
+    );
+  }
 
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
+        {wordmark(theme, run.runId)}
+        {'  '}
         <Text bold>{run.workflowName}</Text>
         <Text dimColor>
-          {'  '}run {run.runId} {glyph('bullet')} {run.repositoryRoot}
+          {' '}
+          {glyph('bullet')} {run.repositoryRoot}
         </Text>
       </Text>
       <Text wrap="truncate-end">
         [{bar}] {done}/{summary.total} {'  '}
-        {theme.paint(`${glyph('ok')}${summary.success}`, 'success')} {theme.paint(`${glyph('error')}${summary.failed + summary.blocked}`, failed ? 'danger' : 'muted')} {theme.paint(`${stateGlyph('running')}${running}`, 'info')}
-        {waiting ? ` ${theme.paint(`?${waiting}`, 'warning')}` : ''}
+        {theme.paint(`${glyph('ok')}${summary.success}`, 'ok')} {theme.paint(`${glyph('error')}${summary.failed + summary.blocked}`, failed ? 'danger' : 'muted')} {theme.paint(`${stateGlyph('running')}${running}`, 'accent2')}
+        {waiting ? ` ${theme.paint(`?${waiting}`, 'warn')}` : ''}
         {'   '}
         {stateGlyph(run.state === 'running' ? 'running' : run.state === 'failed' ? 'failed' : run.state === 'completed' ? 'success' : 'pending')} {RUN_STATE_LABEL[run.state] ?? run.state}
         {'   '}
@@ -126,13 +184,13 @@ export function Header({ run, theme, columns, now, role, badge, attention }: Hea
         {'   '}
         {running}/{run.workflow.execution.maxConcurrency}
         {'   '}
-        {theme.paint(`[${badge ?? role}]`, role === 'owner' ? 'badge' : 'warning')}
+        {theme.paint(`[${badge ?? role}]`, role === 'owner' ? 'badgeBg' : 'warn')}
         {usage.costUsd !== undefined ? `   ${formatCost(usage.costUsd)}` : ''}
         {!narrow && usage.inputTokens ? theme.paint(`   ${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens ?? 0)} out`, 'muted') : ''}
       </Text>
       {attention !== undefined && (
         <Text wrap="truncate-end">
-          {theme.paint('? Needs you: ', 'warning')}
+          {theme.paint('? Needs you: ', 'warn')}
           {attention}
         </Text>
       )}
@@ -154,6 +212,8 @@ const RUN_STATE_LABEL: Record<string, string> = {
 export interface TabBarProps {
   tab: WorkspaceTab;
   focused: boolean;
+  /** The main panel has the keys: the open tab is marked, because the panel has no title of its own. */
+  mainFocused?: boolean;
   theme: Theme;
   columns: number;
 }
@@ -162,15 +222,16 @@ export interface TabBarProps {
  * The tab bar. The open tab is in brackets rather than merely a different colour, because under `mono` the
  * colour is not there and "which tab am I on" is the one thing the bar exists to answer.
  */
-export function TabBar({ tab, focused, theme, columns }: TabBarProps): React.JSX.Element {
+export function TabBar({ tab, focused, mainFocused, theme, columns }: TabBarProps): React.JSX.Element {
   const cells = WORKSPACE_TABS.map((name) => {
     const label = TAB_LABEL[name];
     if (name !== tab) return theme.paint(` ${label} `, 'tabIdle');
-    return theme.paint(`[${label}]`, focused ? 'selection' : 'tabActive');
+    // The open tab carries the mark when the *panel* under it has the keys: the panel draws no title of its
+    // own, and its name on this bar is the only place a reader can be told which region they are in.
+    return `${mainFocused ? theme.paint(glyph('focus'), 'accent') : ''}${theme.paint(`[${label}]`, focused ? 'selection' : 'tabActive')}`;
   });
-  return (
-    <Text wrap="truncate-end">{truncateVisible(cells.join(theme.paint(glyph('vrule'), 'border')), columns)}</Text>
-  );
+  const mark = focusMark(focused);
+  return <Text wrap="truncate-end">{truncateVisible(`${mark}${cells.join(theme.paint(glyph('vrule'), 'border'))}`, columns)}</Text>;
 }
 
 export interface SidebarProps {
@@ -185,13 +246,21 @@ export interface SidebarProps {
   runningGlyph: string;
   /** What `/` is filtering by, shown in the title so an empty list is never a mystery. */
   search?: string;
+  /**
+   * The tasks that produced output inside the pulse window, and whether this frame is the pulse's "on" one
+   * (§3.2). Empty under reduced motion, a screen reader or `TERM=dumb`, which is how the pulse is turned off.
+   */
+  pulsing?: ReadonlySet<string>;
+  pulseOn?: boolean;
+  /** Ink says a screen reader is attached: the list announces `N of M` rather than `N/M`. */
+  screenReader?: boolean;
 }
 
 /**
  * The task list down the left. One row per task and never more rows than it was given: a 200-task run
  * scrolls inside the window rather than drawing 200 children for Ink to lay out [D9].
  */
-export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runningGlyph, search }: SidebarProps): React.JSX.Element {
+export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runningGlyph, search, pulsing, pulseOn, screenReader }: SidebarProps): React.JSX.Element {
   const listRows = Math.max(1, rows - 1 - (search !== undefined ? 1 : 0));
   const slice = windowOf(tasks, cursor, listRows);
   const marker = slice.aboveMarker ?? slice.belowMarker;
@@ -211,7 +280,7 @@ export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runni
   return (
     <Box flexDirection="column" width={width}>
       <Text wrap="truncate-end">
-        {theme.paint(truncateVisible(`Tasks ${tasks.length ? cursor + 1 : 0}/${tasks.length}`, width), focused ? 'selection' : 'title')}
+        {theme.paint(truncateVisible(`${focusMark(focused)}Tasks ${listPosition(cursor, tasks.length, screenReader)}`, width), focused ? 'selection' : 'title')}
       </Text>
       {search !== undefined && <Text wrap="truncate-end">{theme.paint(truncateVisible(`/${search}`, width), 'accent')}</Text>}
       {shown.items.map((task, i) => {
@@ -222,14 +291,21 @@ export function Sidebar({ tasks, run, cursor, width, rows, theme, focused, runni
         const selected = index === cursor;
         const id = truncateVisible(task.id, idWidth).padEnd(idWidth);
         const agent = agentWidth > 2 ? truncateVisible(agentLabel(task.agent, state?.attempts[state.attempts.length - 1]?.usage?.model ?? task.model), agentWidth).padEnd(agentWidth) : '';
+        // The gutter is the cursor when the row is selected and the activity pulse when it is not: two
+        // columns, one meaning at a time, and nothing on the row moves when a worker goes quiet.
+        const gutter = selected
+          ? theme.paint(`${glyph('cursor')} `, 'accent')
+          : pulsing?.has(task.id) && pulseOn
+            ? theme.paint(`${glyph('pulse')} `, 'accent2')
+            : '  ';
         return (
           <Text key={task.id} wrap="truncate-end">
-            {selected ? theme.paint(`${glyph('cursor')} `, 'accent') : '  '}
+            {gutter}
             <Text color={theme.stateColor(kind)}>{mark}</Text>{' '}
             {selected && focused ? theme.paint(id, 'selection') : id}
             {agent ? theme.paint(` ${agent}`, 'agent') : ''}
             {badgeWidth ? ' ' : ''}
-            {badgeWidth ? theme.paint(attentionBadge(state), 'warning') : ''}
+            {badgeWidth ? theme.paint(attentionBadge(state), 'warn') : ''}
             {theme.paint(shown.scrollbar[i] ?? '', 'border')}
           </Text>
         );
@@ -247,20 +323,22 @@ export interface TaskStripProps {
   theme: Theme;
   focused: boolean;
   runningGlyph: string;
+  /** Ink says a screen reader is attached: the strip announces `N of M` rather than `N/M`. */
+  screenReader?: boolean;
 }
 
 /** What the sidebar collapses to at 80x24: the selected task, where it sits in the list, and its state. */
-export function TaskStrip({ tasks, run, cursor, columns, theme, focused, runningGlyph }: TaskStripProps): React.JSX.Element {
+export function TaskStrip({ tasks, run, cursor, columns, theme, focused, runningGlyph, screenReader }: TaskStripProps): React.JSX.Element {
   const task = tasks[cursor];
   const state = task ? run.tasks[task.id] : undefined;
   const kind = state?.state ?? 'pending';
   const mark = kind === 'running' ? runningGlyph : stateGlyph(kind);
   const badge = attentionBadge(state).trim();
   const label = task ? `${mark} ${task.id}  ${STATE_LABEL[kind]}  ${agentLabel(task.agent, state?.attempts[state.attempts.length - 1]?.usage?.model ?? task.model)}${badge ? ` ${badge}` : ''}` : 'no tasks';
-  const position = `${tasks.length ? cursor + 1 : 0}/${tasks.length}`;
+  const position = listPosition(cursor, tasks.length, screenReader);
   return (
     <Text wrap="truncate-end">
-      {theme.paint(`Task ${position}`, focused ? 'selection' : 'muted')} {truncateVisible(label, Math.max(4, columns - position.length - 7))}
+      {theme.paint(`${focusMark(focused)}Task ${position}`, focused ? 'selection' : 'muted')} {truncateVisible(label, Math.max(4, columns - position.length - 9))}
     </Text>
   );
 }
@@ -316,6 +394,8 @@ export interface FooterProps {
   now?: number;
   /** Whether the footer holds the keys, so `R` is its own and the chips say they can be refreshed. */
   focused?: boolean;
+  /** Ink says a screen reader is attached: the notice folds into the one line the footer is allowed (§3.2). */
+  screenReader?: boolean;
 }
 
 /**
@@ -330,7 +410,7 @@ export interface FooterProps {
  * has to leave room for the keys, so a chip is dropped here too when the line is full — in the same order,
  * freshness first, then the chips from the right.
  */
-export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice, quotas, now, focused }: FooterProps): React.JSX.Element {
+export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice, quotas, now, focused, screenReader }: FooterProps): React.JSX.Element {
   const hintCells = hints ? hints.split(HINT_GAP) : [];
   const alwaysCells = always ?? [];
   const chipCells: string[] = [];
@@ -345,11 +425,20 @@ export function Footer({ hints, always, columns, theme, columnsShown, snapshotAg
     ...hintCells.map((_, i) => hintCells.length - 1 - i),
     ...alwaysCells.map((_, i) => hintCells.length + i),
   ];
-  const kept = fitCells(cells, priority, columns);
+  // The focus mark is part of the line, so the cells are fitted into what is left after it. Fitted into the
+  // whole width instead, the footer came out exactly two columns too long on every frame and Ink cut the
+  // last chip mid-word - which is the failure `fitCells` exists to prevent.
+  const mark = focusMark(Boolean(focused));
+  const kept = fitCells(cells, priority, Math.max(1, columns - mark.length));
+  // Under a screen reader the footer is one line: the notice leads it, because it is the only part of the
+  // footer that is news, and a second row is a second line read out on every frame.
+  if (screenReader) {
+    return <Text wrap="truncate-end">{[notice, `${mark}${kept.join(HINT_GAP)}`].filter(Boolean).join('   ')}</Text>;
+  }
   return (
     <Box flexDirection="column">
-      {notice ? <Text wrap="truncate-end">{theme.paint(notice, 'warning')}</Text> : null}
-      <Text wrap="truncate-end">{theme.paint(kept.join(HINT_GAP), focused ? 'selection' : 'muted')}</Text>
+      {notice ? <Text wrap="truncate-end">{theme.paint(notice, 'warn')}</Text> : null}
+      <Text wrap="truncate-end">{theme.paint(`${mark}${kept.join(HINT_GAP)}`, focused ? 'selection' : 'muted')}</Text>
     </Box>
   );
 }

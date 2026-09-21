@@ -27,6 +27,30 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   the stored label. Doctor still repairs nothing and still starts no agent without `--probe`; the existing
   check ids and their order are unchanged, so a `--json` reader gains entries and loses none.
 
+- **The cyberpunk theme.** The workspace has an identity: violet and cyan accents over a dark violet
+  chrome, one warning colour and one danger colour, panel borders in the accent, badges with a background,
+  and a compact `cao <run id>` wordmark on the header's first line - three letters and the run, not
+  banner art. Every colour is a hex value in one token table (`src/tui/theme.ts`), the only file under
+  `src/tui/` allowed to name a colour, which a test enforces; the values are downsampled to the 256-colour
+  cube and to the sixteen through the same algorithm Ink uses for its own `color` prop, so a word painted
+  inside a `<Text>` is the same colour as the word beside it that was painted by a prop.
+- **`--theme mono` is a readable screen rather than an unpainted one.** It has bold, dim and inverse and no
+  colour at all: the focused region is marked `▸` and a panel that holds the keys is drawn with a doubled
+  border, the open tab is in brackets, the selected row is inverse, and every state, badge and delivery
+  state is a glyph and a word. `NO_COLOR`, `TERM=dumb`, and a terminal that reports no colour all get it.
+- **A `"theme"` key in `~/.cao/config.json`**, read exactly as `altScreen` is - read, never written, and
+  only if the file is already there. `--theme` beats `CAO_THEME`, which beats the file, which beats the
+  default; `NO_COLOR` beats all four.
+- **An activity pulse in the sidebar.** A task that produced output in the last second marks its gutter,
+  two frames, about twice a second. With the running spinner that is everything on the screen that moves,
+  and both stop under `CAO_REDUCED_MOTION=1`, a screen reader, or `TERM=dumb`.
+- **Screen-reader mode.** When Ink reports a screen reader the header and the footer each collapse to a
+  single line, the lists announce their position as `3 of 12` rather than `3/12`, and nothing animates - so
+  a reader is not read three rows of chrome before the row that changed.
+- **The navigation table of §3.2 is written down once.** `?` lists it under **Moving around** and
+  `docs/capabilities.md` carries it as a table; both are generated from one array in
+  `src/tui/workspace/keys.ts`, and a test rebuilds the document's table from that array, so the screen and
+  the page cannot drift apart.
 - **The Logs tab.** Every file a run writes, read a page at a time: the orchestrator's `orchestrator.log`,
   the run's `events.jsonl`, and each attempt's `events.jsonl`, `stdout.log`, `stderr.log` and `prompt.md`.
   `v` steps through the four views — normalized events, stderr, raw output, prompts — `[` and `]` through
@@ -335,6 +359,25 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **The default theme is named `cyberpunk`, not `default`.** `--theme default` and `CAO_THEME=default`
+  still reach it - the name was a placeholder for the palette that has now arrived - but the help, the
+  environment footer and an invalid-value error now say `cyberpunk|mono`.
+- **`--theme mono` and `NO_COLOR` now emit bold, dim and inverse where they used to emit nothing at all.**
+  Under the old mono a selected row and a focused panel were painted with styles the theme then threw away,
+  so neither was visible; they are now inverse and a doubled border. No SGR that sets a *colour* is emitted
+  in either mode, which is what `NO_COLOR` asks for. Plain output is untouched: `cao logs`, `cao peek` and
+  the line renderer paint nothing when they are told there is no colour, exactly as before, so a piped or
+  redirected run produces the bytes it always has.
+- **A terminal that reports no colour at all gets `mono` even when `--theme cyberpunk` asked for it.** A
+  violet escape a terminal will not render arrives as nothing, and then only the glyph and the word are
+  left - which is what `mono` is built for.
+- **`?` scrolls at 120x40.** It gained §3.2's whole navigation table as a last section, and seven sections
+  do not fit forty rows however they are laid out. The panel says how much is below the fold and `PgUp`/
+  `PgDn` reach it, as every other list in the workspace does.
+- **The Overview's one-line summaries end in the terminal's own ellipsis.** The error and interaction lines
+  beside a task were cut with a literal `…` whatever `CAO_ASCII` said, which is mojibake on the console
+  that flag exists for; they now use the same `...` every other cut line uses. The text a runner *records*
+  is unchanged - `events.jsonl` must not carry the alphabet of whichever terminal happened to write it.
 - **`--debug` and `--verbose` now write an `orchestrator.log` worth reading.** The only thing either of
   them used to put in that file was one line per worker naming the pid that was spawned; the orchestrator's
   own decisions were nowhere. It now records, at debug level, the run it is a log of (workflow, task count,

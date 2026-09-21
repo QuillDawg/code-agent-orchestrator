@@ -12,6 +12,7 @@ import {
   selectFocusedTaskId,
   selectNotice,
   selectSelectedTask,
+  selectActivity,
   selectSnapshot,
   selectTaskState,
   selectTasks,
@@ -212,9 +213,35 @@ describe('attachStore', () => {
     const clock = fakeClock();
     const bus = new WorkflowEventBus('run-1');
     const { store, detach } = attachStore(bus, { run: makeRun(['a', 'b']) }, clock);
-    expect(selectSnapshot(store.getState())).toEqual({ seq: 0, at: 1000, run: expect.anything() });
+    // `activity` is empty at attach: nothing has produced output yet, so nothing is pulsing (§3.2).
+    expect(selectSnapshot(store.getState())).toEqual({ seq: 0, at: 1000, run: expect.anything(), activity: {} });
     expect(selectTasks(store.getState()).map((t) => t.id)).toEqual(['a', 'b']);
     detach();
+  });
+
+  it('stamps when each task last produced output, for the sidebar pulse (§3.2)', () => {
+    const clock = fakeClock();
+    const bus = new WorkflowEventBus('run-1');
+    const { store, detach } = attachStore(bus, { run: makeRun(['a', 'b']) }, clock);
+    try {
+      bus.emit({ type: 'task.output', taskId: 'a', attempt: 1, stream: 'stdout', line: 'building' } as never);
+      clock.tick(COALESCE_MS);
+      expect(selectActivity(store.getState())).toEqual({ a: 1000 });
+
+      // A later line moves the stamp; a task that has said nothing has none, and an event that is not
+      // output - a state change, a usage report - is not a task producing output and does not pulse.
+      clock.tick(500);
+      bus.emit({ type: 'task.transcript', taskId: 'a', attempt: 1, entry: { kind: 'system', ts: '', text: 'x' } } as never);
+      bus.emit({ type: 'task.usage', taskId: 'b', attempt: 1, usage: {} } as never);
+      clock.tick(COALESCE_MS);
+      expect(selectActivity(store.getState())).toEqual({ a: 1580 });
+
+      bus.emit({ type: 'task.activity', taskId: 'b', attempt: 1, line: 'npm test' } as never);
+      clock.tick(COALESCE_MS);
+      expect(Object.keys(selectActivity(store.getState())).sort()).toEqual(['a', 'b']);
+    } finally {
+      detach();
+    }
   });
 
   it('coalesces a burst of events into one snapshot on the trailing edge of the window', () => {

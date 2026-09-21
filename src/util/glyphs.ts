@@ -33,6 +33,8 @@ export type GlyphName =
   | 'scrollTrack'
   | 'scrollThumb'
   | 'cursor'
+  | 'focus'
+  | 'pulse'
   | 'vrule'
   | 'barFull'
   | 'barEmpty'
@@ -68,6 +70,8 @@ const UNICODE: Record<GlyphName, string> = {
   scrollTrack: '│',
   scrollThumb: '█',
   cursor: '▶',
+  focus: '▸',
+  pulse: '▪',
   vrule: '│',
   barFull: '█',
   barEmpty: '░',
@@ -104,6 +108,8 @@ const ASCII: Record<GlyphName, string> = {
   scrollTrack: '|',
   scrollThumb: '#',
   cursor: '>',
+  focus: '>',
+  pulse: '*',
   vrule: '|',
   barFull: '#',
   barEmpty: '-',

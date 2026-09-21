@@ -89,10 +89,10 @@ export interface DiagnosticsInput {
 /** What each control outcome is called on screen, and how it is painted (§2.3). */
 const CONTROL_STATUS: Record<ControlRecord['status'], { label: string; token: ThemeToken }> = {
   sent: { label: `sent${glyph('ellipsis')}`, token: 'muted' },
-  accepted: { label: 'accepted', token: 'info' },
-  applied: { label: 'applied', token: 'success' },
+  accepted: { label: 'accepted', token: 'accent2' },
+  applied: { label: 'applied', token: 'ok' },
   rejected: { label: 'rejected', token: 'danger' },
-  timeout: { label: 'no answer yet', token: 'warning' },
+  timeout: { label: 'no answer yet', token: 'warn' },
 };
 
 /** One row of the control history: when, what was asked, and what came back. */
@@ -160,7 +160,7 @@ export function diagnosticsLines(input: DiagnosticsInput): DiagLine[] {
         .join('  '),
     );
     if (latest) {
-      row(`  revision ${latest.number} ${glyph('dash')} ${latest.source} pid ${latest.pid} at ${clock(latest.at)}: ${Object.keys(latest.changes).join(', ') || 'no field'}`, 'info');
+      row(`  revision ${latest.number} ${glyph('dash')} ${latest.source} pid ${latest.pid} at ${clock(latest.at)}: ${Object.keys(latest.changes).join(', ') || 'no field'}`, 'accent2');
       if (latest.appliedToAttempt !== undefined) row(`  carried by attempt ${latest.appliedToAttempt}`, 'muted');
       else row('  not carried by an attempt yet', 'muted');
     }
@@ -173,7 +173,7 @@ export function diagnosticsLines(input: DiagnosticsInput): DiagLine[] {
   else {
     for (const retry of input.retries) {
       const why = [retry.transient ? 'transient failure' : '', retry.nudge ? 'nudge for a missing result' : '', retry.resumeSession ? 'resuming the session' : 'fresh session'].filter(Boolean).join(', ');
-      row(`${clock(retry.at)}  ${retry.taskId} ${glyph('arrow')} attempt ${retry.nextAttempt} after ${formatDurationShort(retry.delayMs)}  ${why}`, 'warning');
+      row(`${clock(retry.at)}  ${retry.taskId} ${glyph('arrow')} attempt ${retry.nextAttempt} after ${formatDurationShort(retry.delayMs)}  ${why}`, 'warn');
     }
   }
 
@@ -213,7 +213,7 @@ export function diagnosticsLines(input: DiagnosticsInput): DiagLine[] {
   else {
     const { pending, acks, rejected } = input.inbox;
     if (!pending.length && !acks.length && !rejected.length) note('No request has ever been written for this run.');
-    for (const request of pending) row(`${clock(request.requestedAt)}  ${request.kind}${request.taskId ? ` ${request.taskId}` : ''} from ${request.source ?? 'unknown'} ${glyph('arrow')} waiting`, 'warning');
+    for (const request of pending) row(`${clock(request.requestedAt)}  ${request.kind}${request.taskId ? ` ${request.taskId}` : ''} from ${request.source ?? 'unknown'} ${glyph('arrow')} waiting`, 'warn');
     for (const ack of acks) row(`${clock(ack.at)}  ack ${ack.id} ${glyph('arrow')} ${ack.status}${ack.reason ? `: ${ack.reason}` : ''}`, ack.status === 'rejected' ? 'danger' : 'muted');
     for (const entry of rejected) row(`rejected ${entry.file.split(/[\\/]/).pop() ?? entry.file}${entry.reason ? `: ${entry.reason}` : ''}`, 'danger');
   }

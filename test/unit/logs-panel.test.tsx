@@ -32,6 +32,15 @@ import { tmpDir } from '../helpers/index.js';
 const NL = String.fromCharCode(10);
 const ts = '2026-09-17T09:12:34.000Z';
 
+/**
+ * A frame line with the running task's spinner cell blanked.
+ *
+ * Row 4 is a sidebar row, and the run under test has a task that is running: the spinner ticks every
+ * 120 ms and the two reads either side of a keystroke are ~40 ms apart, so a third of the time the row
+ * differed by one braille glyph and the case failed for a reason it is not about.
+ */
+const withoutSpinner = (line: string): string => line.replace(/[\u2800-\u28ff]/g, ' ');
+
 const wait = async (ms = 40): Promise<void> => {
   await React.act(async () => {
     await new Promise((r) => setTimeout(r, ms));
@@ -301,13 +310,13 @@ describe('the Logs panel (§3.7, §5 row 12)', () => {
         await wait();
       }
       expect(tree.lastText()).toContain('severity all');
-      const before = tree.lastText().split(NL);
+      const before = tree.lastText().split(NL).map(withoutSpinner);
       tree.write('/');
       await wait();
       // The Logs search is the Logs panel's own. Opening it used to put an empty `/` row above the task
       // list as well, which pushed every task down a row and back again when it closed — and claimed the
       // task list was being filtered by a query that was never going to be typed into it.
-      const opened = tree.lastText().split(NL);
+      const opened = tree.lastText().split(NL).map(withoutSpinner);
       expect(opened[4]).toBe(before[4]);
       expect(opened.some((line) => line.trimEnd() === '/')).toBe(false);
       for (const ch of 'scheduler') {

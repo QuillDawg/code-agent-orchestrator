@@ -8,7 +8,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { STATE_COLOR, stateGlyph, STATE_LABEL } from '../workflow/states.js';
+import { stateGlyph, STATE_LABEL } from '../workflow/states.js';
 import { renderTranscript } from './transcript.js';
 import {
   filterEntries,
@@ -20,7 +20,9 @@ import {
   type RunnerUsage,
 } from 'code-agent-orchestrator-protocol';
 import { entryKey } from '../persistence/transcript-log.js';
-import { paint, sanitizeText, stripAnsi } from '../cli/color.js';
+import { glyph } from '../util/glyphs.js';
+import { sanitizeText, stripAnsi } from '../cli/color.js';
+import { themeFor, type Theme } from './theme.js';
 import { formatCost, formatTokens } from './format.js';
 
 export interface ViewerTask {
@@ -42,6 +44,8 @@ export interface TranscriptViewerProps {
   width: number;
   height: number;
   color: boolean;
+  /** The workspace's theme. `cao logs --follow` has only `color` and gets `themeFor`'s answer. */
+  theme?: Theme;
   onSelectTask: (id: string) => void;
   onSelectAttempt?: (attempt: number) => void;
   onExit: () => void;
@@ -59,23 +63,24 @@ export interface TranscriptViewerProps {
 
 const MAX_STRIP_TASKS = 6;
 
-function stripLine(tasks: ViewerTask[], selected: number, width: number, color: boolean): string {
+function stripLine(tasks: ViewerTask[], selected: number, width: number, theme: Theme): string {
   const start = Math.max(0, Math.min(selected - Math.floor(MAX_STRIP_TASKS / 2), tasks.length - MAX_STRIP_TASKS));
   const shown = tasks.slice(start, start + MAX_STRIP_TASKS);
   const parts = shown.map((t, i) => {
     const idx = start + i;
     const label = `${stateGlyph(t.state)} ${t.id}`;
-    return idx === selected ? paint(` ${label} `, ['inverse', 'bold'], color) : paint(` ${label} `, STATE_COLOR[t.state], color);
+    return idx === selected ? theme.paint(` ${label} `, 'selection') : theme.paint(` ${label} `, theme.stateToken(t.state));
   });
-  const more = tasks.length > shown.length ? paint(` +${tasks.length - shown.length} `, 'dim', color) : '';
-  const left = start > 0 ? paint('◀ ', 'dim', color) : '';
-  const right = start + shown.length < tasks.length ? paint(' ▶', 'dim', color) : '';
+  const more = tasks.length > shown.length ? theme.paint(` +${tasks.length - shown.length} `, 'dim') : '';
+  const left = start > 0 ? theme.paint(`${glyph('left')} `, 'dim') : '';
+  const right = start + shown.length < tasks.length ? theme.paint(` ${glyph('right')}`, 'dim') : '';
   const line = `${left}${parts.join(' ')}${more}${right}`;
   return width > 0 && line.length > width * 3 ? line.slice(0, width * 3) : line;
 }
 
 export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Element {
   const { tasks, taskId, entries, width, height, color, isActive = true } = props;
+  const theme = themeFor(color, props.theme);
   const selected = Math.max(0, tasks.findIndex((t) => t.id === taskId));
   const task = tasks[selected];
   const [offset, setOffset] = useState(0); // lines scrolled up from the bottom; 0 = auto-follow
@@ -110,8 +115,8 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
   const atStart = startBefore !== null && startBefore === oldestKey;
   const shown = useMemo(() => filterEntries(all, filter, showThinking), [all, filter, showThinking]);
   const lines = useMemo(
-    () => renderTranscript(shown, { color, width: Math.max(20, width - 1), showToolResults, showThinking, timestamps: width >= 100 ? true : 'short' }),
-    [shown, color, width, showToolResults, showThinking],
+    () => renderTranscript(shown, { color, theme, width: Math.max(20, width - 1), showToolResults, showThinking, timestamps: width >= 100 ? true : 'short' }),
+    [shown, color, theme, width, showToolResults, showThinking],
   );
   const bodyHeight = Math.max(3, height - 6);
   const maxOffset = Math.max(0, lines.length - bodyHeight);
@@ -168,9 +173,9 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
   const hiddenMatches = useMemo(() => {
     if (!query || showToolResults) return 0;
     const needle = query.toLowerCase();
-    const expanded = renderTranscript(shown, { color, width: Math.max(20, width - 1), showToolResults: true, showThinking, timestamps: width >= 100 ? true : 'short' });
+    const expanded = renderTranscript(shown, { color, theme, width: Math.max(20, width - 1), showToolResults: true, showThinking, timestamps: width >= 100 ? true : 'short' });
     return Math.max(0, expanded.filter((l) => stripAnsi(l).toLowerCase().includes(needle)).length - matches.length);
-  }, [query, showToolResults, shown, color, width, showThinking, matches.length]);
+  }, [query, showToolResults, shown, color, theme, width, showThinking, matches.length]);
 
   /** Scroll so `line` sits in the middle of the body. */
   const jumpTo = (line: number): void => {
@@ -294,11 +299,11 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
   const ctx = usage?.contextTokens !== undefined ? `ctx ${formatTokens(usage.contextTokens)}${usage.contextWindow ? `/${formatTokens(usage.contextWindow)}` : ''}` : '';
   const cost = usage?.costUsd !== undefined ? formatCost(usage.costUsd) : '';
   const files = task?.filesChanged ? `±${task.filesChanged} files` : '';
-  const meta = [task ? paint(STATE_LABEL[task.state], STATE_COLOR[task.state], color) : '', attemptInfo, task?.elapsed, ctx, cost, files].filter(Boolean).join('  ');
+  const meta = [task ? theme.paint(STATE_LABEL[task.state], theme.stateToken(task.state)) : '', attemptInfo, task?.elapsed, ctx, cost, files].filter(Boolean).join('  ');
   // Below 100 columns both the meta line and the key list are wider than the terminal, and truncating them
   // drops exactly what a narrow terminal needs most: where you are, and how to get out.
   const narrow = width < 100;
-  const scrolled = clamped > 0 ? paint(narrow ? `  ↑ ${clamped} lines (G to follow)` : `  ↑ ${clamped} lines above the end (Shift+G to follow)`, 'yellow', color) : '';
+  const scrolled = clamped > 0 ? theme.paint(narrow ? `  ${glyph('up')} ${clamped} lines (G to follow)` : `  ${glyph('up')} ${clamped} lines above the end (Shift+G to follow)`, 'warn') : '';
   const keys = narrow
     ? `←→ task   P pick   [ ] attempt   ↑↓ scroll   g/G ends   ${props.footerHint ?? 'Q back'}`
     : `←→/Tab task   1-9 jump   P pick   [ ] attempt   ↑↓ PgUp PgDn scroll   g oldest   G follow   ${props.footerHint ?? 'Q/Esc back'}`;
@@ -310,11 +315,11 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
     : collapsed || 'no matches';
 
   const modes = [
-    filter === 'all' ? '' : paint(`filter: ${FILTER_LABEL[filter]}`, ['cyan', 'bold'], color),
-    showThinking ? paint('thinking', ['magenta', 'bold'], color) : '',
-    query ? paint(`/${sanitizeText(query)} ${matchCounter}`, matches.length ? ['yellow', 'bold'] : hiddenMatches ? 'yellow' : 'red', color) : '',
-    loadingOlder ? paint('loading older…', 'dim', color) : '',
-    atStart ? paint('start of the transcript', 'dim', color) : '',
+    filter === 'all' ? '' : theme.paint(`filter: ${FILTER_LABEL[filter]}`, ['accent2', 'bold']),
+    showThinking ? theme.paint('thinking', ['agent', 'bold']) : '',
+    query ? theme.paint(`/${sanitizeText(query)} ${matchCounter}`, matches.length ? ['warn', 'bold'] : hiddenMatches ? 'warn' : 'danger') : '',
+    loadingOlder ? theme.paint(`loading older${glyph('ellipsis')}`, 'dim') : '',
+    atStart ? theme.paint('start of the transcript', 'dim') : '',
   ].filter(Boolean);
 
   if (picker) {
@@ -325,7 +330,7 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
         {tasks.map((t, i) => (
           <Text key={t.id} inverse={i === pickerCursor} wrap="truncate-end">
             {i === pickerCursor ? '> ' : '  '}
-            {paint(`${stateGlyph(t.state)} `, STATE_COLOR[t.state], color)}
+            {theme.paint(`${stateGlyph(t.state)} `, theme.stateToken(t.state))}
             {t.id.padEnd(28)} {STATE_LABEL[t.state].padEnd(12)} {(t.elapsed ?? '').padStart(9)}  {t.usage?.costUsd !== undefined ? formatCost(t.usage.costUsd) : ''}  {t.filesChanged ? `±${t.filesChanged}` : ''}
           </Text>
         ))}
@@ -335,27 +340,27 @@ export function TranscriptViewer(props: TranscriptViewerProps): React.JSX.Elemen
 
   return (
     <Box flexDirection="column">
-      <Text wrap="truncate-end">{stripLine(tasks, selected, width, color)}</Text>
+      <Text wrap="truncate-end">{stripLine(tasks, selected, width, theme)}</Text>
       <Text wrap="truncate-end" dimColor={!task?.pending}>
-        {task?.pending ? paint(`? Needs you: ${sanitizeText(task.pending)}`, ['yellow', 'bold'], color) : meta}
+        {task?.pending ? theme.paint(`? Needs you: ${sanitizeText(task.pending)}`, ['warn', 'bold']) : meta}
         {scrolled}
       </Text>
       {visible.length === 0 && <Text dimColor>  {shown.length === 0 && all.length ? '(nothing matches this filter)' : '(no output yet)'}</Text>}
       {visible.map((l, i) => (
         <Text key={i} wrap="truncate-end">
-          {firstVisible + i === current ? paint(stripAnsi(l), 'inverse', color) : l}
+          {firstVisible + i === current ? theme.paint(stripAnsi(l), 'selection') : l}
         </Text>
       ))}
       {/* One line that is the search prompt while typing, otherwise whatever modes are on, then the keys. */}
       {typing !== null ? (
         <Text wrap="truncate-end">
-          {paint(`/${sanitizeText(typing)}`, ['yellow', 'bold'], color)}
-          {paint('   Enter search   Esc cancel', 'dim', color)}
+          {theme.paint(`/${sanitizeText(typing)}`, ['warn', 'bold'])}
+          {theme.paint('   Enter search   Esc cancel', 'dim')}
         </Text>
       ) : (
         <Text wrap="truncate-end">
           {modes.length ? `${modes.join('  ')}   ` : ''}
-                {paint(narrow ? '/ search   n/N match   k filter   T think   t expand' : '/ search   n/N match   k filter   T thinking   t tool output + subagents', 'dim', color)}
+                {theme.paint(narrow ? '/ search   n/N match   k filter   T think   t expand' : '/ search   n/N match   k filter   T thinking   t tool output + subagents', 'dim')}
         </Text>
       )}
       <Text dimColor wrap="truncate-end">

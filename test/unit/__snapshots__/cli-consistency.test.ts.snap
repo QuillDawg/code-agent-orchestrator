@@ -51,7 +51,7 @@ Environment:
   CAO_DEBUG            debug logging, stack traces, and the Diagnostics tab (also --debug)
   CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)
   CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)
-  CAO_THEME            workspace theme: default|mono (also --theme)
+  CAO_THEME            workspace theme: cyberpunk|mono (also --theme)
   CAO_REDUCED_MOTION   1 stops the spinner and the activity pulse
   NO_COLOR/FORCE_COLOR disable or force ANSI colour (also --color)
   COLUMNS              width to lay tables out in when there is no terminal to ask

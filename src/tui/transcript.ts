@@ -19,7 +19,8 @@ import {
   type PlannedEntry,
   type TranscriptEntry,
 } from 'code-agent-orchestrator-protocol';
-import { paint, sanitizeText, type Style } from '../cli/color.js';
+import { sanitizeText } from '../cli/color.js';
+import { themeFor, type Paintable, type Theme } from './theme.js';
 import { renderMarkdown, wrapLine } from './markdown.js';
 import { formatElapsed } from './format.js';
 import { formatClock } from '../util/duration.js';
@@ -27,6 +28,11 @@ import { glyph } from '../util/glyphs.js';
 
 export interface TranscriptRenderOptions {
   color: boolean;
+  /**
+   * The theme to paint with. The plain-CLI callers have only `color`, and get the do-nothing theme when it
+   * is false - `cao logs` into a pipe writes the bytes it always has - and the default palette when true.
+   */
+  theme?: Theme;
   /** Wrap width in columns; 0 disables wrapping. */
   width: number;
   /** Show full tool output, and the entries of every subagent, instead of a collapsed summary. */
@@ -62,7 +68,7 @@ function stamp(ts: string, opts: TranscriptRenderOptions): string {
   const short = opts.timestamps === 'short';
   const width = stampWidth(opts.timestamps) - 1;
   const clock = Number.isNaN(new Date(ts).getTime()) ? '' : formatClock(ts, short);
-  return paint(`${clock.padEnd(width)} `, 'dim', opts.color);
+  return themeFor(opts.color, opts.theme).paint(`${clock.padEnd(width)} `, 'dim');
 }
 
 /** Sanitized lines of agent text (CRLF and lone CR both end a line). */
@@ -70,8 +76,8 @@ function textLines(text: string): string[] {
   return sanitizeText(text.replace(/\r\n?/g, '\n')).split('\n');
 }
 
-function block(lines: string[], gutter: string, styles: Style | Style[], color: boolean, width: number): string[] {
-  const g = paint(gutter, styles, color);
+function block(lines: string[], gutter: string, styles: Paintable | Paintable[], theme: Theme, width: number): string[] {
+  const g = theme.paint(gutter, styles);
   const pad = ' '.repeat(gutter.length);
   const out: string[] = [];
   lines.forEach((l, i) => {
@@ -84,73 +90,73 @@ function block(lines: string[], gutter: string, styles: Style | Style[], color: 
  * The tail of a tool call line: ` · 0.4s` once the result has arrived, ` · no result` when the attempt ended
  * without one (which is exactly the tool a crashed or timed-out worker was sitting in), nothing while it runs.
  */
-function elapsed(ctx: EntryContext, color: boolean): string {
-  if (ctx.elapsedMs !== undefined) return paint(` ${glyph('bullet')} ${formatElapsed(ctx.elapsedMs)}`, 'dim', color);
-  return ctx.unanswered ? paint(` ${glyph('bullet')} no result`, ['yellow', 'dim'], color) : '';
+function elapsed(ctx: EntryContext, theme: Theme): string {
+  if (ctx.elapsedMs !== undefined) return theme.paint(` ${glyph('bullet')} ${formatElapsed(ctx.elapsedMs)}`, 'dim');
+  return ctx.unanswered ? theme.paint(` ${glyph('bullet')} no result`, ['warn', 'dim']) : '';
 }
 
 /** Lines for one entry (no timestamp), already wrapped to `width`. */
 function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: EntryContext, width: number): string[] {
-  const { color } = opts;
+  const theme = themeFor(opts.color, opts.theme);
   switch (entry.kind) {
     case 'text':
-      return block(renderMarkdown(entry.text, { color, width: width > 0 ? width - 2 : 0 }), `${glyph('say')} `, 'green', color, width);
+      return block(renderMarkdown(entry.text, { color: opts.color, theme: opts.theme, width: width > 0 ? width - 2 : 0 }), `${glyph('say')} `, 'ok', theme, width);
     case 'thinking':
       return block(
-        textLines(entry.text).map((l) => paint(l, ['magenta', 'dim'], color)),
+        textLines(entry.text).map((l) => theme.paint(l, ['agent', 'dim'])),
         `${glyph('thinking')} `,
-        ['magenta', 'dim'],
-        color,
+        ['agent', 'dim'],
+        theme,
         width,
       );
     case 'command': {
       const lines = textLines(entry.command);
-      return block(lines.map((l, i) => `${paint(l, 'yellow', color)}${i === 0 ? elapsed(ctx, color) : ''}`), '$ ', ['yellow', 'bold'], color, width);
+      return block(lines.map((l, i) => `${theme.paint(l, 'warn')}${i === 0 ? elapsed(ctx, theme) : ''}`), '$ ', ['warn', 'bold'], theme, width);
     }
     case 'tool': {
       const icon = entry.fileOp ? `${glyph('fileOp')} ` : `${glyph('tool')} `;
-      return block([`${paint(sanitizeText(entry.line), 'cyan', color)}${elapsed(ctx, color)}`], icon, 'cyan', color, width);
+      return block([`${theme.paint(sanitizeText(entry.line), 'accent2')}${elapsed(ctx, theme)}`], icon, 'accent2', theme, width);
     }
     case 'tool_result': {
       const all = textLines(entry.text);
       const shown = opts.showToolResults ? all : all.slice(0, COLLAPSED_RESULT_LINES);
       const hidden = all.length - shown.length;
-      const style: Style[] = entry.isError ? ['red', 'dim'] : ['gray'];
+      const style: Paintable[] = entry.isError ? ['danger', 'dim'] : ['muted'];
       // A result normally carries no time (its call line does), except when a surface renders line by line and
       // the call has already scrolled past — then this is the only place the number can go.
-      const lines = shown.map((l, i) => `${paint(l, style, color)}${i === 0 ? elapsed(ctx, color) : ''}`);
-      if (hidden > 0) lines.push(paint(`${glyph('ellipsis')} ${hidden} more line${hidden === 1 ? '' : 's'} (t to expand)`, 'dim', color));
-      return block(lines, '    ', 'dim', color, width);
+      const lines = shown.map((l, i) => `${theme.paint(l, style)}${i === 0 ? elapsed(ctx, theme) : ''}`);
+      if (hidden > 0) lines.push(theme.paint(`${glyph('ellipsis')} ${hidden} more line${hidden === 1 ? '' : 's'} (t to expand)`, 'dim'));
+      return block(lines, '    ', 'dim', theme, width);
     }
     case 'stderr':
-      return block([paint(sanitizeText(entry.text), ['red', 'dim'], color)], `  ${glyph('warning')} `, ['red', 'dim'], color, width);
-    // The operator's own message. Deliberately not `say`/green: a transcript is unreadable if the human's
-    // turn and the agent's turn are drawn the same way, and the only mark a mono terminal has is the gutter.
+      return block([theme.paint(sanitizeText(entry.text), ['danger', 'dim'])], `  ${glyph('warning')} `, ['danger', 'dim'], theme, width);
+    // The operator's own message. Deliberately not the agent's own token: a transcript is unreadable if the
+    // human's turn and the agent's turn are drawn the same way, and a mono terminal has only the gutter.
     case 'user':
       return block(
-        textLines(entry.text).map((l) => paint(l, ['blue', 'bold'], color)),
+        textLines(entry.text).map((l) => theme.paint(l, ['accent', 'bold'])),
         '> ',
-        ['blue', 'bold'],
-        color,
+        ['accent', 'bold'],
+        theme,
         width,
       );
     case 'question': {
       const lines: string[] = [];
       for (const q of entry.questions) {
-        lines.push(paint(sanitizeText(q.question), ['yellow', 'bold'], color));
+        lines.push(theme.paint(sanitizeText(q.question), ['warn', 'bold']));
         q.options.forEach((o, i) =>
-          lines.push(`  ${paint(`${i + 1})`, 'yellow', color)} ${sanitizeText(o.label)}${o.description ? paint(` ${glyph('dash')} ${sanitizeText(o.description)}`, 'dim', color) : ''}`),
+          lines.push(`  ${theme.paint(`${i + 1})`, 'warn')} ${sanitizeText(o.label)}${o.description ? theme.paint(` ${glyph('dash')} ${sanitizeText(o.description)}`, 'dim') : ''}`),
         );
       }
-      lines.push(entry.answer !== undefined ? paint(`${glyph('arrow')} ${sanitizeText(entry.answer)}`, 'green', color) : paint(`${glyph('arrow')} waiting for your answer`, 'yellow', color));
-      return block(lines, '? ', ['yellow', 'bold'], color, width);
+      lines.push(entry.answer !== undefined ? theme.paint(`${glyph('arrow')} ${sanitizeText(entry.answer)}`, 'ok') : theme.paint(`${glyph('arrow')} waiting for your answer`, 'warn'));
+      return block(lines, '? ', ['warn', 'bold'], theme, width);
     }
     case 'permission': {
-      const lines = [paint(`Permission: ${sanitizeText(entry.title)}`, ['yellow', 'bold'], color)];
-      if (entry.decision === 'allow') lines.push(paint(`${glyph('arrow')} allowed`, 'green', color));
-      else if (entry.decision === 'deny') lines.push(paint(`${glyph('arrow')} denied${entry.message ? `: ${sanitizeText(entry.message)}` : ''}`, 'red', color));
-      else lines.push(paint(`${glyph('arrow')} waiting for your decision`, 'yellow', color));
-      return block(lines, '? ', ['yellow', 'bold'], color, width);
+      const lines = [theme.paint(`Permission: ${sanitizeText(entry.title)}`, ['warn', 'bold'])];
+      if (entry.decision === 'allow') lines.push(theme.paint(`${glyph('arrow')} allowed`, 'ok'));
+      else if (entry.decision === 'deny') lines.push(theme.paint(`${glyph('arrow')} denied${entry.message ? `: ${sanitizeText(entry.message)}` : ''}`, 'danger'));
+      else lines.push(theme.paint(`${glyph('arrow')} waiting for your decision`, 'warn'));
+      return block(lines, '? ', ['warn', 'bold'], theme, width);
     }
     case 'result': {
       // A worker that stopped for a human neither succeeded nor failed. Drawn as a tick it reads as a task
@@ -161,26 +167,26 @@ function entryLines(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: 
       // it says so, and it is drawn dim rather than as a second green tick at the end of the attempt.
       const label = entry.intermediate ? 'intermediate result: ' : '';
       const head = `${label}${sanitizeText(entry.status ?? (entry.isError ? 'error' : 'done'))}${entry.summary ? ` ${glyph('dash')} ${textLines(entry.summary)[0]}` : ''}`;
-      const style: Style[] = entry.intermediate ? ['dim'] : waiting ? ['yellow', 'bold'] : ok ? ['green', 'bold'] : ['red', 'bold'];
-      const lines = [paint(head, style, color)];
-      if (entry.error) lines.push(paint(textLines(entry.error)[0] ?? '', entry.intermediate ? 'dim' : waiting ? 'yellow' : 'red', color));
-      if (entry.costUsd !== undefined) lines.push(paint(`cost $${entry.costUsd.toFixed(4)}`, 'dim', color));
+      const style: Paintable[] = entry.intermediate ? ['dim'] : waiting ? ['warn', 'bold'] : ok ? ['ok', 'bold'] : ['danger', 'bold'];
+      const lines = [theme.paint(head, style)];
+      if (entry.error) lines.push(theme.paint(textLines(entry.error)[0] ?? '', entry.intermediate ? 'dim' : waiting ? 'warn' : 'danger'));
+      if (entry.costUsd !== undefined) lines.push(theme.paint(`cost $${entry.costUsd.toFixed(4)}`, 'dim'));
       // '?' is the marker every other surface uses for a task that needs you, in both alphabets.
       const gutter = entry.intermediate ? `${glyph('bullet')} ` : waiting ? '? ' : ok ? `${glyph('ok')} ` : `${glyph('error')} `;
-      return block(lines, gutter, entry.intermediate ? 'dim' : waiting ? 'yellow' : ok ? 'green' : 'red', color, width);
+      return block(lines, gutter, entry.intermediate ? 'dim' : waiting ? 'warn' : ok ? 'ok' : 'danger', theme, width);
     }
     case 'error':
-      return block([paint(sanitizeText(entry.text), 'red', color)], `${glyph('error')} `, ['red', 'bold'], color, width);
+      return block([theme.paint(sanitizeText(entry.text), 'danger')], `${glyph('error')} `, ['danger', 'bold'], theme, width);
     case 'system':
-      return block([paint(sanitizeText(entry.text), 'dim', color)], `${glyph('bullet')} `, 'dim', color, width);
+      return block([theme.paint(sanitizeText(entry.text), 'dim')], `${glyph('bullet')} `, 'dim', theme, width);
     // §4.5 — an event type this build does not know is still a line: its name, then the record as it was
     // written. The terminal has no expander, so the detail is simply there, dim, below the name.
     case 'unknown':
       return block(
-        [paint(sanitizeText(entry.type), 'dim', color), ...textLines(entry.raw).map((l) => paint(l, 'dim', color))],
+        [theme.paint(sanitizeText(entry.type), 'dim'), ...textLines(entry.raw).map((l) => theme.paint(l, 'dim'))],
         `${glyph('bullet')} `,
         'dim',
-        color,
+        theme,
         width,
       );
   }
@@ -198,7 +204,10 @@ const renderCache = new WeakMap<TranscriptEntry, Map<string, string[]>>();
 /** Lines for one entry (no timestamp), indented by its nesting depth. */
 export function renderEntry(entry: TranscriptEntry, opts: TranscriptRenderOptions, ctx: EntryContext = {}): string[] {
   const depth = ctx.depth ?? 0;
-  const key = `${opts.color ? 1 : 0}|${opts.width}|${opts.timestamps ?? ''}|${opts.showToolResults ? 1 : 0}|${depth}|${ctx.elapsedMs ?? ''}|${ctx.unanswered ? 1 : 0}`;
+  // The theme is part of the key: the same entry renders to different escapes under `cyberpunk` and `mono`,
+  // and a cache that only knew "colour: yes" handed the second one the first one's lines.
+  const painter = themeFor(opts.color, opts.theme);
+  const key = `${painter.name}|${painter.styled ? 1 : 0}|${painter.level}|${opts.width}|${opts.timestamps ?? ''}|${opts.showToolResults ? 1 : 0}|${depth}|${ctx.elapsedMs ?? ''}|${ctx.unanswered ? 1 : 0}`;
   const cached = renderCache.get(entry);
   const hit = cached?.get(key);
   if (hit) return hit;
@@ -232,7 +241,7 @@ export function renderTranscript(entries: TranscriptEntry[], opts: TranscriptRen
         if (opts.showToolResults) render(item.children, depth + 1);
         else {
           const n = item.nested ?? item.children.length;
-          push(null, [`${NEST_INDENT.repeat(depth + 1)}${paint(`${glyph('ellipsis')} ${n} subagent ${n === 1 ? 'entry' : 'entries'} (t to expand)`, 'dim', opts.color)}`]);
+          push(null, [`${NEST_INDENT.repeat(depth + 1)}${themeFor(opts.color, opts.theme).paint(`${glyph('ellipsis')} ${n} subagent ${n === 1 ? 'entry' : 'entries'} (t to expand)`, 'dim')}`]);
         }
       }
       // The report of a delegating call, always shown: it is the answer the parent agent actually acted on.

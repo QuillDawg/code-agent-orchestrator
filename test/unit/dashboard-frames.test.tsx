@@ -26,7 +26,7 @@ import path from 'node:path';
 import React from 'react';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
-import { frameHeight, renderTree } from '../helpers/ink-harness.js';
+import { frameHeight, renderTree, KEYS } from '../helpers/ink-harness.js';
 
 const ESC = String.fromCharCode(27);
 import type { TranscriptEntry } from 'code-agent-orchestrator-protocol';
@@ -227,17 +227,29 @@ describe('dashboard frames', () => {
    * editor's block and quietly pushed that last section off the bottom, where an operator who did not know
    * it was there had no reason to go looking.
    */
-  it('shows the whole of the help at 120x40, with nothing left below the fold', async () => {
+  /**
+   * Stage 4 added §3.2's whole navigation table to `?` [D35], and the panel no longer fits a 40-row
+   * terminal: seven sections do not, however they are laid out. What has to stay true is what the property
+   * was for - that nothing in the help is *unreachable* - so that is what is asserted now: the panel says
+   * how much is below the fold, `PgDn` reaches it, and the last section is still there when it does.
+   */
+  it('keeps the whole of the help reachable at 120x40, and says how much is below the fold', async () => {
     const tree = renderTree(element, { columns: 120, rows: 40 });
     try {
       await wait();
       tree.write('?');
       await wait();
       await tree.waitFor((frame) => frame.includes('the panel with the keys'));
-      const frame = normalise(tree.lastText());
+      expect(normalise(tree.lastText()), 'the help never says there is more').toMatch(/more {3}/);
+      let frame = '';
+      for (let page = 0; page < 8 && !frame.includes('When a worker needs you'); page += 1) {
+        tree.write(KEYS.pageDown);
+        await wait();
+        frame = normalise(tree.lastText());
+      }
       expect(frame).toContain('When a worker needs you');
       expect(frame).toContain('choose an answer');
-      expect(frame, 'the help scrolls at 120x40').not.toMatch(/more {3}/);
+      expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(40);
     } finally {
       tree.unmount();
     }

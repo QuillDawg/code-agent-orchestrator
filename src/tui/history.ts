@@ -20,8 +20,9 @@ import { EDIT_FIELD_LABEL } from '../workflow/control/edit.js';
 export { EDIT_FIELD_LABEL };
 import { glyph } from '../util/glyphs.js';
 import { formatClock, formatDuration, formatDurationShort } from '../util/duration.js';
-import { firstLine, truncate } from '../util/misc.js';
+import { firstLine } from '../util/misc.js';
 import { sanitizeText } from '../util/text.js';
+import { truncateVisible } from '../cli/util.js';
 import { formatCost } from './format.js';
 
 export const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
@@ -73,9 +74,16 @@ const SOURCE_LABEL: Record<InteractionAnswerSource, string> = {
   aborted: 'the dashboard could not answer',
 };
 
-/** An error or a title as one short, terminal-safe line: these end up in a cell next to other fields. */
+/**
+ * An error or a title as one short, terminal-safe line: these end up in a cell next to other fields.
+ *
+ * `truncateVisible` rather than `truncate`, because the mark it ends in is on a *screen*: `truncate`'s is a
+ * literal ellipsis, which is right for the text a runner records into `events.jsonl` - that file must not
+ * carry the alphabet of whichever terminal happened to write it - and mojibake on a console that `CAO_ASCII`
+ * is set for.
+ */
 function oneLine(text: string | undefined, max = 160): string {
-  return text ? truncate(firstLine(sanitizeText(text)), max) : '';
+  return text ? truncateVisible(firstLine(sanitizeText(text)), max) : '';
 }
 
 export function currentAttempt(state: TaskRunState): TaskAttempt | undefined {
@@ -249,7 +257,7 @@ export function deliveryRows(state: TaskRunState): DeliveryRow[] {
       MODE_LABEL[delivery.mode] ?? delivery.mode,
       DELIVERY_STATE_LABEL[delivery.state] ?? delivery.state,
       delivery.carriedByAttempt !== undefined ? `attempt ${delivery.carriedByAttempt}` : undefined,
-      truncate(oneLine(delivery.text, 60), 60),
+      oneLine(delivery.text, 60),
     ].filter((p): p is string => p !== undefined && p !== '');
     return { delivery, line: parts.join('  '), notes: delivery.reason ? [oneLine(delivery.reason, 200)] : [] };
   });

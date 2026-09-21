@@ -1,0 +1,701 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the panels in every mode (§3.2) > draws changes at 80x24 in cyberpunk, mono and ASCII > changes 80x24 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[██████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview │ Session │ Logs │▸[Changes]│ Report │ Diagnostics
+  Task 2/3 ✗ implement-renderer  Failed  codex|opus-5 !
+✓ implement-parser  no diff captured
+✗ implement-renderer  no diff captured
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
+  Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws changes at 80x24 in cyberpunk, mono and ASCII > changes 80x24 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[##########] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview | Session | Logs |>[Changes]| Report | Diagnostics
+  Task 2/3 x implement-renderer  Failed  codex|opus-5 !
+v implement-parser  no diff captured
+x implement-renderer  no diff captured
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+^v PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
+  Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws changes at 120x40 in cyberpunk, mono and ASCII > changes 120x40 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[████████████████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview │ Session │ Logs │▸[Changes]│ Report │ Diagnostics
+  Tasks 2/3                          ✓ implement-parser  no diff captured
+  ✓ implement-par… claude|opus-5  █  ✗ implement-renderer  no diff captured
+▶ ✗ implement-ren… codex|opus-5  !█
+  ⊘ review         claude        !█
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                     ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
+  Ctrl+P palette   ? help   Q quit   updated <age> ago"
+`;
+
+exports[`the panels in every mode (§3.2) > draws changes at 120x40 in cyberpunk, mono and ASCII > changes 120x40 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[####################] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview | Session | Logs |>[Changes]| Report | Diagnostics
+  Tasks 2/3                          v implement-parser  no diff captured
+  v implement-p... claude|opus-5  #  x implement-renderer  no diff captured
+> x implement-r... codex|opus-5  !#
+  # review         claude        !#
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                     ^v PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
+  Ctrl+P palette   ? help   Q quit   updated <age> ago"
+`;
+
+exports[`the panels in every mode (§3.2) > draws diagnostics at 80x24 in cyberpunk, mono and ASCII > diagnostics 80x24 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[██████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview │ Session │ Logs │ Changes │ Report │▸[Diagnostics]
+  Task 2/3 ✗ implement-renderer  Failed  codex|opus-5 !
+Diagnostics
+Agents
+  This run uses no agent CLI.
+
+Effective configuration
+  implement-parser  claude|opus-5  retries 2
+  implement-renderer  codex|gpt-5-codex  retries 2
+  review  claude  retries 1
+
+Retries
+  Nothing has been retried.
+
+Failures
+  implement-renderer attempt 1  failed
+    the build failed: cannot find module ./render
+
+Controls sent from this window
+  none yet
+▼ 6 more
+  ↑↓ PgUp/PgDn scroll   R reload   ←→ tab   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws diagnostics at 80x24 in cyberpunk, mono and ASCII > diagnostics 80x24 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[##########] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview | Session | Logs | Changes | Report |>[Diagnostics]
+  Task 2/3 x implement-renderer  Failed  codex|opus-5 !
+Diagnostics
+Agents
+  This run uses no agent CLI.
+
+Effective configuration
+  implement-parser  claude|opus-5  retries 2
+  implement-renderer  codex|gpt-5-codex  retries 2
+  review  claude  retries 1
+
+Retries
+  Nothing has been retried.
+
+Failures
+  implement-renderer attempt 1  failed
+    the build failed: cannot find module ./render
+
+Controls sent from this window
+  none yet
+v 6 more
+  ^v PgUp/PgDn scroll   R reload   <> tab   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws diagnostics at 120x40 in cyberpunk, mono and ASCII > diagnostics 120x40 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[████████████████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview │ Session │ Logs │ Changes │ Report │▸[Diagnostics]
+  Tasks 2/3                          Diagnostics
+  ✓ implement-par… claude|opus-5  █  Agents
+▶ ✗ implement-ren… codex|opus-5  !█    This run uses no agent CLI.
+  ⊘ review         claude        !█
+                                     Effective configuration
+                                       implement-parser  claude|opus-5  retries 2
+                                       implement-renderer  codex|gpt-5-codex  retries 2
+                                       review  claude  retries 1
+
+                                     Retries
+                                       Nothing has been retried.
+
+                                     Failures
+                                       implement-renderer attempt 1  failed
+                                         the build failed: cannot find module ./render
+
+                                     Controls sent from this window
+                                       none yet
+
+                                     The request inbox
+                                       No request has ever been written for this run.
+
+                                     Provider quotas
+                                       No provider has reported yet.
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ PgUp/PgDn scroll   R reload   ←→ tab   Ctrl+P palette   ? help   Q quit   updated <age> ago"
+`;
+
+exports[`the panels in every mode (§3.2) > draws diagnostics at 120x40 in cyberpunk, mono and ASCII > diagnostics 120x40 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[####################] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview | Session | Logs | Changes | Report |>[Diagnostics]
+  Tasks 2/3                          Diagnostics
+  v implement-p... claude|opus-5  #  Agents
+> x implement-r... codex|opus-5  !#    This run uses no agent CLI.
+  # review         claude        !#
+                                     Effective configuration
+                                       implement-parser  claude|opus-5  retries 2
+                                       implement-renderer  codex|gpt-5-codex  retries 2
+                                       review  claude  retries 1
+
+                                     Retries
+                                       Nothing has been retried.
+
+                                     Failures
+                                       implement-renderer attempt 1  failed
+                                         the build failed: cannot find module ./render
+
+                                     Controls sent from this window
+                                       none yet
+
+                                     The request inbox
+                                       No request has ever been written for this run.
+
+                                     Provider quotas
+                                       No provider has reported yet.
+
+
+
+
+
+
+
+
+
+
+
+
+  ^v PgUp/PgDn scroll   R reload   <> tab   Ctrl+P palette   ? help   Q quit   updated <age> ago"
+`;
+
+exports[`the panels in every mode (§3.2) > draws logs at 80x24 in cyberpunk, mono and ASCII > logs 80x24 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[██████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview │ Session │▸[Logs]│ Changes │ Report │ Diagnostics
+  Task 2/3 ✗ implement-renderer  Failed  codex|opus-5 !
+Logs
+view events  · source orchestrator.log  · task all  · severity all  · time all
+orchestrator.log is empty. Run with --debug to record what the orchestrator did.
+nothing here  · newest line  · file 1/4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ PgUp/PgDn scroll   g / G ends   v view   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws logs at 80x24 in cyberpunk, mono and ASCII > logs 80x24 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[##########] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview | Session |>[Logs]| Changes | Report | Diagnostics
+  Task 2/3 x implement-renderer  Failed  codex|opus-5 !
+Logs
+view events  . source orchestrator.log  . task all  . severity all  . time all
+orchestrator.log is empty. Run with --debug to record what the orchestrator did.
+nothing here  . newest line  . file 1/4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ^v PgUp/PgDn scroll   g / G ends   v view   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws logs at 120x40 in cyberpunk, mono and ASCII > logs 120x40 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[████████████████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview │ Session │▸[Logs]│ Changes │ Report │ Diagnostics
+  Tasks 2/3                          Logs
+  ✓ implement-par… claude|opus-5  █  view events  · source orchestrator.log  · task all  · severity all  · time all
+▶ ✗ implement-ren… codex|opus-5  !█  orchestrator.log is empty. Run with --debug to record what the orchestrator did.
+  ⊘ review         claude        !█  nothing here  · newest line  · file 1/4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ PgUp/PgDn scroll   g / G ends   v view   [ / ] file   t / k / m filter   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws logs at 120x40 in cyberpunk, mono and ASCII > logs 120x40 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[####################] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview | Session |>[Logs]| Changes | Report | Diagnostics
+  Tasks 2/3                          Logs
+  v implement-p... claude|opus-5  #  view events  . source orchestrator.log  . task all  . severity all  . time all
+> x implement-r... codex|opus-5  !#  orchestrator.log is empty. Run with --debug to record what the orchestrator did.
+  # review         claude        !#  nothing here  . newest line  . file 1/4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ^v PgUp/PgDn scroll   g / G ends   v view   [ / ] file   t / k / m filter   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws overview at 80x24 in cyberpunk, mono and ASCII > overview 80x24 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[██████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84
+  ▸[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+  Task 2/3 ✗ implement-renderer  Failed  codex|opus-5 !
+Run failed   1/3 done   2 failed   <elapsed>   exit 1
+✗ implement-renderer failed  after 1 attempt   (+1 more failed)
+  the build failed: cannot find module ./render
+
+  ✓ implement-parser    Completed     <elapsed>  claude|opus-5  $0.42
+▶ ✗ implement-renderer  Failed        <elapsed>  codex|opus-5  $0.42  │ exit code…
+  ⊘ review              Blocked                claude  │ implement-renderer fai…
+
+implement-renderer
+Status:       ✗ Failed  (exit code 1)
+Attempt:      1 / 3
+Agent:        codex  Model: opus-5  Effort: CLI default
+Permissions:  auto
+Started:      <clock>   Elapsed: <elapsed>
+  … cao task implement-renderer for the rest
+
+Latest activity
+  12:34 › Rewrote the renderer entry point.
+
+  ↑↓ select   F / L follow   R restart   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws overview at 80x24 in cyberpunk, mono and ASCII > overview 80x24 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[##########] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84
+  >[Overview]| Session | Logs | Changes | Report | Diagnostics
+  Task 2/3 x implement-renderer  Failed  codex|opus-5 !
+Run failed   1/3 done   2 failed   <elapsed>   exit 1
+x implement-renderer failed  after 1 attempt   (+1 more failed)
+  the build failed: cannot find module ./render
+
+  v implement-parser    Completed     <elapsed>  claude|opus-5  $0.42
+> x implement-renderer  Failed        <elapsed>  codex|opus-5  $0.42  | exit code…
+  # review              Blocked                claude  | implement-renderer fai…
+
+implement-renderer
+Status:       x Failed  (exit code 1)
+Attempt:      1 / 3
+Agent:        codex  Model: opus-5  Effort: CLI default
+Permissions:  auto
+Started:      <clock>   Elapsed: <elapsed>
+  ... cao task implement-renderer for the rest
+
+Latest activity
+  12:34 : Rewrote the renderer entry point.
+
+  ^v select   F / L follow   R restart   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws overview at 120x40 in cyberpunk, mono and ASCII > overview 120x40 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[████████████████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+  ▸[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+  Tasks 2/3                          Run failed   1/3 done   2 failed   <elapsed>   exit 1
+  ✓ implement-par… claude|opus-5  █  ✗ implement-renderer failed  after 1 attempt   (+1 more failed)
+▶ ✗ implement-ren… codex|opus-5  !█    the build failed: cannot find module ./render
+  ⊘ review         claude        !█
+                                       ✓ implement-parser    Completed     <elapsed>  claude|opus-5  $0.42
+                                     ▶ ✗ implement-renderer  Failed        <elapsed>  codex|opus-5  $0.42  │ exit code 1
+                                       ⊘ review              Blocked                claude  │ implement-renderer failed
+
+                                     implement-renderer
+                                     Status:       ✗ Failed  (exit code 1)
+                                     Attempt:      1 / 3
+                                     Agent:        codex  Model: opus-5  Effort: CLI default
+                                     Permissions:  auto
+                                     Started:      <clock>   Elapsed: <elapsed>
+                                     PID:          -   Session: -
+                                     Working Dir:  .
+                                     Usage:        $0.42  12.0k in / 3.4k out  context [███░░░░░░░░░] 21% 42.0k/200k
+
+                                     Attempts
+                                       #1  task  initial  <clock> → <clock>  <elapsed>  failed  $0.42
+                                           ↳ the build failed: cannot find module ./render
+
+                                     Latest activity
+                                       12:34 › Rewrote the renderer entry point.
+
+
+
+
+
+
+
+
+
+
+
+
+  ↑↓ select   F / L follow   R restart   E edit   U usage   C changes   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws overview at 120x40 in cyberpunk, mono and ASCII > overview 120x40 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[####################] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+  >[Overview]| Session | Logs | Changes | Report | Diagnostics
+  Tasks 2/3                          Run failed   1/3 done   2 failed   <elapsed>   exit 1
+  v implement-p... claude|opus-5  #  x implement-renderer failed  after 1 attempt   (+1 more failed)
+> x implement-r... codex|opus-5  !#    the build failed: cannot find module ./render
+  # review         claude        !#
+                                       v implement-parser    Completed     <elapsed>  claude|opus-5  $0.42
+                                     > x implement-renderer  Failed        <elapsed>  codex|opus-5  $0.42  | exit code 1
+                                       # review              Blocked                claude  | implement-renderer failed
+
+                                     implement-renderer
+                                     Status:       x Failed  (exit code 1)
+                                     Attempt:      1 / 3
+                                     Agent:        codex  Model: opus-5  Effort: CLI default
+                                     Permissions:  auto
+                                     Started:      <clock>   Elapsed: <elapsed>
+                                     PID:          -   Session: -
+                                     Working Dir:  .
+                                     Usage:        $0.42  12.0k in / 3.4k out  context [###---------] 21% 42.0k/200k
+
+                                     Attempts
+                                       #1  task  initial  <clock> -> <clock>  <elapsed>  failed  $0.42
+                                           -> the build failed: cannot find module ./render
+
+                                     Latest activity
+                                       12:34 : Rewrote the renderer entry point.
+
+
+
+
+
+
+
+
+
+
+
+
+  ^v select   F / L follow   R restart   E edit   U usage   C changes   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws session at 80x24 in cyberpunk, mono and ASCII > session 80x24 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[██████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview │▸[Session]│ Logs │ Changes │ Report │ Diagnostics
+  Task 2/3 ✗ implement-renderer  Failed  codex|opus-5 !
+codex   opus-5   no session yet   attempt 1
+
+12:34 › Rewrote the renderer entry point.
+
+follow-up — starts a fresh session with your message in the prompt
+Enter opens the composer to send this task a message.
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Enter compose   E edit   F transcript   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws session at 80x24 in cyberpunk, mono and ASCII > session 80x24 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[##########] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84
+   Overview |>[Session]| Logs | Changes | Report | Diagnostics
+  Task 2/3 x implement-renderer  Failed  codex|opus-5 !
+codex   opus-5   no session yet   attempt 1
+
+12:34 : Rewrote the renderer entry point.
+
+follow-up -- starts a fresh session with your message in the prompt
+Enter opens the composer to send this task a message.
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Enter compose   E edit   F transcript   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws session at 120x40 in cyberpunk, mono and ASCII > session 120x40 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
+[████████████████████] 1/3   ✓1 ✗2 ▶0   ✗ Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview │▸[Session]│ Logs │ Changes │ Report │ Diagnostics
+  Tasks 2/3                          codex   opus-5   no session yet   attempt 1
+  ✓ implement-par… claude|opus-5  █
+▶ ✗ implement-ren… codex|opus-5  !█  12:34 › Rewrote the renderer entry point.
+  ⊘ review         claude        !█
+                                     follow-up — starts a fresh session with your message in the prompt
+                                     Enter opens the composer to send this task a message.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Enter compose   E edit   F transcript   ←→ tab   Enter send   Ctrl+P palette   ? help   Q quit"
+`;
+
+exports[`the panels in every mode (§3.2) > draws session at 120x40 in cyberpunk, mono and ASCII > session 120x40 ascii 1`] = `
+"cao 01K5ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade . /repo/code-agent-orchestrator
+[####################] 1/3   v1 x2 >0   x Failed   <elapsed>   0/2   [owner]   $0.84   24.0k in / 6.8k out
+   Overview |>[Session]| Logs | Changes | Report | Diagnostics
+  Tasks 2/3                          codex   opus-5   no session yet   attempt 1
+  v implement-p... claude|opus-5  #
+> x implement-r... codex|opus-5  !#  12:34 : Rewrote the renderer entry point.
+  # review         claude        !#
+                                     follow-up -- starts a fresh session with your message in the prompt
+                                     Enter opens the composer to send this task a message.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Enter compose   E edit   F transcript   <> tab   Enter send   Ctrl+P palette   ? help   Q quit"
+`;

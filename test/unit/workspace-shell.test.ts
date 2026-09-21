@@ -17,9 +17,35 @@ import { alwaysHints, footerHints, panelHelp, globalKeys, viewerKeys, type KeyMo
 import { filterPalette, helpSections, PLACEHOLDER_TEXT, reportLines, wrapLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
 import { attentionBadge, fitCells, headerRowsFor, progressSegments } from '../../src/tui/workspace/chrome.js';
 import { trimToRows } from '../../src/tui/workspace/overview.js';
-import { resolveTheme, reducedMotion, isThemeName, THEME_NAMES } from '../../src/tui/theme.js';
+import { resolveTheme, reducedMotion, isThemeName, themeFor, themeNameOf, THEME_NAMES, STATE_TOKEN } from '../../src/tui/theme.js';
+import { sgrColor, stripAnsi } from '../../src/cli/color.js';
 import { altScreenEnabled, readUserConfig, BASE_RENDER_OPTIONS, workspaceRenderOptions } from '../../src/tui/render-options.js';
 import { WORKSPACE_TABS } from '../../src/tui/store.js';
+
+const ESC = String.fromCharCode(27);
+/** Any SGR that sets a colour: the sixteen, the 256-colour cube and truecolor, foreground or background. */
+const SGR_COLOUR = new RegExp(`${ESC}\\[[0-9;]*?(3[0-7]|4[0-7]|9[0-7]|10[0-7]|[34]8;[25];)`);
+/** Every token the table has; derived from the state map plus the names the components ask for. */
+const THEME_TOKENS = [
+  'accent',
+  'accent2',
+  'ok',
+  'warn',
+  'danger',
+  'muted',
+  'text',
+  'border',
+  'borderFocused',
+  'badgeBg',
+  'selection',
+  'progress',
+  'title',
+  'key',
+  'tabActive',
+  'tabIdle',
+  'agent',
+  ...Object.values(STATE_TOKEN),
+] as const;
 
 const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `task-${i + 1}`);
 
@@ -140,27 +166,97 @@ describe('workspace layout', () => {
 });
 
 describe('theme', () => {
-  it('paints with the default theme and with nothing at all under mono', () => {
+  it('paints with the cyberpunk palette and with no colour at all under mono', () => {
     const colour = resolveTheme({ env: {} });
-    expect(colour.name).toBe('default');
+    expect(colour.name).toBe('cyberpunk');
     expect(colour.color).toBe(true);
     expect(colour.paint('failed', 'danger')).not.toBe('failed');
-    expect(colour.stateColor('failed')).toBe('red');
+    expect(colour.stateColor('failed')).toMatch(/^#[0-9a-f]{6}$/i);
 
     const mono = resolveTheme({ theme: 'mono', env: {} });
     expect(mono.color).toBe(false);
-    expect(mono.paint('failed', 'danger')).toBe('failed');
     expect(mono.ink('accent')).toBeUndefined();
+    expect(mono.inkBg('badgeBg')).toBeUndefined();
     expect(mono.stateColor('failed')).toBeUndefined();
+    // Not "the same screen with the colour turned down": mono still has bold, dim and inverse, and no
+    // colour of any kind, which is how focus and selection survive on a terminal that cannot paint.
+    expect(mono.paint('failed', 'danger')).not.toBe('failed');
+    expect(mono.paint('failed', 'danger')).not.toMatch(SGR_COLOUR);
+    expect(mono.paint('row', 'selection')).not.toMatch(SGR_COLOUR);
+    // Still *styled*: a selected row that is painted with nothing is a selection nobody can see, which is
+    // what mono used to be - inverse is the only mark a terminal with no colour has left for it.
+    expect(mono.paint('row', 'selection')).not.toBe('row');
+    expect(stripAnsi(mono.paint('row', 'selection'))).toBe('row');
   });
 
-  it('lets NO_COLOR win over an explicit theme, and reads CAO_THEME when nothing was asked for', () => {
-    expect(resolveTheme({ theme: 'default', env: { NO_COLOR: '1' } }).name).toBe('mono');
+  it('gives every token a value in both themes, and only theme.ts a colour', () => {
+    const cyberpunk = resolveTheme({ env: {} });
+    const mono = resolveTheme({ theme: 'mono', env: {} });
+    for (const token of THEME_TOKENS) {
+      expect(typeof cyberpunk.paint('x', token), token).toBe('string');
+      expect(mono.paint('x', token), token).not.toMatch(SGR_COLOUR);
+    }
+    // The twelve §3.2 names are all there; the rest are the roles defined in terms of them.
+    for (const token of ['accent', 'accent2', 'ok', 'warn', 'danger', 'muted', 'text', 'border', 'borderFocused', 'badgeBg', 'selection', 'progress'] as const) {
+      expect(THEME_TOKENS).toContain(token);
+    }
+  });
+
+  it('takes the theme from the flag, then the environment, then ~/.cao/config.json, then the default', () => {
+    const stored = () => ({ theme: 'mono' });
+    expect(resolveTheme({ theme: 'cyberpunk', env: { CAO_THEME: 'mono' }, config: stored }).name).toBe('cyberpunk');
+    expect(resolveTheme({ env: { CAO_THEME: 'mono' }, config: () => ({ theme: 'cyberpunk' }) }).name).toBe('mono');
+    expect(resolveTheme({ env: {}, config: stored }).name).toBe('mono');
+    expect(resolveTheme({ env: {}, config: () => null }).name).toBe('cyberpunk');
+    // A config that says something else entirely says nothing.
+    expect(resolveTheme({ env: {}, config: () => ({ theme: 7 }) }).name).toBe('cyberpunk');
+  });
+
+  it('lets NO_COLOR and a terminal with no colour win over an explicit theme', () => {
+    expect(resolveTheme({ theme: 'cyberpunk', env: { NO_COLOR: '1' } }).name).toBe('mono');
+    expect(resolveTheme({ theme: 'cyberpunk', env: { TERM: 'dumb' } }).name).toBe('mono');
+    expect(resolveTheme({ theme: 'cyberpunk', env: {}, level: 0 }).name).toBe('mono');
     expect(resolveTheme({ env: { CAO_THEME: 'mono' } }).name).toBe('mono');
     // A typo is not fatal: the run keeps its colours rather than stopping over a flag.
-    expect(resolveTheme({ theme: 'cyberpunk', env: {} }).name).toBe('default');
+    expect(resolveTheme({ theme: 'nonsense', env: {} }).name).toBe('cyberpunk');
     expect(THEME_NAMES.every(isThemeName)).toBe(true);
-    expect(isThemeName('cyberpunk')).toBe(false);
+    expect(isThemeName('default')).toBe(false);
+    // `default` was this palette's name before stage 4 gave it one, and still reaches it.
+    expect(themeNameOf('default')).toBe('cyberpunk');
+    expect(themeNameOf('  MONO ')).toBe('mono');
+    expect(themeNameOf(undefined)).toBeUndefined();
+  });
+
+  it('downsamples a hex colour to what the terminal can show, and paints nothing at level 0', () => {
+    const violet = '#a855f7';
+    expect(sgrColor(violet, 3)).toBe('38;2;168;85;247');
+    expect(sgrColor(violet, 2)).toMatch(/^38;5;\d+$/);
+    // The nearest of the sixteen, as a single parameter; and as a background ten codes higher.
+    expect(sgrColor(violet, 1)).toBe('95');
+    expect(sgrColor(violet, 1, true)).toBe('105');
+    expect(sgrColor(violet, 0)).toBe('');
+    expect(sgrColor('not a colour', 3)).toBe('');
+    expect(resolveTheme({ env: {}, level: 1 }).paint('x', 'accent')).toContain('[95m');
+  });
+
+  it('paints nothing at all for a caller that was only told "no colour"', () => {
+    // `cao logs` into a pipe: `false` has to mean the bytes it always produced, not mono's bold and dim.
+    expect(themeFor(false).paint('x', 'danger')).toBe('x');
+    expect(themeFor(false).paint('x', 'bold')).toBe('x');
+    expect(themeFor(true).paint('x', 'danger')).not.toBe('x');
+    // A caller that has a theme keeps it whatever the boolean says.
+    const mono = resolveTheme({ theme: 'mono', env: {} });
+    expect(themeFor(true, mono)).toBe(mono);
+  });
+
+  it('says which border a panel gets, and says it without colour too', () => {
+    const cyberpunk = resolveTheme({ env: {} });
+    expect(cyberpunk.border(true)).toEqual({ borderStyle: 'double', borderColor: cyberpunk.ink('borderFocused') });
+    expect(cyberpunk.border(false)).toEqual({ borderStyle: 'round', borderColor: cyberpunk.ink('border') });
+    const mono = resolveTheme({ theme: 'mono', env: {} });
+    expect(mono.border(true).borderStyle).toBe('double');
+    expect(mono.border(false).borderStyle).toBe('round');
+    expect(mono.border(true).borderColor).toBeUndefined();
   });
 
   it('turns the animation off for reduced motion and for a terminal that cannot move the cursor', () => {

@@ -11,7 +11,7 @@ import { go as fuzzyGo } from 'fuzzysort';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { renderMarkdown } from '../markdown.js';
-import { editKeys, endedKeys, globalKeys, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
+import { editKeys, endedKeys, globalKeys, navigationHelp, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
 import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
@@ -144,7 +144,7 @@ export function Palette({ entries, query, cursor, rows, columns, theme }: Palett
   const width = Math.max(20, Math.min(columns - 2, 72));
   const height = Math.min(rows, Math.max(4, slice.items.length + 4));
   return (
-    <Box flexDirection="column" width={width} height={height} flexShrink={0} borderStyle="round" borderColor={theme.ink('border')}>
+    <Box flexDirection="column" width={width} height={height} flexShrink={0} {...theme.border(true)}>
       <Text wrap="truncate-end">
         {theme.paint('> ', 'accent')}
         {query}
@@ -193,20 +193,33 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
   const taken = new Set([...(observer ?? []), ...(ended ?? [])].map((action) => action.key.toUpperCase()));
   if (mode === 'observing') taken.add('R');
   const panel = panelHelp(focus, tab, taken);
+  const global = globalKeys(mode);
+  const described = new Set([...panel.keys, ...global].map((row) => row.keys));
   return [
     ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} ${glyph('dash')} the panel with the keys`, keys: panel.keys },
-    { title: 'Anywhere', keys: globalKeys(mode) },
+    { title: 'Anywhere', keys: global },
     { title: 'The task editor (E)', keys: editKeys() },
     { title: 'Transcript viewer (F)', keys: viewerKeys() },
     { title: 'When a worker needs you', keys: promptKeys() },
+    // The rest of §3.2's table, in the words `docs/capabilities.md` uses, because `?` is also where an
+    // operator looks up a chord they half-remember. Last, because it is the reference rather than the
+    // answer: what this panel is usually opened for is the section at the top, the one about the panel
+    // behind it. Minus whatever the sections above already describe - `Q` and `Ctrl+C` mean something
+    // different in each mode and those sections are the ones that know which, and a key described twice on
+    // one screen is how the two descriptions drift apart.
+    { title: `Moving around ${glyph('dash')} the whole table`, keys: navigationHelp().filter((row) => !described.has(row.keys)) },
   ];
 }
 
 export function HelpPanel({ focus, tab, rows, columns, theme, cursor, ended, observer, mode }: HelpPanelProps): React.JSX.Element {
   const sections = helpSections(focus, tab, ended, observer, mode);
-  const keyWidth = Math.min(22, Math.max(...sections.flatMap((s) => s.keys.map((k) => k.keys.length))));
+  // Capped tighter on a narrow terminal than on a wide one. The column is as wide as the widest chord in
+  // the panel, and §3.2's own `↑↓ ←→ PgUp/PgDn Home/End` is half again as wide as any other: left
+  // uncapped it took seven columns off *every* description at 80 wide and wrapped most of them. Past the
+  // cap a chord simply pushes its own text right, which costs one ragged row instead of all of them.
+  const keyWidth = Math.min(columns < 100 ? 17 : 22, Math.max(...sections.flatMap((s) => s.keys.map((k) => k.keys.length))));
   const lines: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
   // Wrapped under the key column rather than truncated. This is the panel an operator opens *because* a key
   // surprised them, and at 80 columns a truncated row ended in the half of the sentence that mattered:
@@ -256,7 +269,7 @@ export function QuitPrompt({ cursor, rows, columns, theme }: QuitPromptProps): R
   const inline = QUIT_ANSWERS.every((answer) => 4 + answer.key.length + answer.label.length + answer.what.length <= width - 2);
   const height = Math.min(rows, QUIT_ANSWERS.length * (inline ? 1 : 2) + 3);
   return (
-    <Box flexDirection="column" width={width} height={height} flexShrink={0} borderStyle="round" borderColor={theme.ink('border')}>
+    <Box flexDirection="column" width={width} height={height} flexShrink={0} {...theme.border(true)}>
       <Text bold wrap="truncate-end">
         The run is still going. What now?
       </Text>
@@ -297,7 +310,7 @@ export function AnswerField({ taskId, question, text, rows, columns, theme }: An
   const lines = text.split('\n');
   const body = lines.slice(-Math.max(1, rows - 4 - questionRows));
   return (
-    <Box flexDirection="column" width={width} borderStyle="round" borderColor={theme.ink('border')}>
+    <Box flexDirection="column" width={width} {...theme.border(true)}>
       <Text bold wrap="truncate-end">
         Answer {taskId} and resume
       </Text>

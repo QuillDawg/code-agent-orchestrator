@@ -51,6 +51,46 @@ const LEAVING_KEYS: Record<KeyMode, [KeyHelp, KeyHelp]> = {
   ],
 };
 
+/**
+ * The navigation table of spec §3.2, as this build binds it.
+ *
+ * It exists once, here, because it is written down in three places that have to agree: the `?` panel, the
+ * `Navigating the workspace` table in `docs/capabilities.md`, and the handlers in `app.tsx`. The first two
+ * are generated from this array - `test/unit/theme.test.ts` rebuilds the doc's table from it and fails if a
+ * row has drifted - so a chord that is renamed here is renamed in the documentation in the same commit.
+ *
+ * Built per call rather than held in a constant for the same reason `UD()` is: the arrow names are glyphs,
+ * and `CAO_ASCII` is read when a glyph is asked for.
+ */
+export interface NavigationKey {
+  /** The chord, in the words the terminal sends it. */
+  input: string;
+  behaviour: string;
+  /** What is worth knowing about it beyond what it does; empty where there is nothing. */
+  note?: string;
+}
+
+export function navigationKeys(): NavigationKey[] {
+  return [
+    { input: 'Tab / Shift+Tab', behaviour: 'Move focus between panels', note: 'the `\\x1bOZ` variant some Windows terminals send is parsed too' },
+    { input: `${UD()} ${LR()} PgUp/PgDn Home/End`, behaviour: 'Navigate the focused panel' },
+    { input: 'Enter', behaviour: 'Open or activate' },
+    { input: 'Esc', behaviour: 'Close a dialog, leave the composer, go back' },
+    { input: 'Ctrl+P', behaviour: 'Command palette over every action and every task id' },
+    { input: '/', behaviour: 'Search the focused list or transcript' },
+    { input: '?', behaviour: 'The keys of whatever has focus' },
+    { input: 'Q', behaviour: 'Quit request', note: 'not inside a composer' },
+    { input: 'Ctrl+C', behaviour: 'Graceful stop; the workspace stays open' },
+    { input: 'Ctrl+O', behaviour: 'In a composer: open it in $VISUAL / $EDITOR', note: 'mirrors `O` in the Changes view' },
+    { input: 'Ctrl+J', behaviour: 'Newline in a composer; Enter submits', note: 'Shift+Enter works only where the kitty protocol is on' },
+  ];
+}
+
+/** The navigation table as `?` shows it: the same rows, in the shape the help panel draws. */
+export function navigationHelp(): KeyHelp[] {
+  return navigationKeys().map((key) => ({ keys: key.input, what: key.note ? `${key.behaviour} ${glyph('dash')} ${key.note}` : key.behaviour }));
+}
+
 /** Answered everywhere, whatever has focus, in the words this mode makes true. */
 export function globalKeys(mode: KeyMode = 'executing'): KeyHelp[] {
   return [

@@ -1,7 +1,7 @@
-stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
 [██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
-[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
-Task #/# ✓ implement-parser  Completed  claude|opus-#
+  ▸[Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+  Task #/# ✓ implement-parser  Completed  claude|opus-#
 ✗ implement-renderer failed  after # attempt
   exit code #
   ↑↓ to implement-renderer, then R re-run   F open logs   C open diff
@@ -21,4 +21,4 @@ PID:          ####   Session: sess-abc###
 
 Latest activity
   ##:## $ npm test
-↑↓ select   F / L follow   R restart   E edit   Ctrl+P palette   ? help   Q quit
+  ↑↓ select   F / L follow   R restart   Ctrl+P palette   ? help   Q quit

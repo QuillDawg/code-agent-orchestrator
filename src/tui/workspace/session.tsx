@@ -33,8 +33,8 @@ export const composerDraftKey = (taskId: string): string => `composer:${taskId}`
 /** How a delivery is painted, and what it is called on screen (§3.5). */
 const DELIVERY_STATE: Record<PromptDelivery['state'], { label: string; token: ThemeToken }> = {
   queued: { label: `queued${glyph('ellipsis')}`, token: 'muted' },
-  accepted: { label: 'accepted', token: 'success' },
-  delivered: { label: 'delivered', token: 'success' },
+  accepted: { label: 'accepted', token: 'ok' },
+  delivered: { label: 'delivered', token: 'ok' },
   rejected: { label: 'rejected', token: 'danger' },
   failed: { label: 'failed', token: 'danger' },
 };
@@ -160,8 +160,8 @@ export function SessionPanel({ task, state, entries, hasChannel, composer, fresh
   const pending = state.pendingInteraction;
   if (pending) {
     push(' ');
-    push(`Waiting on you ${glyph('dash')} ${pending.kind}`, 'warning', true);
-    for (const line of wrapPlain(sanitizeText(`${pending.toolName}: ${pending.title}`), width).slice(0, 3)) push(`  ${line}`, 'warning');
+    push(`Waiting on you ${glyph('dash')} ${pending.kind}`, 'warn', true);
+    for (const line of wrapPlain(sanitizeText(`${pending.toolName}: ${pending.title}`), width).slice(0, 3)) push(`  ${line}`, 'warn');
   }
 
   const deliveryRowCount = deliveries.length ? Math.min(deliveries.length, 4) + 1 : 0;
@@ -192,9 +192,9 @@ export function SessionPanel({ task, state, entries, hasChannel, composer, fresh
   }
 
   push(' ');
-  push(composerHeader(task, state, row, freshSession), row.mode ? 'info' : 'muted', true);
+  push(composerHeader(task, state, row, freshSession), row.mode ? 'accent2' : 'muted', true);
   const fresh = freshSessionLine(task, state, row, freshSession);
-  if (fresh && focused && composer) push(fresh, freshSession ? 'warning' : 'muted');
+  if (fresh && focused && composer) push(fresh, freshSession ? 'warn' : 'muted');
   if (sending) push(sanitizeText(sending), 'muted');
 
   if (!row.mode) {

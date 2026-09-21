@@ -1,7 +1,7 @@
-stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
+cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
 [██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
- Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
-Task #/# ✓ implement-parser  Completed  claude|opus-#
+▸  Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
+  Task #/# ✓ implement-parser  Completed  claude|opus-#
 Logs
 view events  · source orchestrator.log  · task all  · severity all  · time all
 orchestrator.log is empty. Run with --debug to record what the orchestrator did.
@@ -21,4 +21,4 @@ nothing here  · newest line  · file #/#
 
 
 
-←→ tab   Enter open   Ctrl+P palette   ? help   Q quit
+  ←→ tab   Enter open   Ctrl+P palette   ? help   Q quit
