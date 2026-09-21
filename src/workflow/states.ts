@@ -44,13 +44,22 @@ export function assertRunTransition(from: RunState, to: RunState): void {
   }
 }
 
+/**
+ * One glyph per state, and no two states share one.
+ *
+ * `waiting` and `needs_input` both used `?`, which made them the same row on the one surface that has
+ * room for the glyph and not the word - the sidebar - even though they are opposite halves of the same
+ * story: `waiting` is a worker still running that someone can answer *now*, `needs_input` is an attempt
+ * that has already ended holding the question, and only a resume will move it. `!` is the one that has
+ * stopped.
+ */
 export const STATE_GLYPH: Record<TaskState, string> = {
   pending: '○',
   ready: '◌',
   running: '▶',
   waiting: '?',
   awaiting_approval: '⏸',
-  needs_input: '?',
+  needs_input: '!',
   success: '✓',
   failed: '✗',
   blocked: '⊘',
@@ -65,7 +74,7 @@ const STATE_GLYPH_ASCII: Record<TaskState, string> = {
   running: '>',
   waiting: '?',
   awaiting_approval: '=',
-  needs_input: '?',
+  needs_input: '!',
   success: 'v',
   failed: 'x',
   blocked: '#',

@@ -377,6 +377,12 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   that says that, and the same sixteen slots as before on a 16-colour one. The text, the layout and the
   classification of every line are unchanged, and a pipe, a redirect or `NO_COLOR` still gets no escape at
   all.
+- **`needs_input` has a glyph of its own: `!` where it used to be `?`.** `waiting` and `needs_input` both
+  drew `?`, which made them one row on the one surface that has room for the glyph and not the word - the
+  sidebar - and they are opposite halves of the same story: `waiting` is a worker still running that
+  somebody can answer now, `needs_input` is an attempt that has already ended holding the question. The
+  ASCII form changes with it, and `cao status`, `cao task` and the line renderer show the new mark too. The
+  state name, the label and every exit code are unchanged.
 - **A terminal that reports no colour at all gets `mono` even when `--theme cyberpunk` asked for it.** A
   violet escape a terminal will not render arrives as nothing, and then only the glyph and the word are
   left - which is what `mono` is built for.

@@ -269,7 +269,13 @@ describe('ASCII fallback for terminals that cannot draw the glyphs', () => {
     process.env.CAO_ASCII = '1';
     const states: TaskState[] = ['pending', 'ready', 'running', 'waiting', 'awaiting_approval', 'needs_input', 'success', 'failed', 'blocked', 'skipped', 'cancelled'];
     for (const state of states) expect(stateGlyph(state)).toHaveLength(1);
-    expect(new Set(states.map(stateGlyph)).size).toBeGreaterThanOrEqual(states.length - 1); // waiting and needs_input share '?'
+    // Every state its own glyph, in both alphabets: the sidebar has room for the glyph and not the word, so
+    // two states drawn the same there are one state to whoever is reading it.
+    expect(new Set(states.map(stateGlyph)).size, 'two states share an ASCII glyph').toBe(states.length);
+    delete process.env.CAO_ASCII;
+    process.env.CAO_UNICODE = '1';
+    for (const state of states) expect(stateGlyph(state), state).toHaveLength(1);
+    expect(new Set(states.map(stateGlyph)).size, 'two states share a glyph').toBe(states.length);
   });
 
   it('marks a truncation with an ellipsis the terminal can print, and still fits the budget', () => {
