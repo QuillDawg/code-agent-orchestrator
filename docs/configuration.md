@@ -8,6 +8,33 @@ once it exists — `cao ui`, task editing and prompting, the usage footer — an
 workflow, [`~/.cao/config.json`](#user-level-configuration-caoconfigjson), documented at the bottom of this
 page.
 
+## Contents
+
+- [Top level](#top-level)
+  - [Repository and working directory rules](#repository-and-working-directory-rules)
+- [`execution`](#execution)
+  - [Execution order](#execution-order)
+  - [Worktree base](#worktree-base)
+- [`git`](#git)
+- [Agents, models, effort, and permissions](#agents-models-effort-and-permissions)
+- [`codex` (workflow, template or task level)](#codex-workflow-template-or-task-level)
+- [`claude` (workflow, template or task level)](#claude-workflow-template-or-task-level)
+- [`defaults`, `templates` and tasks](#defaults-templates-and-tasks)
+  - [Template variables](#template-variables)
+  - [`foreach`](#foreach)
+  - [`context`](#context)
+  - [`when`](#when)
+  - [Approval gates](#approval-gates)
+  - [Live prompts from a worker](#live-prompts-from-a-worker)
+- [`hooks`](#hooks)
+- [Failure and retry behaviour](#failure-and-retry-behaviour)
+  - [Configuration errors are never retried](#configuration-errors-are-never-retried)
+  - [Transient API errors](#transient-api-errors)
+  - [A worker that ends without the completion object](#a-worker-that-ends-without-the-completion-object)
+- [Persisted state](#persisted-state)
+- [User-level configuration: `~/.cao/config.json`](#user-level-configuration-caoconfigjson)
+- [Environment variables](#environment-variables)
+
 ## Top level
 
 ```yaml
