@@ -1,6 +1,6 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
 [██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
-▸  Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
+▸   Overview │  Session │ [Logs]│  Changes │  Report │  Diagnostics
   Tasks #/#                          Logs
 ▶ ✓ implement-par… claude|opus-#  █  view events  · source orchestrator.log  · task all  · severity all  · time all
   ✗ implement-ren… codex|gpt-#-… !█  orchestrator.log is empty. Run with --debug to record what the orchestrator did.

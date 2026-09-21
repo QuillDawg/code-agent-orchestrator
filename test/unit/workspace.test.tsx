@@ -20,7 +20,7 @@ import { createRunController } from '../../src/workflow/control/controller.js';
 import { stripAnsi } from '../../src/cli/color.js';
 import { glyph } from '../../src/util/glyphs.js';
 import { render as renderInk } from 'ink-testing-library';
-import { Footer, Sidebar } from '../../src/tui/workspace/chrome.js';
+import { Footer, Sidebar, TabBar } from '../../src/tui/workspace/chrome.js';
 import { alwaysHintCells, footerHints } from '../../src/tui/workspace/keys.js';
 import { footerColumnsFor } from '../../src/tui/workspace/layout.js';
 import { Overview } from '../../src/tui/workspace/overview.js';
@@ -643,6 +643,27 @@ describe('the panels on their own', () => {
   const theme = resolveTheme({ theme: 'mono', env: {} });
   const many = Array.from({ length: 200 }, (_, i) => `fan-out-${String(i + 1).padStart(3, '0')}`);
   const run = runWith(many) as never;
+
+  /**
+   * §3.2's focus mark costs the same columns whether or not the region has it, so that nothing on the row
+   * moves as focus travels. The tab bar had two marks and only the first obeyed that: the glyph in front of
+   * the open tab appeared when the *panel* took the keys, which slid every tab to its right one column
+   * sideways on a Tab press - on the one row whose whole job is to say where you are.
+   */
+  it('keeps every tab in the same column whether the bar, the panel or neither has the keys', () => {
+    const row = (focused: boolean, mainFocused: boolean): string =>
+      stripAnsi(renderInk(<TabBar tab="session" focused={focused} mainFocused={mainFocused} theme={theme} columns={120} />).lastFrame() ?? '');
+    const onBar = row(true, false);
+    const onPanel = row(false, true);
+    const neither = row(false, false);
+    for (const label of WORKSPACE_TABS.map((name) => TAB_LABEL[name])) {
+      expect(onPanel.indexOf(label), `${label} moved when focus entered the panel`).toBe(onBar.indexOf(label));
+      expect(neither.indexOf(label), `${label} moved when focus left the bar`).toBe(onBar.indexOf(label));
+    }
+    // The mark is still drawn where it means something: on the open tab, when the panel below has the keys.
+    expect(onPanel).toContain(`${glyph('focus')}[${TAB_LABEL.session}]`);
+    expect(onBar).not.toContain(`${glyph('focus')}[${TAB_LABEL.session}]`);
+  });
 
   it('draws no more rows than the sidebar was given, whatever the run did', () => {
     for (const rows of [4, 10, 25]) {

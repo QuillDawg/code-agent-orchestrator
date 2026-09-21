@@ -225,10 +225,15 @@ export interface TabBarProps {
 export function TabBar({ tab, focused, mainFocused, theme, columns }: TabBarProps): React.JSX.Element {
   const cells = WORKSPACE_TABS.map((name) => {
     const label = TAB_LABEL[name];
-    if (name !== tab) return theme.paint(` ${label} `, 'tabIdle');
+    // Every cell reserves the gutter column, whether or not it is the one holding the mark, for the reason
+    // `focusMark` reserves its two: a mark that only takes room when it is there moves every tab to its
+    // right by a column as focus crosses between this bar and the panel, and a row that shifts under a
+    // reader's eye is worse than no mark at all. Paid once, on every cell, so nothing ever moves.
+    const gutter = name === tab && mainFocused === true ? theme.paint(glyph('focus'), 'accent') : ' ';
     // The open tab carries the mark when the *panel* under it has the keys: the panel draws no title of its
     // own, and its name on this bar is the only place a reader can be told which region they are in.
-    return `${mainFocused ? theme.paint(glyph('focus'), 'accent') : ''}${theme.paint(`[${label}]`, focused ? 'selection' : 'tabActive')}`;
+    if (name !== tab) return `${gutter}${theme.paint(` ${label} `, 'tabIdle')}`;
+    return `${gutter}${theme.paint(`[${label}]`, focused ? 'selection' : 'tabActive')}`;
   });
   const mark = focusMark(focused);
   return <Text wrap="truncate-end">{truncateVisible(`${mark}${cells.join(theme.paint(glyph('vrule'), 'border'))}`, columns)}</Text>;

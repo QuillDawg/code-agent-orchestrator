@@ -1,6 +1,6 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
 [██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
-  [Overview]│ Session │ Logs │ Changes │ Report │ Diagnostics
+   [Overview]│  Session │  Logs │  Changes │  Report │  Diagnostics
 ▸ Task #/# ✓ implement-parser  Completed  claude|opus-#
 Tasks — the panel with the keys
   ↑↓                 move through the tasks

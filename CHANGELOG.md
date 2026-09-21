@@ -570,6 +570,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **The tab bar stops shuffling sideways when focus moves into the panel.** The mark in front of the open
+  tab only took a column when the main panel had the keys, so every tab to its right stepped one column
+  across on each `Tab` press - on the one row whose whole job is to say where you are. Every tab cell now
+  reserves that column whether or not it is holding the mark, exactly as the row's own focus mark does.
 - **`?` no longer describes the same key twice on one screen.** The reference table at the bottom left out
   whatever the panel, the composer and the "Anywhere" section had already given, but not what the task
   editor, the transcript viewer or the prompt had - so `Esc`, `Ctrl+O` and the newline chord each appeared
