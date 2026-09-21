@@ -229,4 +229,30 @@ describe.skipIf(!HAS_GIT)('--debug and CAO_DEBUG (§3.7, [D34])', () => {
     expect(env.code).toBe(0);
     expect(env.log).toContain('debug ');
   }, 90_000);
+
+  /**
+   * What the log has to *say*, not merely that it has a line in it.
+   *
+   * `--debug` used to leave an `orchestrator.log` holding one line — the pid the process manager spawned —
+   * and nothing about what the orchestrator decided: not which run this was, not which agent the attempt
+   * used, not how it ended. That is the one file a bug report is built from (§3.7), so each of those is
+   * asserted by name here.
+   */
+  it('says what the orchestrator did, not only that it spawned something', async () => {
+    const debug = await headless('cao-debug-content-', { debug: true });
+    expect(debug.code).toBe(0);
+    const lines = debug.log.split('\n').filter((line) => line.includes(' debug '));
+    const has = (needle: string): boolean => lines.some((line) => line.includes(needle));
+    // The run it is a log of, and how it ended.
+    expect(has('1 task(s), concurrency 1')).toBe(true);
+    expect(has('completed: exit 0,')).toBe(true);
+    expect(has('succeeded,')).toBe(true);
+    // The attempt: which agent, where, and with how much prompt.
+    expect(has('implement-parser#1 start: agent claude')).toBe(true);
+    expect(has('prompt ')).toBe(true);
+    // How the attempt ended, which is what a retry decision is made from.
+    expect(has('implement-parser#1 ended: success, exit 0')).toBe(true);
+    // And the preflight, which happens before any of it.
+    expect(has('claude: preflight over 1 task(s)')).toBe(true);
+  }, 90_000);
 });

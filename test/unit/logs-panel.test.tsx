@@ -21,6 +21,7 @@ import {
   sourceTaskIds,
   timeOfDayAt,
   visibleSources,
+  emptyNote,
   type LogSource,
 } from '../../src/tui/workspace/logs.js';
 import { DashboardApp, type DashboardShared } from '../../src/tui/app.js';
@@ -186,6 +187,37 @@ describe('the Logs model (§3.7)', () => {
     expect(searchMatches(['a'], '')).toEqual([]);
   });
 
+  /**
+   * An empty page is a dead end unless it says how to get out of it. Each of these three states is
+   * reached by an operator who expected to read something, so each names the key — or the flag — that
+   * would have put something on the screen.
+   */
+  it('says how to get out of every empty page', () => {
+    const stdout: LogSource = { id: 'a#1:stdout', kind: 'stdout', label: 'a#1 stdout.log', file: '', taskId: 'a', attempt: 1 };
+    const orchestrator: LogSource = { id: 'orchestrator', kind: 'orchestrator', label: 'orchestrator.log', file: '' };
+
+    // No file at all: the task and view filters are what took them away.
+    expect(emptyNote(undefined, {})).toContain('Press t or v');
+
+    // A file the filters emptied. `stdout.log` is all `debug`, so any floor above it empties the whole
+    // file — which looks exactly like a missing log unless the note says which key put it there.
+    const filtered = emptyNote(stdout, { severity: 'error' });
+    expect(filtered).toContain('a#1 stdout.log');
+    expect(filtered).toContain('Press k or m');
+    expect(emptyNote(stdout, { range: 1 })).toContain('Press k or m');
+
+    // The one file that is empty by default: an ordinary run logs nothing at all into it.
+    const quiet = emptyNote(orchestrator, {});
+    expect(quiet).toContain('--debug');
+    // Short enough to survive the panel's width beside the sidebar at 120 columns, which is the whole
+    // point of a note that names a flag: one that is truncated before the flag has said nothing.
+    expect(quiet.length).toBeLessThanOrEqual(90);
+
+    // An attempt file that is genuinely empty says so and stops there: there is no key for it.
+    const empty = emptyNote(stdout, {});
+    expect(empty).toBe('a#1 stdout.log is empty.');
+  });
+
   it('says what is being shown and what is filtered, in one line', () => {
     const source: LogSource = { id: 'x', kind: 'stderr', label: 'a#1 stderr.log', file: '' };
     const line = filterLine('stderr', source, { taskId: 'a', severity: 'warn', range: 2 });
@@ -269,8 +301,15 @@ describe('the Logs panel (§3.7, §5 row 12)', () => {
         await wait();
       }
       expect(tree.lastText()).toContain('severity all');
+      const before = tree.lastText().split(NL);
       tree.write('/');
       await wait();
+      // The Logs search is the Logs panel's own. Opening it used to put an empty `/` row above the task
+      // list as well, which pushed every task down a row and back again when it closed — and claimed the
+      // task list was being filtered by a query that was never going to be typed into it.
+      const opened = tree.lastText().split(NL);
+      expect(opened[4]).toBe(before[4]);
+      expect(opened.some((line) => line.trimEnd() === '/')).toBe(false);
       for (const ch of 'scheduler') {
         tree.write(ch);
         await wait(10);

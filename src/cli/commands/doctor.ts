@@ -894,23 +894,32 @@ function protocolCheck(protocol: ProtocolFacts): DoctorCheck {
   }
   const problems: string[] = [];
   const items: string[] = [];
+  // The remediation follows the problem, not the check. A newer writer is fixed by upgrading; a file in
+  // `rejected/` is a request *this* cao already refused, and upgrading would not unrefuse it — the reason
+  // is in the sidecar next to it, and deleting the pair is what clears the warning.
+  const hints: string[] = [];
   if (protocol.futureRequests.length) {
     problems.push(`${protocol.futureRequests.length} request(s) written for a protocol newer than ${protocol.version}`);
     items.push(...protocol.futureRequests.map((request) => `${request.runId}  ${request.file}  protocol ${request.protocol}`));
+    hints.push(upgrade);
   }
   if (protocol.rejected.length) {
     problems.push(`${protocol.rejected.length} request(s) in requests/rejected/`);
     items.push(...protocol.rejected.map((request) => `${request.runId}  ${request.file}${request.reason ? `  ${request.reason}` : ''}`));
+    hints.push(
+      'read <file>.reason.txt beside each one in .orchestrator/runs/<run>/requests/rejected/, then delete the pair; nothing is waiting on them and upgrading will not un-refuse them',
+    );
   }
   if (protocol.writer !== undefined && protocol.writer > protocol.version && !protocol.futureRequests.length) {
     problems.push(`these runs were written with protocol ${protocol.writer}, and this cao understands ${protocol.version}`);
+    if (!hints.includes(upgrade)) hints.push(upgrade);
   }
   return {
     id: 'protocol',
     label: 'protocol',
     status: problems.length ? 'warn' : 'ok',
     detail: problems.length ? problems.join('; ') : `protocol ${protocol.version}, and nothing on disk was written for a newer one`,
-    ...(problems.length ? { ...(items.length ? { items } : {}), hint: upgrade } : {}),
+    ...(problems.length ? { ...(items.length ? { items } : {}), ...(hints.length ? { hint: hints.join('; ') } : {}) } : {}),
   };
 }
 

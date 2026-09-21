@@ -351,10 +351,6 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
 
   const run = snapshot?.run ?? props.run;
   const tasks = run.workflow.tasks;
-  const searching = overlay.kind === 'search' || search !== '';
-  // The list every task cursor indexes: `/` narrows it, so the cursor is reset when the query changes.
-  const visible = useMemo(() => (searching && search ? filterTasks(tasks, search) : tasks), [tasks, search, searching]);
-  const selected = visible[Math.min(cursor, Math.max(0, visible.length - 1))];
   const now = Date.now();
   const active = anyActive(run);
 
@@ -367,6 +363,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   useFocus({ id: 'footer' });
   const { activeId, focus: focusPanel, focusPrevious, enableFocus, disableFocus } = useFocusManager();
   const focus: FocusRegion = activeId === 'tabs' ? 'tabs' : activeId === 'main' ? 'main' : activeId === 'footer' ? 'footer' : 'tasks';
+  // Which field the search overlay is typing into — the same answer the overlay's own input handler
+  // reaches. The Logs panel has a query of its own (§3.7), so an open overlay is not by itself evidence
+  // that the *task list* is being searched: taking it as such put an empty `/` row above the tasks for as
+  // long as the Logs search was open, which pushed every task down a row and back again when it closed.
+  const searchingLogs = overlay.kind === 'search' && focus === 'main' && tab === 'logs';
+  const searching = (overlay.kind === 'search' && !searchingLogs) || search !== '';
+  // The list every task cursor indexes: `/` narrows it, so the cursor is reset when the query changes.
+  const visible = useMemo(() => (searching && search ? filterTasks(tasks, search) : tasks), [tasks, search, searching]);
+  const selected = visible[Math.min(cursor, Math.max(0, visible.length - 1))];
   const overlayOpen = overlay.kind !== 'none';
   /**
    * The composer holds the keys exactly as an overlay does (§3.2, `[D15]`), even though it is part of a

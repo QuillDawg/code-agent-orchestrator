@@ -17,16 +17,35 @@ import { sanitizeText } from '../../cli/color.js';
 /** What separates the parts of a chip; the same bullet the header and the hints use. */
 const SEP = (): string => ` ${glyph('bullet')} `;
 
-/** `14:05`, in the reader's own time zone, which is the only one a reset time means anything in. */
-export function resetTime(iso: string, at: Date = new Date(iso)): string {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const pad = (n: number): string => String(n).padStart(2, '0');
+const startOfDay = (at: Date): number => new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+
+/**
+ * When a window rolls over, in the reader's own time zone — which is the only one it means anything in.
+ *
+ * A bare `14:05` is right for the five-hour window and a lie for the weekly one: Codex's second window is
+ * 10080 minutes, so the clock time it resets at is the same time of day a *week* from now, and the chip
+ * read `7d 61% · resets 13:12` twelve minutes before 13:12. So the day comes too as soon as the reset is
+ * not today, and past five days the clock time is dropped — at that distance the date is the answer and
+ * the minute is noise, and a weekday alone would come round again.
+ */
+export function resetTime(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
-  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const days = Math.round((startOfDay(at) - startOfDay(now)) / 86_400_000);
+  if (days === 0) return clock;
+  if (days > 0 && days <= 5) return `${WEEKDAYS[at.getDay()]} ${clock}`;
+  return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
 }
 
 /** One window: `5h 42%`, plus `resets 14:05` as its own part when the provider said when. */
-export function quotaWindowCells(window: QuotaWindow): string[] {
+export function quotaWindowCells(window: QuotaWindow, now: Date = new Date()): string[] {
   const used = `${window.label} ${Math.round(window.usedPercent)}%`;
-  const resets = window.resetsAt ? resetTime(window.resetsAt) : '';
+  const resets = window.resetsAt ? resetTime(window.resetsAt, now) : '';
   return resets ? [used, `resets ${resets}`] : [used];
 }
 
@@ -45,7 +64,7 @@ export function quotaChip(snapshot: QuotaSnapshot, now: number): string {
   if (snapshot.state === 'loading') return [...parts, 'loading'].join(SEP());
 
   if (snapshot.planType) parts.push(sanitizeText(snapshot.planType));
-  for (const window of snapshot.windows) parts.push(...quotaWindowCells(window));
+  for (const window of snapshot.windows) parts.push(...quotaWindowCells(window, new Date(now)));
 
   if (snapshot.state === 'ok' || snapshot.state === 'stale') {
     const age = Math.max(0, now - Date.parse(snapshot.readAt));

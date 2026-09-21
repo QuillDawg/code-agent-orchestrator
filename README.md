@@ -610,7 +610,7 @@ codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago      claude · 
 asks it for `account/read` and `account/rateLimits/read` when you arrive, every five minutes after that, and
 whenever you ask. Both are account reads: no thread is opened, no turn is started and nothing is billed.
 Whatever windows the server reports are shown, labelled from their own duration (`5h`, `7d`, else `Nm`) with
-the reset time in your time zone; a window the server does not report is not drawn. While a task is running,
+the reset time in your time zone — a clock time when it is today, a weekday and a clock time when it is not, a date when it is five or more days out; a window the server does not report is not drawn. While a task is running,
 the rate-limit updates its own app-server receives are folded in too, so a busy run refreshes faster than
 the timer. The chip says `codex · sign in with ChatGPT for quotas` when Codex is authenticated by API key —
 the server refuses quota reads for those — and `unavailable` when the CLI is missing or below 0.48.0, the

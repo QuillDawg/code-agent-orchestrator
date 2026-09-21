@@ -358,10 +358,25 @@ export function LogsPanel({ sources, source, view, filters, lines, offset, atSta
   );
 }
 
-/** Why a page is empty, which is never the same sentence twice. */
-function emptyNote(source: LogSource | undefined, filters: LogFilters): string {
+/**
+ * Why a page is empty, which is never the same sentence twice — and what to press about it.
+ *
+ * A note that says only "nothing here" makes an empty panel look like a broken one. Each of these names
+ * the key that would widen the filter, or the flag that would have written the file, because every one of
+ * these states is reached by an operator who was expecting to read something.
+ */
+export function emptyNote(source: LogSource | undefined, filters: LogFilters): string {
   if (!source) return 'No file of this run matches these filters. Press t or v to widen them.';
-  if (filters.severity || (filters.range ?? 0) > 0) return `${source.label} has nothing at this severity or in this time range.`;
+  if (filters.severity || (filters.range ?? 0) > 0) {
+    // Only three of the six kinds carry a level of their own; a `stdout.log` is all `debug` and a
+    // `prompt.md` is all `info`, so a floor above those empties the whole file rather than part of it.
+    return `${source.label} has nothing at this severity or in this time range. Press k or m to widen them.`;
+  }
+  if (source.kind === 'orchestrator') {
+    // The one empty file that is empty by default: the orchestrator logs only warnings and errors unless
+    // it was asked for more, so an ordinary run leaves nothing here at all (§3.7).
+    return `${source.label} is empty. Run with --debug to record what the orchestrator did.`;
+  }
   return `${source.label} is empty.`;
 }
 

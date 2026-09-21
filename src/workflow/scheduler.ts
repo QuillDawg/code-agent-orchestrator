@@ -565,6 +565,12 @@ export class WorkflowScheduler {
     this.run.startedAt ??= nowIso();
     this.run.orchestratorPid = process.pid;
     this.run.endedAt = undefined;
+    // The first line of `orchestrator.log` under `--debug` (§3.7): what this process is, what it was asked
+    // to do, and with what. Everything below it is at debug level too, so an ordinary run still logs only
+    // what went wrong — and `--debug` is the difference between a log file and no log file at all.
+    this.logger.debug(
+      `run ${this.run.runId} ${this.isResume ? 'resuming' : 'starting'}: ${this.run.workflowName}, ${this.workflow.tasks.length} task(s), concurrency ${this.workflow.execution.maxConcurrency}, workspace ${this.workflow.execution.workspaceStrategy.sequential}/${this.workflow.execution.workspaceStrategy.parallel}, pid ${process.pid}`,
+    );
     await this.persist();
     // §4.2.4 — announce the run once it is on disk as running, and reap opportunistically (§4.2.5). Both are
     // no-ops with emit off, and neither can fail the run.
@@ -648,6 +654,7 @@ export class WorkflowScheduler {
         this.bus.emit({ type: 'workflow.warning', code: 'agent', message: `${agent} preflight could not run: ${(err as Error).message}` });
         continue;
       }
+      this.logger.debug(`${agent}: preflight over ${tasks.length} task(s) found ${problems.length} problem(s)`);
       for (const problem of problems) {
         const affected = problem.taskIds.length ? problem.taskIds : tasks.map((task) => task.id);
         this.logger.error(problem.message);
@@ -1005,6 +1012,11 @@ export class WorkflowScheduler {
         number,
         nudge ? `asking ${task.agent} for the completion object` : resumeSessionId ? `${answering ? 'answering the' : 'resuming'} ${task.agent} session` : `starting ${task.agent}`,
       );
+      // Everything about this attempt that `events.jsonl` does not carry: which CLI, which model, which
+      // session it continues, where it runs and how big the prompt is (§3.7).
+      this.logger.debug(
+        `${task.id}#${number} ${nudge ? 'nudge' : resumeSessionId ? (answering ? 'answer' : 'resume') : 'start'}: agent ${task.agent}${task.model ? ` model ${task.model}` : ''}${task.effort ? ` effort ${task.effort}` : ''}, workspace ${ws.kind}, cwd ${ws.cwd}, prompt ${prompt.length} chars${resumeSessionId ? `, session ${resumeSessionId}` : ''}, timeout ${task.timeoutMs}ms`,
+      );
       // The operator's own words in the live transcript, next to the worker's (§3.5, `[D26]`). The record
       // that survives a reload is the `PromptDelivery` on the task and this attempt's `prompt.md`, which is
       // where the text really went; the attempt's own events.jsonl belongs to the runner.
@@ -1328,6 +1340,11 @@ export class WorkflowScheduler {
     }
     const decision = await this.decideControl(command, envelope);
     const ack = this.recordControl(envelope, decision.status, decision.reason);
+    // What a control was asked for and what it was answered, in one line: the Diagnostics panel shows this
+    // run's inbox, and this is the same fact for the controls that never reached disk (§3.7).
+    this.logger.debug(
+      `control ${command.kind}${'taskId' in command && command.taskId ? ` ${String(command.taskId)}` : ''} from ${envelope.source ?? 'this window'} ${envelope.id}: ${decision.status}${decision.reason ? ` - ${decision.reason}` : ''}`,
+    );
     // Persist-before-act, as everywhere else in this loop: the command is answered on disk before it changes
     // anything, so a crash in the middle leaves a run that knows what it was told rather than one that did it
     // twice.
@@ -2020,6 +2037,13 @@ export class WorkflowScheduler {
     const outcome = attempt.outcome ?? 'crash';
     const mergeFailed = fin?.merge?.status === 'conflict';
     state.currentAttempt = undefined;
+    // The other end of the attempt line above: how it left, and the provider diagnostics the retry decision
+    // is about to be made from (§3.7). The Diagnostics panel shows the same `RunnerFailure` fields.
+    this.logger.debug(
+      `${task.id}#${attempt.number} ended: ${outcome}, exit ${attempt.exitCode ?? 'none'}${attempt.signal ? ` signal ${attempt.signal}` : ''}${attempt.sessionId ? `, session ${attempt.sessionId}` : ''}${
+        attempt.failure ? `, ${attempt.failure.retryable ? 'retryable' : 'not retryable'}${attempt.failure.providerCode ? ` ${attempt.failure.providerCode}` : ''}${attempt.failure.httpStatus ? ` http ${attempt.failure.httpStatus}` : ''}${attempt.failure.requestId ? ` request ${attempt.failure.requestId}` : ''}` : ''
+      }${attempt.error ? `, ${attempt.error}` : ''}`,
+    );
 
     if (outcome === 'success' && result && !mergeFailed) {
       const enriched: EnrichedTaskResult = { ...result, taskId: task.id, attempt: attempt.number, git: fin?.git, usage: attempt.usage, completedAt: nowIso() };
@@ -2226,6 +2250,9 @@ export class WorkflowScheduler {
     await this.announceFinal();
     await this.store.releaseLock(this.run.runId).catch(() => undefined);
     const summary = summarize(this.run);
+    this.logger.debug(
+      `run ${this.run.runId} ${state}: exit ${this.run.exitCode}, ${summary.success} succeeded, ${summary.failed} failed, ${summary.blocked} blocked, ${summary.skipped} skipped, ${summary.cancelled} cancelled`,
+    );
     if (state === 'completed') this.bus.emit({ type: 'workflow.completed', summary });
     else if (state === 'interrupted') this.bus.emit({ type: 'workflow.interrupted', summary });
     else if (state === 'paused') {

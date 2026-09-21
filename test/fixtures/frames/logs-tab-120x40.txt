@@ -3,7 +3,7 @@ stack-upgrade  run ##K#ABCDEFGHJKMNPQRSTVWXYZ · /repo/code-agent-orchestrator
  Overview │ Session │[Logs]│ Changes │ Report │ Diagnostics
 Tasks #/#                            Logs
 ▶ ✓ implement-par… claude|opus-#  █  view events  · source orchestrator.log  · task all  · severity all  · time all
-  ✗ implement-ren… codex|gpt-#-… !█  orchestrator.log is empty.
+  ✗ implement-ren… codex|gpt-#-… !█  orchestrator.log is empty. Run with --debug to record what the orchestrator did.
   ○ review-and-me… claude         █  nothing here  · newest line  · file #/#
 
 

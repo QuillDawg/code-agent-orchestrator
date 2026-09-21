@@ -21,7 +21,7 @@ import {
   type QuotaChannelHandlers,
 } from '../../src/runners/codex/quota.js';
 import { claudeQuotaSnapshot, startQuotaMonitors } from '../../src/runners/quota.js';
-import { quotaChip } from '../../src/tui/workspace/quota.js';
+import { quotaChip, resetTime } from '../../src/tui/workspace/quota.js';
 import type { Clock } from '../../src/util/misc.js';
 
 function fakeClock(): Clock & { tick(ms: number): void; pending: number } {
@@ -354,6 +354,39 @@ describe('the Codex quota process (§3.6, [D28])', () => {
     harness.monitor.stop();
   });
 
+  /**
+   * The two reads are sent together, so their answers race. An `account/read` that says the account cannot
+   * read quotas has to win: the chip used to say "sign in with ChatGPT for quotas" and then, when the
+   * limits answer landed a moment later, show a percentage instead.
+   */
+  it('keeps authRequired when a rate-limit answer arrives after it', async () => {
+    const harness = start();
+    await harness.settled();
+    harness.server.answer({ id: harness.server.idOf('initialize'), result: {} });
+    harness.server.answer({ id: harness.server.idOf('account/read'), result: { account: { type: 'apiKey' } } });
+    expect(harness.latest().state).toBe('authRequired');
+    harness.server.answer({
+      id: harness.server.idOf('account/rateLimits/read'),
+      result: { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1790000000 }, planType: 'Pro' } },
+    });
+    expect(harness.latest().state).toBe('authRequired');
+    expect(harness.latest().windows).toEqual([]);
+    // An update forwarded from an attempt's own app-server must not talk the chip round either.
+    forwardCodexRateLimits({ primary: { usedPercent: 43, windowDurationMins: 300, resetsAt: 1790000000 } });
+    expect(harness.latest().state).toBe('authRequired');
+
+    // Signing in is picked up by the next round: the verdict is per read, not for the life of the process.
+    harness.clock.tick(QUOTA_REFRESH_MS);
+    harness.server.answer({ id: harness.server.idOf('account/read'), result: { account: { type: 'chatgpt', planType: 'Pro' } } });
+    harness.server.answer({
+      id: harness.server.idOf('account/rateLimits/read'),
+      result: { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1790000000 }, planType: 'Pro' } },
+    });
+    expect(harness.latest().state).toBe('ok');
+    expect(harness.latest().windows).toHaveLength(1);
+    harness.monitor.stop();
+  });
+
   it('is authRequired when the server refuses the read itself', async () => {
     const harness = start();
     await harness.settled();
@@ -501,6 +534,35 @@ describe('the footer chips (§3.6)', () => {
   it('shows the plan, every window the provider reported, and how old the reading is', () => {
     const chip = quotaChip(ok(), at);
     expect(chip).toBe('codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago');
+  });
+
+  /**
+   * A weekly window resets at the same time of day a week from now, so a bare clock time reads as
+   * "in a few minutes" when it means "next Monday". Real numbers off `codex app-server`: the 7d window
+   * showed `resets 13:12` at 13:00.
+   */
+  it('says which day a reset is on when it is not today', () => {
+    const noon = new Date(2026, 8, 21, 13, 0); // a Monday
+    // Today: the clock time is the whole answer.
+    expect(resetTime(new Date(2026, 8, 21, 18, 12).toISOString(), noon)).toBe('18:12');
+    // Tomorrow and within the week: the weekday comes with it.
+    expect(resetTime(new Date(2026, 8, 22, 13, 12).toISOString(), noon)).toBe('Tue 13:12');
+    expect(resetTime(new Date(2026, 8, 26, 9, 5).toISOString(), noon)).toBe('Sat 09:05');
+    // A week out, where a weekday would come round to the same one it started on: the date instead.
+    expect(resetTime(new Date(2026, 8, 28, 13, 12).toISOString(), noon)).toBe('28 Sep');
+    expect(resetTime('not a date', noon)).toBe('');
+
+    const chip = quotaChip(
+      ok({
+        windows: [
+          { label: '5h', durationMins: 300, usedPercent: 42, resetsAt: new Date(2026, 8, 21, 18, 12).toISOString() },
+          { label: '7d', durationMins: 10080, usedPercent: 61, resetsAt: new Date(2026, 8, 28, 13, 12).toISOString() },
+        ],
+      }),
+      noon.getTime(),
+    );
+    expect(chip).toContain('5h 42% · resets 18:12');
+    expect(chip).toContain('7d 61% · resets 28 Sep');
   });
 
   it('keeps the numbers and says stale when the last refresh failed', () => {

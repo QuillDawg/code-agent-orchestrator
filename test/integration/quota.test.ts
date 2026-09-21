@@ -83,11 +83,28 @@ describe('the Codex quota process against the fake app-server', () => {
     expect((await readTrace(trace)).length).toBeGreaterThan(0);
   }, 30_000);
 
-  it('is authRequired for an API-key login', async () => {
+  it('is authRequired for an API-key login, and stays there', async () => {
     const quota = startAgainstFake({ FAKE_CODEX_ACCOUNT: 'apiKey' });
     try {
       await quota.settled('authRequired');
       expect(quota.snapshots.find((s) => s.state === 'authRequired')!.reason).toBe('sign in with ChatGPT for quotas');
+      // The fake answers `account/rateLimits/read` for this mode too, which is what makes it the case
+      // worth having: the limits answer arrives after the account answer and must not talk the chip out
+      // of "sign in" and into a percentage.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(quota.latest()?.state).toBe('authRequired');
+      expect(quota.snapshots.some((s) => s.state === 'ok')).toBe(false);
+    } finally {
+      quota.monitor.stop();
+    }
+  }, 30_000);
+
+  it('is authRequired when the machine has no login at all', async () => {
+    const quota = startAgainstFake({ FAKE_CODEX_ACCOUNT: 'none' });
+    try {
+      await quota.settled('authRequired');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(quota.latest()?.state).toBe('authRequired');
     } finally {
       quota.monitor.stop();
     }

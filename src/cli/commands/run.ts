@@ -17,7 +17,8 @@ import { runWorkspaceSession, type WorkspaceSession } from '../workspace-session
 import type { Runtime } from '../app.js';
 import type { SchedulerResult } from '../../workflow/scheduler.js';
 import type { WorkflowRun, PermissionMode, Interaction, InteractionAnswer } from 'code-agent-orchestrator-protocol';
-import { appendLine } from '../../util/fs.js';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 
 export interface RunCommandOptions {
   dryRun?: boolean;
@@ -178,8 +179,22 @@ export async function executeOnce(opts: ExecuteOptions, session?: WorkspaceSessi
   // Through the layout accessor, not a hand-built string: the run directory is described in exactly one
   // place, and that place is the protocol package (spec §4.1, §6.4.1).
   const logFile = createNativeRunPaths(run.repositoryRoot).runLogFile(run.runId);
+  /**
+   * `orchestrator.log`, written synchronously.
+   *
+   * Two things an async `appendFile` per line got wrong, and both of them show up in the one file a bug
+   * report is built from. Concurrent appends have no ordering guarantee, so a timestamped log could come
+   * out with its lines shuffled; and a fire-and-forget write in flight when the process leaves is a write
+   * that never lands — which is exactly the last line, the one saying how the run ended. A log line is a
+   * few dozen bytes and, below `--debug`, only a warning or an error, so the cost of being sure is nil.
+   */
   const fileSink = (line: string): void => {
-    void appendLine(logFile, line).catch(() => undefined);
+    try {
+      mkdirSync(path.dirname(logFile), { recursive: true });
+      appendFileSync(logFile, `${line}\n`, 'utf8');
+    } catch {
+      /* a log that cannot be written must not stop the run it is a log of */
+    }
   };
   const logger: Logger = new ConsoleLogger({
     level: opts.verbose || debug ? 'debug' : 'info',

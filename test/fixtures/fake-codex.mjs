@@ -445,7 +445,9 @@ rl.on('line', (raw) => {
     emit({ id: message.id, result: { userAgent: 'fake-codex' } });
   } else if (message.method === 'account/read') {
     trace({ method: 'account/read' });
-    emit({ id: message.id, result: { account: ACCOUNTS[accountMode] ?? ACCOUNTS.chatgpt } });
+    // `Object.hasOwn`, not `??`: `ACCOUNTS.none` *is* null, which is the shape a machine with no login
+    // gets, and `??` turned the one mode that tests it back into a signed-in ChatGPT account.
+    emit({ id: message.id, result: { account: Object.hasOwn(ACCOUNTS, accountMode) ? ACCOUNTS[accountMode] : ACCOUNTS.chatgpt } });
   } else if (message.method === 'account/rateLimits/read') {
     trace({ method: 'account/rateLimits/read' });
     // The one refusal that is not a failure: the server will not read quotas for an API-key login (§7.2).

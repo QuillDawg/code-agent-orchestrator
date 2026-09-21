@@ -332,6 +332,19 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **`--debug` and `--verbose` now write an `orchestrator.log` worth reading.** The only thing either of
+  them used to put in that file was one line per worker naming the pid that was spawned; the orchestrator's
+  own decisions were nowhere. It now records, at debug level, the run it is a log of (workflow, task count,
+  concurrency, workspace strategy, pid), the per-agent preflight, each attempt as it starts (agent, model,
+  effort, workspace, working directory, prompt size, the session it continues, its timeout), each attempt
+  as it ends (outcome, exit code, signal, session and the `RunnerFailure` fields a retry decision is made
+  from), every control and the answer it was given, and the run's final state and exit code. A run with
+  neither flag is unchanged and still writes no `orchestrator.log` at all; on the headless path the same
+  lines reach stderr, as debug lines already did.
+- **`orchestrator.log` is written synchronously.** Each line used to be an un-awaited `appendFile`, so two
+  lines written at once could land out of order and anything still in flight when the process left was
+  lost — which is how the line saying how the run ended went missing from the file a bug report is built
+  from. Nothing else about the file changed.
 - **`CAO_DEBUG=1` now also turns the logger up to debug.** It used to affect only the stack trace printed
   when a command fails; it now does what `--debug` does, which is what makes the two the same switch:
   debug-level lines into `orchestrator.log`, the same lines on stderr on the headless path, and the
@@ -494,6 +507,31 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   failures as failures even if the CLI process exits successfully.
 
 ### Fixed
+
+- **The Codex quota chip no longer talks itself out of "sign in with ChatGPT".** `account/read` and
+  `account/rateLimits/read` are sent together, so their answers race; an account the server had just said
+  was authenticated by API key could still have a rate-limit answer land a moment later and replace the
+  chip's `codex · sign in with ChatGPT for quotas` with a percentage. Whether there is anything to show is
+  now decided by the account read alone, per read round, so signing in is still picked up by the next one.
+- **A quota window that resets next week no longer says it resets in ten minutes.** The chip printed the
+  reset as a bare local clock time, and Codex's weekly window rolls over at the same time of day it is
+  being read at — so `7d 61% · resets 13:12` appeared twelve minutes before 13:12. A reset later today is
+  still a clock time; one on another day now carries its weekday (`resets Tue 13:12`), and one five or
+  more days out is a date (`resets 28 Sep`), where a weekday would have come round to the same one.
+- **`cao doctor` no longer tells you to upgrade over a rejected request.** The `protocol` check had one
+  remediation for three different problems, so a run with nothing but files in `requests/rejected/` was
+  answered with `npm i -g code-agent-orchestrator@beta` — which cannot un-refuse a request this build
+  already refused. Each problem now carries its own line: upgrade for a request written for a newer
+  protocol or a run directory a newer `cao` wrote, and, for a rejected request, the `<file>.reason.txt`
+  beside it and the instruction to delete the pair.
+- **An empty page in the Logs tab says how to get out of it.** "has nothing at this severity or in this
+  time range" now names the keys that widen the filter (`k`, `m`) — which matters most for the raw-output
+  and prompts views, where every line carries the file's own level and so a floor above it empties the
+  whole file rather than part of it — and an empty `orchestrator.log`, which is what an ordinary run
+  leaves, now says that `--debug` (or `CAO_DEBUG=1`) is what puts something in it.
+- **`FAKE_CODEX_ACCOUNT=none` answers with no account.** The test fixture's `??` fallback turned the one
+  mode that models a machine with no login back into a signed-in ChatGPT account, so nothing exercised
+  the no-account branch of the quota reader.
 
 - **`cao task prompt` with no mode flag works again.** The command documents that it picks the row of the
   §3.5 matrix that applies and says which it chose; it sent `followUp` instead, so every no-flag message to

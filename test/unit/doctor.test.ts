@@ -579,11 +579,29 @@ describe('doctor checks: the environment (S3)', () => {
     );
     expect(rejected.status).toBe('warn');
     expect(rejected.items?.[0]).toContain('not valid JSON');
-    expect(rejected.hint).toBe('npm i -g code-agent-orchestrator@beta');
+    // The remediation follows the problem. A request this cao already refused is not fixed by installing
+    // a newer cao, and telling the operator to upgrade sends them somewhere that changes nothing: what
+    // clears it is reading the reason beside the file and deleting the pair.
+    expect(rejected.hint).not.toContain('npm i -g');
+    expect(rejected.hint).toContain('reason.txt');
+    expect(rejected.hint).toContain('requests/rejected/');
 
     const newer = check(evaluate(facts({ protocol: { version: 1, writer: 3, futureRequests: [], rejected: [] } })), 'protocol');
     expect(newer.status).toBe('warn');
     expect(newer.detail).toContain('written with protocol 3');
+    expect(newer.hint).toBe('npm i -g code-agent-orchestrator@beta');
+
+    // Both at once keeps both remediations, in the order the problems are listed.
+    const both = check(
+      evaluate(
+        facts({
+          protocol: { version: 1, writer: 2, futureRequests: [{ runId: '2026-01-01-001', file: '01J-stop.json', protocol: 2, live: false }], rejected: [{ runId: '2026-01-01-001', file: '01K-pause.json' }] },
+        }),
+      ),
+      'protocol',
+    );
+    expect(both.hint).toContain('npm i -g code-agent-orchestrator@beta');
+    expect(both.hint).toContain('reason.txt');
   });
 
   it('warns when a session a follow-up would continue is no longer on disk', () => {
@@ -830,7 +848,10 @@ describe.skipIf(!HAS_GIT)('the environment checks against a real run directory',
 
     const protocolCheck_ = check(evaluate(gathered), 'protocol');
     expect(protocolCheck_.status).toBe('warn'); // nothing owns the run, so nothing is about to refuse it
-    expect(protocolCheck_.hint).toBe('npm i -g code-agent-orchestrator@beta');
+    // Both problems are present here, so both remediations are: upgrade for the future-protocol request,
+    // and the reason sidecar for the one this cao already refused.
+    expect(protocolCheck_.hint).toContain('npm i -g code-agent-orchestrator@beta');
+    expect(protocolCheck_.hint).toContain('reason.txt');
 
     // Read-only by definition: doctor must not move a request the way the owner's reader does.
     expect((await fs.readdir(paths.requestsDir('2026-01-01-001'))).filter((name) => name.endsWith('.json'))).toHaveLength(3);

@@ -624,7 +624,7 @@ The footer is cut to the terminal by dropping whole cells rather than the end of
 
 ### Provider quotas in the footer
 
-One chip per provider, carrying what that provider says about its own rate-limited windows. `cao` computes nothing here and invents no category: the windows are the ones the provider reported, under labels taken from their own durations (`5h`, `7d`, else `Nm`), with the reset time in the reader's own time zone and the plan type beside them.
+One chip per provider, carrying what that provider says about its own rate-limited windows. `cao` computes nothing here and invents no category: the windows are the ones the provider reported, under labels taken from their own durations (`5h`, `7d`, else `Nm`), with the reset time in the reader's own time zone and the plan type beside them. A reset later today is a clock time; one on another day carries its weekday; one five or more days out is a date — the weekly window resets at the same time of day it is being read at, so a bare clock time would read as imminent.
 
 ```
 codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago      claude · unavailable · see /usage in Claude Code
@@ -945,6 +945,15 @@ at all. A run that does not exist is a usage error, exit 2.
 `--debug` on `cao run` and `cao resume` is the same switch as `CAO_DEBUG=1`: the logger runs at debug level
 into `orchestrator.log` (and onto stderr on the headless path), a failed command prints its stack trace, and
 the workspace opens on the Diagnostics tab.
+
+What the debug log records is the orchestrator's own reasoning, which is the half the run's `events.jsonl`
+does not carry: the run it is a log of (workflow, task count, concurrency, workspace strategy, pid), the
+per-agent preflight, each attempt as it starts (agent, model, effort, workspace, working directory, prompt
+size, the session it continues, its timeout), each attempt as it ends (outcome, exit code, signal, session,
+and the `RunnerFailure` fields the retry decision is made from), every control and the answer it was given,
+and the run's final state and exit code. Without `--debug` or `--verbose` the logger writes only warnings
+and errors, so an ordinary run leaves no `orchestrator.log` at all — which is what the Logs tab says when
+you open it there.
 
 ---
 

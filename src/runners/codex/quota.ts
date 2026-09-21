@@ -292,6 +292,16 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
   let planType: string | undefined;
   /** When the kept reading was taken. It is what makes `stale · 12m ago` count from the right moment. */
   let readAt: string | undefined;
+  /**
+   * The account cannot read quotas: `account/read` said `apiKey`, or said there is no account at all.
+   *
+   * `account/read` and `account/rateLimits/read` are sent together, so their answers race. Without this the
+   * limits answer published numbers *over* the `sign in with ChatGPT` sentence — a chip that told the
+   * operator to sign in and then, a millisecond later, showed them a percentage. The verdict on whether
+   * there is anything to show belongs to the account read; the limits read only supplies the numbers.
+   * Cleared at the start of each round, so signing in is picked up by the next read.
+   */
+  let authBlocked = false;
 
   const publish = (snapshot: QuotaSnapshot): void => {
     if (!stopped) options.onSnapshot(snapshot);
@@ -306,6 +316,7 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
   });
 
   const publishReading = (): void => {
+    if (authBlocked) return;
     const windows = quotaWindows(rateLimits, byLimitId);
     readAt = nowIso();
     publish(base('ok', windows, readAt));
@@ -319,6 +330,7 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
   };
 
   const settle = (state: 'unavailable' | 'authRequired', reason: string): void => {
+    if (state === 'authRequired') authBlocked = true;
     publish({ ...base(state, [], nowIso()), reason: sanitizeText(reason) });
   };
 
@@ -331,6 +343,8 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
 
   const read = (): void => {
     if (!channel || !ready) return;
+    // A new round asks the account again, so last round's verdict stops standing in the way of this one's.
+    authBlocked = false;
     accountId = nextId++;
     limitsId = nextId++;
     channel.send({ id: accountId, method: 'account/read', params: {} });
