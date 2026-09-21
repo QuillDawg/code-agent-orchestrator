@@ -3,7 +3,8 @@
 exports[`root help groups > fits 100 columns and reads the same every time 1`] = `
 "Usage: cao [options] [command]
 
-Code Agent Orchestrator: run YAML-defined workflows as isolated coding-agent sessions
+Code Agent Orchestrator: run YAML-defined engineering workflows as a DAG of isolated Claude Code and
+Codex sessions
 
 Options:
   -V, --version                  output the version number
@@ -48,7 +49,8 @@ Environment:
   CAO_CODEX_COMMAND    Codex CLI to launch instead of \`codex\`
   CAO_EMIT             announce runs to a desktop app on this machine (1/0); see cao emit status
   CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)
-  CAO_DEBUG            debug logging, stack traces, and the Diagnostics tab (also --debug)
+  CAO_EMIT_FEED        reserved for the per-run live feed; this build serves none (also --emit-feed)
+  CAO_DEBUG            debug logging, stack traces, and open the workspace on Diagnostics (--debug)
   CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)
   CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)
   CAO_THEME            workspace theme: cyberpunk|mono (also --theme)

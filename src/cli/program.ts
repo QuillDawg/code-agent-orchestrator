@@ -249,7 +249,7 @@ export function buildProgram(): Command {
   const program = new Command();
   program
     .name('cao')
-    .description('Code Agent Orchestrator: run YAML-defined workflows as isolated coding-agent sessions')
+    .description('Code Agent Orchestrator: run YAML-defined engineering workflows as a DAG of isolated Claude Code and Codex sessions')
     .version(pkg.version)
     // `terminalWidth()`, not commander's own: it reads `$COLUMNS` when there is no TTY, which is how every
     // table in this CLI is laid out, so `COLUMNS=100 cao --help | ...` wraps where a 100-column terminal
@@ -306,7 +306,7 @@ export function buildProgram(): Command {
     .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
     .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
-    .option('--debug', 'debug logging into orchestrator.log, stack traces, and the Diagnostics tab (CAO_DEBUG=1)')
+    .option('--debug', 'debug logging into orchestrator.log, stack traces, and open the workspace on the Diagnostics tab (CAO_DEBUG=1)')
     .option('-v, --verbose', 'verbose output')
     .action((workflow: string | undefined, opts) => exitWith(() => runCommand(workflow, opts)));
 
@@ -331,7 +331,7 @@ export function buildProgram(): Command {
     .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
     .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
-    .option('--debug', 'debug logging into orchestrator.log, stack traces, and the Diagnostics tab (CAO_DEBUG=1)')
+    .option('--debug', 'debug logging into orchestrator.log, stack traces, and open the workspace on the Diagnostics tab (CAO_DEBUG=1)')
     .option('-v, --verbose', 'verbose output')
     .action((run: string | undefined, opts) => exitWith(() => resumeCommand(run, opts)));
 
@@ -595,7 +595,8 @@ export function buildProgram(): Command {
       '  CAO_CODEX_COMMAND    Codex CLI to launch instead of `codex`',
       '  CAO_EMIT             announce runs to a desktop app on this machine (1/0); see cao emit status',
       '  CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)',
-      '  CAO_DEBUG            debug logging, stack traces, and the Diagnostics tab (also --debug)',
+      '  CAO_EMIT_FEED        reserved for the per-run live feed; this build serves none (also --emit-feed)',
+      '  CAO_DEBUG            debug logging, stack traces, and open the workspace on Diagnostics (--debug)',
       '  CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)',
       '  CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)',
       `  CAO_THEME            workspace theme: ${THEME_NAMES.join('|')} (also --theme)`,
