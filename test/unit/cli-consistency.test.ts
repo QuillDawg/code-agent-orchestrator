@@ -653,11 +653,17 @@ describe('the examples all parse', () => {
  *
  * The chord sentence is the kind of claim that rots quietly: it was written when `Ctrl+C` really was the
  * only one the workspace read, and it stayed on the page through `Ctrl+P` and the answer field's `Ctrl+J`,
- * contradicting the same README four lines above it. Both documents are checked against the table the
+ * contradicting the same README four lines above it. The key list is checked against the table the
  * workspace itself answers from, so a chord added there is a failing test until the prose catches up.
+ *
+ * docs/capabilities.md is the one document that names the keys. The README used to carry a second copy,
+ * and the two drifted until each was missing a chord the other had; it now describes the workspace in a
+ * screen and links here, so there is one list to keep true. Every document is still held to the weaker
+ * claim, that none of them calls a chord the only one.
  */
 describe('the chords the docs promise', () => {
-  const DOCS = ['README.md', 'docs/capabilities.md'];
+  const NAMES_THE_KEYS = 'docs/capabilities.md';
+  const DOCS = ['README.md', NAMES_THE_KEYS];
   /** The two no table holds: the answer composer's newline (`app.tsx`) and the viewer's page up (`viewer.tsx`). */
   const INLINE_CHORDS = ['Ctrl+J', 'Ctrl+A'];
 
@@ -666,7 +672,9 @@ describe('the chords the docs promise', () => {
     expect(chords).toEqual(expect.arrayContaining(['Ctrl+C', 'Ctrl+P', 'Ctrl+J', 'Ctrl+A']));
     for (const file of DOCS) {
       const text = await fs.readFile(path.join(process.cwd(), file), 'utf8');
-      for (const chord of chords) expect(text, `${file} does not mention ${chord}`).toContain(chord);
+      if (file === NAMES_THE_KEYS) {
+        for (const chord of chords) expect(text, `${file} does not mention ${chord}`).toContain(chord);
+      }
       expect(text.match(/only chords?/g) ?? [], `${file} calls a chord the only one`).toEqual([]);
     }
   });
@@ -675,10 +683,14 @@ describe('the chords the docs promise', () => {
 /**
  * The CLI reference table of README.md, against the program it describes (§3.3).
  *
- * Most rows name the options worth naming and leave the rest to `--help`, which is the point of a summary.
- * The three commands that can open the workspace are the exception: they share a set of options, an
- * operator comparing the rows is comparing that set, and a row that is short by two is read as a command
- * that does not take them. `--no-alt-screen` and `--theme` went missing from `cao run` that way.
+ * The table is a map: a row names the command and what it is for, and `--help` carries the options. That
+ * is the rule this enforces, because the half-measure is what rots. The rows used to inventory flags and
+ * had quietly fallen a third short - `--repository` was named on five of the ten commands that take it -
+ * and for the three commands that open the workspace a row short by two reads as a command that does not
+ * take them, which is how `--no-alt-screen` and `--theme` went missing from `cao run`.
+ *
+ * So: a row either names no options or names every option the workspace-opening commands share. Both the
+ * current table and a fully restored one pass; the half-list does not.
  */
 describe('the CLI reference table', () => {
   /** A row of the table: the command it names, and the long options its prose mentions. */
@@ -716,7 +728,7 @@ describe('the CLI reference table', () => {
     }
   });
 
-  it('lists every option shared by the commands that open the workspace', async () => {
+  it('either lists every option the workspace-opening commands share, or none of them', async () => {
     const rows = tableRows(await fs.readFile(path.join(process.cwd(), 'README.md'), 'utf8'));
     const opening = ['run', 'resume', 'ui'];
     const shared = longOptionsOf(['run']).filter((long) => opening.every((name) => longOptionsOf([name]).includes(long)));
@@ -724,9 +736,11 @@ describe('the CLI reference table', () => {
     for (const name of opening) {
       const row = rows.find((candidate) => candidate.parts.join(' ') === name);
       expect(row, name).toBeDefined();
-      // A row may defer to another instead of repeating it; `cao resume` does, and says so in its prose.
+      // A row may defer to another instead of repeating it; `cao resume` did, and said so in its prose.
       const inherited = row!.text.includes('the `cao run` overrides') ? rows.find((candidate) => candidate.parts.join(' ') === 'run')!.flags : new Set<string>();
-      for (const flag of shared) expect([...row!.flags, ...inherited], `cao ${name} does not list ${flag}`).toContain(flag);
+      const named = new Set([...row!.flags, ...inherited]);
+      if (named.size === 0) continue;
+      for (const flag of shared) expect([...named], `cao ${name} names some options but not ${flag}`).toContain(flag);
     }
   });
 });

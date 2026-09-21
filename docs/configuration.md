@@ -178,7 +178,7 @@ claude:
   command: claude                # binary or "node path/to/script.mjs"; env CAO_CLAUDE_COMMAND overrides
   permissionMode: auto           # auto | acceptEdits | dontAsk | bypassPermissions | plan | manual
   model: sonnet
-  effort: high                   # low | medium | high | xhigh | max
+  effort: high                   # none | minimal | low | medium | high | xhigh | max
   maxBudgetUsd: 5
   allowedTools: ["Bash(git *)", "Edit"]
   disallowedTools: ["WebFetch"]
@@ -509,6 +509,30 @@ that invocation, and `cao` never creates or writes this file except through `cao
 `CAO_ALT_SCREEN`, then this file's `altScreen`, then the default of on) is mirrored by the theme
 (`--theme`, then `CAO_THEME`, then this file's `theme`, then `cyberpunk` — except that `NO_COLOR`, a
 `TERM=dumb` terminal and any terminal that reports no colour force `mono` whatever the four say). The
-rest of the workspace's CLI flags and environment variables are in the
-[README](../README.md#environment-variables) and
+rest of the workspace's CLI flags are in
 [docs/capabilities.md](capabilities.md#the-workspace).
+
+## Environment variables
+
+Read by `cao` itself. Everything else in your environment passes through to the agent processes, unchanged.
+`cao --help` prints the same list.
+
+| Variable | Effect |
+|---|---|
+| `CAO_CLAUDE_COMMAND` | The Claude CLI to launch instead of `claude`. A command line, not only a path, so `node test/fixtures/fake-claude.mjs` works. `--claude-command` overrides it |
+| `CAO_CODEX_COMMAND` | The Codex CLI to launch instead of `codex`, same rules |
+| `CAO_EMIT` | `1`/`0` to announce this shell's runs to a desktop app on this machine (`~/.cao`), same precedence as `--emit`/`--no-emit` and `cao emit enable`. See [desktop.md](desktop.md) |
+| `CAO_HOME` | Use a different directory instead of `~/.cao` for the files above |
+| `CAO_EMIT_FEED` | Reserved for the per-run live feed. This build serves none: setting it makes `cao run` say so rather than pretend, and nothing else. `--emit-feed` is the same reservation |
+| `CAO_DEBUG` | Debug-level logging into `orchestrator.log` (and onto stderr without a workspace), the stack trace when a command fails, and the workspace opens on its Diagnostics tab. `--debug` on `cao run` and `cao resume` sets it. The tab itself is always there |
+| `CAO_ASCII` | Draw tables, status marks and the workspace's own glyphs in ASCII. Guessed on a Windows terminal without a UTF-8 code page; `CAO_UNICODE=1` forces glyphs back on |
+| `CAO_ALT_SCREEN` | `0` draws the workspace in the normal buffer instead of the alternate screen, like `--no-alt-screen` |
+| `CAO_THEME` | `cyberpunk` (the default) or `mono` for the workspace; `--theme` overrides it, a `"theme"` key in `~/.cao/config.json` is read below it, and `NO_COLOR` forces `mono`. `default` is still accepted as the old name of `cyberpunk` |
+| `CAO_REDUCED_MOTION` | `1` stops the spinner and the activity pulse; `TERM=dumb` and a screen reader do the same |
+| `NO_COLOR` / `FORCE_COLOR` | Disable or force ANSI colour. `--color auto\|always\|never` wins where a command has it |
+| `COLUMNS` | Table width when there is no terminal to ask, for piped output and CI logs |
+
+Workflow hooks additionally receive `CAO_RUN_ID`, `CAO_RUN_STATE`, `CAO_TASK_ID`, `CAO_TASK_TYPE`,
+`CAO_TASK_STATE`, `CAO_ATTEMPT`, `CAO_ATTEMPT_KIND`, `CAO_BRANCH`, `CAO_WORKDIR`, `CAO_HOOK` and, for
+`hooks.onInputRequired`, `CAO_INTERACTION_KIND`, `CAO_INTERACTION_TITLE` and `CAO_INTERACTION_TOOL`; see
+[`hooks`](#hooks).

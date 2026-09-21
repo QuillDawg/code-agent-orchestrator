@@ -189,6 +189,11 @@ Rules of thumb:
 - **Summaries, changelogs, formatting, file shuffling** — the cheapest model at `low` effort.
 - **Approval gates** — no agent runs at all, so `model` is irrelevant.
 
+Runnable: [`examples/model-selection.yaml`](../examples/model-selection.yaml) spends `xhigh` on the
+implementation, a mid-tier model on the review and the cheapest one on the changelog entry.
+`cao validate --json` reports the resolved agent, model and effort for every task before you spend
+anything.
+
 ## Mixing agents in one workflow
 
 `agent` is per task, so a single workflow can use both CLIs — for example, implement with one and have the other review it independently:

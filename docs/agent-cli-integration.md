@@ -520,3 +520,20 @@ To run a whole workflow against the fake agent with no API calls:
 ```bash
 CAO_CLAUDE_COMMAND="node test/fixtures/fake-claude.mjs" cao run workflow.yaml
 ```
+
+### Smoke-testing an integration
+
+Three example workflows exercise the agents end to end against a real CLI with a tiny, bounded documentation
+edit. Run the single-agent ones first, then the cross-agent one:
+
+```bash
+cao doctor examples/documentation-combined.yaml
+cao run examples/documentation-codex.yaml --no-tui
+cao run examples/documentation-claude.yaml --no-tui
+cao run examples/documentation-combined.yaml --no-tui
+git diff -- examples/documentation-*
+```
+
+All three edit [`examples/documentation-smoke-target.md`](../examples/documentation-smoke-target.md), so
+their changes are easy to inspect and easy to discard. `cao doctor --probe` on the same workflow is the
+cheaper check when all you need to know is that each mode starts.

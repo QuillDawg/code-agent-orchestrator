@@ -39,6 +39,8 @@ tasks:
 
 Branches are merged back into your base branch on success. `maxConcurrency` must be raised above `1` or the group still runs one at a time.
 
+Runnable: [`examples/parallel-issues.yaml`](../examples/parallel-issues.yaml), and its one-at-a-time variant [`examples/sequential-issues.yaml`](../examples/sequential-issues.yaml).
+
 ### Express an explicit dependency graph
 
 `dependsOn` replaces the implicit ordering for that task. `dependsOn: []` makes a root.
@@ -81,6 +83,8 @@ Produces `implement-101`, `implement-102`, `implement-103`. Referring to `implem
 
 Keep a collection uniform: scalar items (`- 101`) are reachable only as `{{item}}`, object items as `{{item.number}}`. A prompt that reads `{{item.number}}` fails validation on a scalar item.
 
+Runnable: [`examples/prd-implementation.yaml`](../examples/prd-implementation.yaml) fans out over a list of issues and then runs test, PRD review, code review, security review and a final verification, each seeing exactly the results it needs.
+
 ### Reuse a task shape
 
 `templates` are named task bodies; `defaults` apply to every task. Merge order is `defaults` < template < task < foreach item.
@@ -122,6 +126,8 @@ Workers share no conversation. The only channel is the structured result of a pr
 Available fields: `summary`, `filesChanged`, `commits`, `decisions`, `warnings`, `followUp`, `error`, `data`, `git`. Context sources must be dependencies, so their results are guaranteed to exist. `context: false` sends none.
 
 The exact text injected is saved as `context.md` in the run directory — nothing is hidden.
+
+Runnable: [`examples/context-passing.yaml`](../examples/context-passing.yaml), which passes a chosen subset of fields down a three-task chain.
 
 ### Return machine-readable data
 
@@ -172,6 +178,8 @@ In the dashboard you answer inline. Headless, the run exits with code `3` and wa
 ```bash
 cao resume <run-id> --approve production-ready
 ```
+
+Runnable: [`examples/reviews.yaml`](../examples/reviews.yaml) — a review pipeline with conditions, an approval gate and a lifecycle hook.
 
 ### Answer a worker while it runs
 
@@ -383,7 +391,8 @@ In the workspace the same thing is the **composer** at the bottom of the Session
 session it will resume. `Ctrl+F` is **Start a fresh session** — the composer's `--fresh-session`, offered
 whenever there is a session the next attempt would otherwise continue, and off again with a second `Ctrl+F`
 or when the composer closes. `Ctrl+J` (or a trailing `\` then `Enter`) is a newline, `Ctrl+O` opens the
-draft in `$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, and `Esc` closes it keeping the draft. A paste arrives
+draft in `$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, `Ctrl+W` deletes the word before the cursor,
+and `Esc` closes it keeping the draft. A paste arrives
 whole; one over 20 lines is shown as `[pasted N lines]` with every byte kept. Inside the composer every
 printable key is text, so `q` types a `q`.
 
@@ -444,6 +453,8 @@ tasks:
     agent: codex           # a different agent reviews the work
     model: gpt-5.6-terra
 ```
+
+A different model, and especially a different vendor, catches more in review than a second pass by the one that wrote the code. Runnable both ways round: [`examples/mixed-agents.yaml`](../examples/mixed-agents.yaml) (Claude implements, Codex reviews) and [`examples/codex-implementation-claude-review.yaml`](../examples/codex-implementation-claude-review.yaml).
 
 See [models.md](models.md) for the model catalog, effort levels and resolution order.
 
