@@ -65,6 +65,40 @@ const linksOf = (text: string): string[] =>
     .flatMap((line) => [...line.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]!))
     .filter((target) => !/^(https?:|mailto:)/.test(target));
 
+/**
+ * The other kind of reference a document makes: `§4.2.3` of the beta spec, cited by number.
+ *
+ * The numbers outlived the draft they were written against — the spec has no §4.5, §6.3.1 or §8.6 — and
+ * `packages/protocol/CHANGELOG.md`, which is published to npm on its own, carried seven of them. A number
+ * that names nothing is worse than no number: it reads as a promise that somewhere the detail exists.
+ */
+describe('the sections the documents cite', () => {
+  /** Every heading number of the spec, and the parents each one implies: `2.7` also proves `2`. */
+  const specSections = async (): Promise<Set<string>> => {
+    const found = new Set<string>();
+    for (const line of prose(await read('docs/cao-v2-beta-spec.md'))) {
+      const heading = /^#{2,6}\s+(\d+(?:\.\d+)*)\.?\s/.exec(line);
+      if (!heading) continue;
+      const parts = heading[1]!.split('.');
+      while (parts.length > 0) {
+        found.add(parts.join('.'));
+        parts.pop();
+      }
+    }
+    return found;
+  };
+
+  it('every § citation names a section the spec has', async () => {
+    const sections = await specSections();
+    expect(sections.has('2.7')).toBe(true);
+    for (const file of DOCS) {
+      for (const cited of [...(await read(file)).matchAll(/§(\d+(?:\.\d+)*)/g)].map((m) => m[1]!)) {
+        expect([...sections].includes(cited), `${file} cites §${cited}`).toBe(true);
+      }
+    }
+  });
+});
+
 describe('the links between the documents', () => {
   it('every relative link names a file that is there', async () => {
     let checked = 0;
