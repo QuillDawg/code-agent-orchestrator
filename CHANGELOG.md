@@ -582,6 +582,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   partial-work state. The scheduler honours provider delays and does not retry permanent failures.
 - Claude supports explicit inherited or isolated configuration and treats reported MCP/plugin startup
   failures as failures even if the CLI process exits successfully.
+- **Two production dependencies nobody imports are gone.** `ink-link` and `zod-to-json-schema` were
+  installed with every copy of `cao` and reached from nowhere in `src/`: no panel emits an OSC 8 hyperlink
+  in this beta and no JSON Schema is published for the workflow file. Either comes back with the feature
+  that needs it. Nothing else changes — neither appeared in the bundle.
 - **The tarball no longer carries this beta's own plan.** `files` negates `docs/cao-v2-beta-spec.md` and
   `docs/cao-v2-beta-decisions.md` after the `docs/*.md` glob that swept them in, so a published package
   holds only documents a reader of it can act on: the two describe stages, exit criteria, suggestions

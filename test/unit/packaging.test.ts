@@ -103,6 +103,34 @@ describe('package.json', () => {
     }
   });
 
+  /**
+   * A production dependency is installed on every machine that installs `cao`, whether or not the bundle
+   * reaches for it. Two survived being designed out — `ink-link` (no panel emits an OSC 8 hyperlink) and
+   * `zod-to-json-schema` (no JSON Schema is published) — and cost every install their trees. `src/` is
+   * the whole of what tsup bundles, so an import there is the only thing that makes one of these needed.
+   */
+  it('declares no production dependency that src/ never imports', async () => {
+    const sources: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else if (/\.tsx?$/.test(entry.name)) sources.push(await fs.readFile(full, 'utf8'));
+      }
+    };
+    await walk(path.join(root, 'src'));
+    const imported = new Set<string>();
+    for (const source of sources) {
+      for (const m of source.matchAll(/(?:from|import|require)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+        const specifier = m[1]!;
+        if (specifier.startsWith('.') || specifier.startsWith('node:')) continue;
+        // `react/jsx-runtime` and the like: the dependency is the package, not the entry point.
+        imported.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]!);
+      }
+    }
+    for (const name of Object.keys(pkg.dependencies)) expect(imported, `${name} is installed and never imported`).toContain(name);
+  });
+
   it('agrees with .nvmrc about the Node line and clears every production dependency floor', async () => {
     const nvmrc = (await read('.nvmrc')).trim();
     expect(nvmrc).toBe('22');
