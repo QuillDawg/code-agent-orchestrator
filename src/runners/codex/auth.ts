@@ -30,7 +30,11 @@ interface CodexAuth {
 export async function codexAuthMode(env: NodeJS.ProcessEnv = process.env): Promise<AuthMode> {
   if (env.OPENAI_API_KEY?.trim() || env.CODEX_API_KEY?.trim()) return 'apiKey';
   const file = path.join(codexHome(env), 'auth.json');
-  const text = await fs.readFile(file, 'utf8').catch(() => null);
+  // `ENOENT` is the only failure that is an answer: there is no `auth.json`, so nobody has signed in. A
+  // permission denied, a `CODEX_HOME` that is not a directory, an I/O error — those are facts that could
+  // not be established, and reporting them as a signed-out machine would put a verdict on a silence.
+  const text = await fs.readFile(file, 'utf8').catch((err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? null : undefined));
+  if (text === undefined) return 'unknown';
   if (text === null) return 'none';
   let parsed: CodexAuth;
   try {

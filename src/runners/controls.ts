@@ -33,6 +33,20 @@ const UPGRADE: Record<string, string> = {
 };
 
 /**
+ * The evidence sentence for a row whose answer is a version comparison.
+ *
+ * Three answers, not two. A CLI that did not say which version it is has not been shown to be below a
+ * floor, and the row used to say `this version is below 0.48.0` anyway — a sentence carried into
+ * `doctor --json` and the Diagnostics panel as though it had been checked. It grades nothing either way;
+ * that is no reason for it to state something nobody established.
+ */
+function detail(supported: boolean | undefined, version: string | undefined, words: { has: string; below: string; unknown: string; without: string }): string {
+  if (supported === true) return words.has;
+  if (supported === false) return `${version ?? 'this version'} ${words.below}; ${words.without}`;
+  return `this CLI did not report a version, so ${words.unknown} could not be established; ${words.without} if it cannot`;
+}
+
+/**
  * One row per control a CLI either has or silently does without.
  *
  * An agent that is not installed contributes nothing: its own line has already said so, and repeating it
@@ -65,17 +79,23 @@ export function controlSupport(detections: readonly AgentDetection[]): ControlSu
       row(
         'steer a running turn',
         steer,
-        steer
-          ? `turn/steer, from ${STEER_MINIMUM_VERSIONS.codex}`
-          : `${detection.version ?? 'this version'} is below ${STEER_MINIMUM_VERSIONS.codex}, the first with turn/steer; a follow-up stops the turn and continues instead`,
+        detail(steer, detection.version, {
+          has: `turn/steer, from ${STEER_MINIMUM_VERSIONS.codex}`,
+          below: `is below ${STEER_MINIMUM_VERSIONS.codex}, the first with turn/steer`,
+          unknown: 'whether it has turn/steer',
+          without: 'a follow-up stops the turn and continues instead',
+        }),
       );
       const quotas = versionAtLeast(detection.version, CODEX_QUOTA_MINIMUM_VERSION);
       row(
         'quota reads',
         quotas,
-        quotas
-          ? `account/rateLimits/read, from ${CODEX_QUOTA_MINIMUM_VERSION}`
-          : `${detection.version ?? 'this version'} is below ${CODEX_QUOTA_MINIMUM_VERSION}, the first that can report quotas; the footer chip stays empty`,
+        detail(quotas, detection.version, {
+          has: `account/rateLimits/read, from ${CODEX_QUOTA_MINIMUM_VERSION}`,
+          below: `is below ${CODEX_QUOTA_MINIMUM_VERSION}, the first that can report quotas`,
+          unknown: 'whether it can report quotas',
+          without: 'the footer chip stays empty',
+        }),
       );
     }
   }

@@ -724,6 +724,17 @@ describe('control and quota support', () => {
     expect(rows[1]!.detail).toContain('0.48.0');
   });
 
+  it('does not put a CLI that reported no version below a floor it was never measured against', () => {
+    const rows = controlSupport([{ runner: 'codex', command: 'codex', found: true, capabilities: ['exec'] }]);
+    expect(rows.map((r) => r.supported)).toEqual([undefined, undefined]);
+    for (const r of rows) {
+      expect(r.detail).toContain('did not report a version');
+      expect(r.detail).not.toContain('is below');
+      // Nothing was established, so there is nothing to upgrade to either.
+      expect(r.hint).toBeUndefined();
+    }
+  });
+
   it('says nothing about a CLI that is not installed: its own line already did', () => {
     expect(controlSupport([{ runner: 'codex', command: 'codex', found: false }])).toEqual([]);
   });
@@ -743,6 +754,15 @@ describe('control and quota support', () => {
     expect(await codexAuthMode({ CODEX_HOME: home, OPENAI_API_KEY: 'sk-env' })).toBe('apiKey');
 
     await fs.writeFile(path.join(home, 'auth.json'), 'not json');
+    expect(await codexAuthMode({ CODEX_HOME: home })).toBe('unknown');
+  });
+
+  it('is unknown, not signed out, when auth.json is there and cannot be read', async () => {
+    const home = await tmpDir('cao-codex-unreadable-');
+    // A directory where the file should be: the portable stand-in for a read that fails with something
+    // other than "it is not there". A machine whose `CODEX_HOME` cannot be read has established nothing,
+    // and `cao doctor` would otherwise grade it `codex none` — a verdict put on a silence.
+    await fs.mkdir(path.join(home, 'auth.json'));
     expect(await codexAuthMode({ CODEX_HOME: home })).toBe('unknown');
   });
 
