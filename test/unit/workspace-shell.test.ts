@@ -349,6 +349,34 @@ describe('the keys the footer and ? agree on', () => {
     expect(alwaysHints('executing')).toContain('? help');
   });
 
+  it('keeps the composer keys out of the Session footer and gives them their own section in ?', () => {
+    // The composer's keys were listed under the Session panel so `?` could reach them - `?` cannot be
+    // pressed inside a field, where it is text. But the footer reads the same list, so a Session panel with
+    // no composer open advertised `Enter compose` and `Enter send` on one line: one key, two meanings, one
+    // of them not true of the frame it was drawn on.
+    const footer = footerHints('main', 'session');
+    expect(footer).toContain('Enter compose');
+    expect(footer).not.toContain('Enter send');
+    expect(footer).not.toContain('Ctrl+F');
+    expect(footer.match(/Enter /g) ?? []).toHaveLength(1);
+
+    // `?` still answers "what can I press in the composer", in a section that says which field it means.
+    const sections = helpSections('main', 'session');
+    const composer = sections.find((section) => /composer/i.test(section.title));
+    expect(composer, 'the composer has no section in ?').toBeDefined();
+    expect(composer!.keys.map((k) => k.keys)).toContain('Ctrl+J');
+    expect(composer!.keys.map((k) => k.keys)).toContain('Ctrl+O');
+    // And no other panel grows one.
+    expect(helpSections('main', 'overview').some((s) => /composer/i.test(s.title))).toBe(false);
+
+    // The reference table at the bottom of `?` leaves out whatever the sections above it have already
+    // explained, and moving the composer keys into a section of their own must not put them back: `Ctrl+J`
+    // and `Ctrl+O` are answered there in the words of the field they are pressed in.
+    const reference = sections.find((section) => /Moving around/.test(section.title))!.keys.map((key) => key.keys);
+    expect(reference).not.toContain('Ctrl+J');
+    expect(reference).not.toContain('Ctrl+O');
+  });
+
   it('gives up whole footer cells, least important first, and never the way out', () => {
     const cells = ['↑↓ select', 'Enter open', 'F / L follow', 'R restart', '/ search', 'Ctrl+P palette', '? help', 'Q quit', 'quota: stage 3', 'updated 4s ago'];
     // Display order above; drop order below: the chips, then the panel keys from the right, then the chords.

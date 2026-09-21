@@ -113,6 +113,33 @@ describe('the Session panel editor (§3.4)', () => {
     }
   });
 
+  it('draws a multi-line prompt one line per row instead of slicing it into fragments', async () => {
+    // A `prompt: |` block is the ordinary way to write a prompt, and the form wrapped the whole thing as
+    // though it were one line: the cut landed wherever the width ran out, mid-word and mid-sentence, and
+    // the pieces carried their own newlines so the panel drew far more rows than the form had budgeted.
+    const PROMPT = ['Implement issue 102.', '', 'Steps:', '- read the issue', '- write the code', '- write the tests', '- run the suite'].join(NL);
+    const { tree } = await mountWorkspace((r) => {
+      r.tasks['implement-api']!.state = 'pending';
+      r.workflow.tasks.find((t) => t.id === 'implement-api')!.prompt = PROMPT;
+    });
+    try {
+      tree.write('e');
+      await wait();
+      // The first line shares its row with the `prompt` label; every other one gets a row of its own, and
+      // none of them is cut in half.
+      // The caret the selected field draws at the end of its last line is not part of the text.
+      const rows = tree.lastText().split(NL).map((line) => line.trimEnd().replace(new RegExp(`${String.fromCodePoint(0x2588)}$`), ''));
+      for (const line of PROMPT.split(NL)) {
+        if (line === '') continue;
+        expect(rows.some((row) => row.endsWith(line)), `"${line}" was not drawn whole on a row`).toBe(true);
+      }
+      expect(rows.some((row) => row.trim() === '- write')).toBe(false);
+      fits(tree);
+    } finally {
+      tree.unmount();
+    }
+  });
+
   it('treats a printable key as text, sends only the field that changed, and cancels on Esc', async () => {
     const { tree, submits } = await mountWorkspace((r) => {
       r.tasks['implement-api']!.state = 'pending';

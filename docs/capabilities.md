@@ -646,6 +646,67 @@ Two things move, and nothing else does: the spinner on a running task, and a two
 
 The footer is cut to the terminal by dropping whole cells rather than the end of the line, least important first: how old the picture is, then the quota chips from the right — a provider that will never report a number goes before one that did — then the focused panel's keys from the right, then `Ctrl+P`. `? help` and the key that leaves are the last two standing, so however narrow the terminal the footer still says how to get out and where the rest of the keys are.
 
+### Terminals
+
+**Windows Terminal is the target**, with any shell inside it; conhost and a standalone mintty are best-effort
+and the workarounds for both are `--no-alt-screen` and `CAO_ASCII=1`. What the workspace does in each is
+decided from the environment the terminal sets, so `cao doctor`'s `terminal` line is the same answer this
+table gives — ask it rather than guessing.
+
+| Terminal | Alt screen | Colour | Glyphs | Paste | Hyperlinks | Notes |
+|---|---|---|---|---|---|---|
+| Windows Terminal — PowerShell or Git Bash | yes | truecolor (level 3) | Unicode | bracketed; over 20 lines collapse to `[pasted N lines]` | none are drawn | the primary target; `WT_SESSION` is what it is recognised by |
+| VS Code integrated terminal | yes | truecolor (level 3) | Unicode | as above | none are drawn | recognised by `TERM_PROGRAM=vscode` |
+| WSL2 inside Windows Terminal | yes | truecolor (level 3) | Unicode | as above | none are drawn | the Linux side reads the same variables |
+| mintty on its own — Git Bash outside Windows Terminal | yes | 256 (level 2) | Unicode | as above | none are drawn | best effort; recognised by `MSYSTEM` |
+| conhost — the legacy console | yes | 16 (level 1) | **ASCII**, chosen for it | as above | none are drawn | best effort; `cao doctor` grades it `!` and says why |
+
+**Glyphs.** A Windows console that does not announce itself is assumed not to be UTF-8, so conhost gets the
+ASCII table without being asked: `v x o >` for the states, `|/-\` for the spinner, `#` and `-` for the bars,
+`^v` and `<>` for the arrow keys. `CAO_UNICODE=1` overrides that on a console you know is fine, and
+`CAO_ASCII=1` forces it anywhere. One character still gets through in ASCII mode and it is not `cao`'s: a row
+that Ink itself has to cut ends in Ink's own `…`, because `wrap="truncate-end"` does not take a mark. It is
+always the last character of a cut row and never anywhere else, so a console that renders it as a box loses
+the "there is more here" hint and nothing else.
+
+**Colour.** The palette is downsampled to whatever the terminal reports, so conhost gets the sixteen and
+mintty the 256-colour cube. `NO_COLOR`, `--theme mono` and a terminal that reports no colour at all give the
+mono theme, which is the check that every state reads as a glyph and a word.
+
+**Flicker.** Every frame is drawn as a whole: the alternate screen is cleared and redrawn, wrapped in
+synchronized-output markers (`CSI ? 2026 h/l`) so a terminal that honours them shows the finished frame
+rather than the redraw. Windows Terminal, VS Code and mintty honour them; conhost does not, so a busy run
+there flickers at the rate the frame changes — about twelve times a second with twenty tasks running, and
+about five with `CAO_REDUCED_MOTION=1`, which is the thing to reach for on that console. Nothing is ever
+drawn past the bottom or the right of the window, at any size down to 40×12, and a resize re-lays the frame
+out on the resize itself.
+
+**Keys.** Windows Terminal's own bindings take `Ctrl+V`, `Ctrl+Shift+V`, `Shift+Insert`, `Ctrl+Tab`,
+`Ctrl+Shift+F` and `Alt+Enter` before the application sees them; none of those is a key this workspace
+answers or advertises. `Ctrl+P`, `Ctrl+O`, `Ctrl+J`, `Tab` and `Shift+Tab` all arrive — including the `\x1bOZ`
+variant of `Shift+Tab` that some Windows terminals send instead of `\x1b[Z`. `Shift+Enter` is a newline only
+where the kitty keyboard protocol is on, which stable Windows Terminal does not have; `Ctrl+J` and a trailing
+`\` before `Enter` are the two that work everywhere, and both are in `?`.
+
+**Paste.** Bracketed paste is turned on only while the composer is open, so the other panels' keys are
+unchanged by it, and the whole block arrives as one string however many lines it is — a thousand-line paste
+keeps every byte and shows as one row. Two things can still go wrong and both are the terminal's, not
+`cao`'s: ConPTY can drop the markers on a very large paste, and it can split one across two reads. Losing
+them entirely is harmless here — the lines go in as lines and nothing is submitted, because `Enter` is a
+carriage return and a pasted line ending is not — but a marker split across reads types `[200~` into the
+message, and a marker that never closes swallows the paste with nothing to show for it. For text big enough
+to be at risk, `Ctrl+O` writes the message in `$VISUAL`/`$EDITOR` instead; that is the documented route and
+it has no size limit.
+
+**Hyperlinks.** No panel emits an OSC 8 hyperlink in this beta. Paths and run ids are printed as text, so
+there is nothing to click and nothing to leak as raw escapes on a terminal without support.
+
+*How this is known:* every row above was produced by running this build against the fakes with the
+environment each terminal sets and reading the bytes it wrote — the alternate-screen and cursor sequences,
+the SGR attributes, the glyphs, the paste markers and the frame geometry — rather than by photographing a
+window. That settles everything `cao` decides; it does not settle what a particular font or console does with
+a character once it has it, which is why conhost and mintty stay best-effort.
+
 ### Provider quotas in the footer
 
 One chip per provider, carrying what that provider says about its own rate-limited windows. `cao` computes nothing here and invents no category: the windows are the ones the provider reported, under labels taken from their own durations (`5h`, `7d`, else `Nm`), with the reset time in the reader's own time zone and the plan type beside them. A reset later today is a clock time; one on another day carries its weekday; one five or more days out is a date — the weekly window resets at the same time of day it is being read at, so a bare clock time would read as imminent.

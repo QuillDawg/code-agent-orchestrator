@@ -11,7 +11,7 @@ import { go as fuzzyGo } from 'fuzzysort';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { renderMarkdown } from '../markdown.js';
-import { editKeys, endedKeys, globalKeys, navigationHelp, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
+import { composerKeys, editKeys, endedKeys, globalKeys, navigationHelp, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
 import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
@@ -194,11 +194,16 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
   if (mode === 'observing') taken.add('R');
   const panel = panelHelp(focus, tab, taken);
   const global = globalKeys(mode);
-  const described = new Set([...panel.keys, ...global].map((row) => row.keys));
+  // The composer belongs to the Session panel but is not part of its key line: the footer reads that line,
+  // and would then advertise `Enter send` over a panel with no composer open. It is a section here rather
+  // than a row there because `?` is the only place these can be read at all - inside a field, `?` is text.
+  const composer = focus === 'main' && tab === 'session' ? [{ title: 'The composer (Enter)', keys: composerKeys() }] : [];
+  const described = new Set([...panel.keys, ...composer.flatMap((section) => section.keys), ...global].map((row) => row.keys));
   return [
     ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} ${glyph('dash')} the panel with the keys`, keys: panel.keys },
+    ...composer,
     { title: 'Anywhere', keys: global },
     { title: 'The task editor (E)', keys: editKeys() },
     { title: 'Transcript viewer (F)', keys: viewerKeys() },

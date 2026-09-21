@@ -175,6 +175,28 @@ describe('the composer buffer', () => {
     expect(composerRows(state).some((r) => r.collapsed)).toBe(false);
   });
 
+  it('collapses a second paste that lands at the end of the first, rather than drawing it line by line', () => {
+    // What an operator does when they build a message out of two clipboard trips: paste, then paste again
+    // where the first one left the cursor - on the last line of a block that is already collapsed. The
+    // second mark used to start *inside* the first, which `composerRows` walks straight past, so a thousand
+    // pasted lines were drawn one per row and the panel filled with them (`[D16]`).
+    const first = Array.from({ length: 50 }, (_, i) => `first ${i + 1}`).join(String.fromCharCode(10));
+    const second = Array.from({ length: 1000 }, (_, i) => `second ${i + 1}`).join(String.fromCharCode(10));
+    let state = insertPaste(emptyComposer(), first);
+    expect(composerRows(state)).toEqual([{ text: '[pasted 50 lines]', covers: 50, collapsed: true }]);
+
+    state = insertPaste(state, second);
+    // Every byte of both is still in the buffer.
+    expect(state.lines).toHaveLength(1049);
+    expect(composerText(state).endsWith('second 1000')).toBe(true);
+    // And the screen is one row, not a thousand and forty-nine.
+    const rows = composerRows(state);
+    expect(rows.filter((row) => !row.collapsed)).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.covers).toBe(1049);
+    expect(cursorRow(state)).toBe(0);
+  });
+
   it('normalizes CRLF so a Windows paste does not leave carriage returns in the message', () => {
     const state = insertPaste(emptyComposer(), 'one\r\ntwo\r\nthree');
     expect(composerText(state)).toBe(['one', 'two', 'three'].join(String.fromCharCode(10)));

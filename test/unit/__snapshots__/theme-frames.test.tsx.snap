@@ -654,7 +654,7 @@ exports[`the panels in every mode (§3.2) > draws session at 120x40 in cyberpunk
 
 
 
-  Enter compose   E edit   F transcript   ←→ tab   Enter send   Ctrl+P palette   ? help   Q quit"
+  Enter compose   E edit   F transcript   ←→ tab   Ctrl+P palette   ? help   Q quit   updated <age> ago"
 `;
 
 exports[`the panels in every mode (§3.2) > draws session at 120x40 in cyberpunk, mono and ASCII > session 120x40 ascii 1`] = `
@@ -697,5 +697,5 @@ exports[`the panels in every mode (§3.2) > draws session at 120x40 in cyberpunk
 
 
 
-  Enter compose   E edit   F transcript   <> tab   Enter send   Ctrl+P palette   ? help   Q quit"
+  Enter compose   E edit   F transcript   <> tab   Ctrl+P palette   ? help   Q quit   updated <age> ago"
 `;

@@ -232,17 +232,23 @@ const diagnosticsKeys = (): KeyHelp[] => [
   { keys: LR(), what: 'another tab', short: 'tab' },
 ];
 
-/** The Session tab: the transcript, what has been sent, and the composer (§3.5). */
+/**
+ * The Session tab: the transcript, what has been sent, and the key that opens the composer (§3.5).
+ *
+ * The composer's own keys are **not** here. They used to be, so that `?` could reach them, but the footer
+ * reads this same list — and a Session panel with no composer open then advertised `Enter compose` and
+ * `Enter send` on one line, one key with two meanings and only one of them true of the frame. `?` gets
+ * them as a section of its own instead (`helpSections`).
+ */
 const sessionKeys = (): KeyHelp[] => [
   { keys: 'Enter', what: 'open the composer; the header says which mode the message will use', short: 'compose' },
   { keys: 'E', what: 'edit the selected task (the form opens over this panel)', short: 'edit' },
   { keys: 'F', what: "the full transcript in the viewer, with earlier attempts", short: 'transcript' },
   { keys: LR(), what: 'another tab', short: 'tab' },
-  ...composerKeys(),
 ];
 
 /**
- * The composer's keys (§3.2, `[D15]`), listed under the Session panel because `?` cannot be pressed from
+ * The composer's keys (§3.2, `[D15]`), shown by `?` as its own section because `?` cannot be pressed from
  * inside the composer — in a field every printable key is text, `?` included.
  */
 export function composerKeys(): KeyHelp[] {

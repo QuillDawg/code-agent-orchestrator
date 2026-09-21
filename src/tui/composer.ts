@@ -203,12 +203,25 @@ export function insertText(state: ComposerState, text: string): ComposerState {
 /**
  * A bracketed paste `[D16]`: the bytes go in verbatim, and a block over `PASTE_COLLAPSE_LINES` lines is
  * marked so the screen can show it as one row instead of scrolling the composer off the panel.
+ *
+ * A paste that lands at the end of a block that is already collapsed **grows that block** rather than
+ * starting a second mark inside it. `composerRows` walks the outer mark and skips every line it covers, so
+ * a mark that begins inside another is a mark the screen never reaches - which is how a second thousand-line
+ * paste ended up drawn one row per line, exactly where the collapse matters most. Pasting twice is what an
+ * operator does when a message takes two trips to the clipboard, and the cursor sits at the end of the first
+ * block when they do.
  */
 export function insertPaste(state: ComposerState, text: string): ComposerState {
   const startLine = state.line;
   const next = insertText(state, text);
   const count = next.line - startLine + 1;
   if (count <= PASTE_COLLAPSE_LINES) return next;
+  // The first line of the paste joins the block's existing last line, so only the rest are new rows.
+  const enclosing = next.pastes.find((mark) => startLine >= mark.at && startLine < mark.at + mark.count);
+  if (enclosing) {
+    const grown: PasteMark = { at: enclosing.at, count: enclosing.count + count - 1 };
+    return { ...next, pastes: next.pastes.map((mark) => (mark === enclosing ? grown : mark)) };
+  }
   return { ...next, pastes: [...next.pastes, { at: startLine, count }] };
 }
 

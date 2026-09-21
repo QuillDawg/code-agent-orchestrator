@@ -230,17 +230,32 @@ export interface EndedBlock {
   columns: number;
 }
 
-/** Break `text` on spaces so it fits `width`; a banner or a paragraph is a sentence, not a list. */
+/**
+ * Break `text` on spaces so every line fits `width`; a banner or a paragraph is a sentence, not a list.
+ *
+ * The newlines already in the text are line breaks, not characters to wrap over. They have to be, because
+ * every caller draws one returned element per row: a returned string that still held a `\n` was drawn as
+ * several rows by the terminal, so the panel used more rows than it had counted, and the wrap landed
+ * wherever `width` ran out rather than at the author's line ends. That is what a `prompt: |` block looked
+ * like in the task editor - `- write the tests` cut into `- write` and `the tests`, one of them indented as
+ * a continuation and one not (§3.2, §3.4).
+ *
+ * A blank line between two paragraphs is part of the shape and is kept; empty text is no lines at all, and
+ * the trailing newline a YAML block scalar ends with is not a row.
+ */
 export function wrapPlain(text: string, width: number): string[] {
   const out: string[] = [];
-  let rest = text;
-  while (rest.length > width) {
-    const space = rest.lastIndexOf(' ', width);
-    const cut = space > width / 2 ? space : width;
-    out.push(rest.slice(0, cut).trimEnd());
-    rest = rest.slice(cut).trimStart();
+  for (const line of text.split('\n')) {
+    let rest = line;
+    while (rest.length > width) {
+      const space = rest.lastIndexOf(' ', width);
+      const cut = space > width / 2 ? space : width;
+      out.push(rest.slice(0, cut).trimEnd());
+      rest = rest.slice(cut).trimStart();
+    }
+    out.push(rest);
   }
-  if (rest) out.push(rest);
+  while (out.length > 0 && out[out.length - 1] === '') out.pop();
   return out;
 }
 

@@ -554,6 +554,24 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **A multi-line prompt in the task editor is drawn as it was written.** The form wrapped the whole prompt
+  as though it were a single line, so the cut landed wherever the width ran out rather than at the author's
+  line ends - an ordinary `prompt: |` block came back with `- write the tests` split into `- write` and
+  `the tests`, the second half indented as a continuation - and because the pieces still carried their own
+  newlines the panel drew far more rows than it had budgeted, which on a long prompt or a pasted block
+  overran the form and wrote over the fields below it. `wrapPlain` now breaks on the newlines that are
+  already there and guarantees that no line it returns contains one, which also fixes the read-only context
+  preview under the prompt and the pending-tool line in the Session panel.
+- **A second paste into the composer collapses like the first.** Pasting again where the first paste left
+  the cursor - on the last line of a block that is already shown as `[pasted N lines]` - started a second
+  mark *inside* the first, which the renderer walks straight past: the second block was then drawn one row
+  per line, filling the panel with a thousand rows of pasted text in exactly the case the collapse exists
+  for. A paste that lands at the end of a collapsed block now grows that block instead.
+- **The Session panel's footer no longer advertises a key for a composer that is not open.** Its key line
+  carried the composer's own keys - they are listed under the Session panel so that `?` can reach them,
+  since `?` inside a field is text - so the footer said `Enter compose` and `Enter send` on the same line,
+  one key with two meanings and only one of them true of the frame it was drawn on. `?` now shows them as
+  a section of their own, **The composer (Enter)**, and the footer names only what the panel itself answers.
 - **The Codex quota chip no longer talks itself out of "sign in with ChatGPT".** `account/read` and
   `account/rateLimits/read` are sent together, so their answers race; an account the server had just said
   was authenticated by API key could still have a rate-limit answer land a moment later and replace the
