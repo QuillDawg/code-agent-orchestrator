@@ -135,6 +135,10 @@ export interface ExecuteOptions {
  * last execution when the operator leaves (§2.4).
  */
 export async function executeRun(opts: ExecuteOptions): Promise<number> {
+  // Hoisted out of the spread below, where it read as a question and was in fact the one place the flag
+  // is turned on for a `cao ui` execution. `applyDebugFlag` writes to the environment; a call that does
+  // that belongs on a line of its own, not inside a conditional property.
+  const debug = applyDebugFlag(opts.debug);
   if ((opts.tui ?? true) && isInteractive()) {
     return runWorkspaceSession({
       first: opts,
@@ -147,7 +151,7 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
       verbose: opts.verbose,
       activity: opts.activity,
       // The workspace opens on Diagnostics when the operator has asked for debugging [D34].
-      ...(applyDebugFlag(opts.debug) ? { initialTab: 'diagnostics' as const } : {}),
+      ...(debug ? { initialTab: 'diagnostics' as const } : {}),
     });
   }
   const result = await executeOnce(opts);

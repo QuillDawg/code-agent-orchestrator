@@ -15,7 +15,7 @@ import { createRun } from '../../src/workflow/run-factory.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
 import { Redactor } from '../../src/logging/redact.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
-import { executeRun } from '../../src/cli/commands/run.js';
+import { applyDebugFlag, executeRun } from '../../src/cli/commands/run.js';
 import { PROMPT_TEXT_OMITTED, diagnosticsCommand, parseIncludes, type DiagnosticsBundle } from '../../src/cli/commands/diagnostics.js';
 import type { TaskAttempt, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { writeControlRequest, controlRequest } from '../../src/persistence/requests.js';
@@ -225,6 +225,24 @@ describe.skipIf(!HAS_GIT)('cao diagnostics (§3.7, [D33])', () => {
     await expect(diagnosticsCommand('2099-01-01-999', { repository: fixture.repo, out: path.join(fixture.repo, 'nope.json') })).rejects.toThrow(UsageError);
     await expect(diagnosticsCommand(fixture.runId, { repository: fixture.repo })).rejects.toThrow(/--out/);
   }, 30_000);
+});
+
+describe('applyDebugFlag, on an environment of its own ([D34])', () => {
+  it('is one-way: it sets CAO_DEBUG and never clears one somebody else set', () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyDebugFlag(undefined, env)).toBe(false);
+    expect(env.CAO_DEBUG).toBeUndefined();
+
+    expect(applyDebugFlag(true, env)).toBe(true);
+    expect(env.CAO_DEBUG).toBe('1');
+    // The write is the point, and it outlives the call: `--debug` *is* `CAO_DEBUG=1`, so everything that
+    // reads the variable — the stack traces on a failed command included — sees what an export would give
+    // it. Nothing turns it off again, which is why the callers below put theirs back by hand.
+    expect(applyDebugFlag(false, env)).toBe(true);
+    expect(env.CAO_DEBUG).toBe('1');
+
+    expect(applyDebugFlag(undefined, { CAO_DEBUG: '1' })).toBe(true);
+  });
 });
 
 describe.skipIf(!HAS_GIT)('--debug and CAO_DEBUG (§3.7, [D34])', () => {
