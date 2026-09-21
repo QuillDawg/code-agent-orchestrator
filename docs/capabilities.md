@@ -912,6 +912,31 @@ Values from `envFile`, secret-looking `environment` keys and token-shaped string
 
 ---
 
+## Finding the right command
+
+`cao` with no arguments prints its help to **stdout** and exits `0`. It used to print the same text to
+stderr and exit `2`, so `cao | less` showed nothing and a shell, or a script reading the status of the
+last command, took "here is what I can do" for a failure.
+
+The commands are grouped rather than listed flat, because a reader arriving with a question has one of
+four: **Run** (`run`, `resume`, `ui`, `stop`, `validate`), **Inspect** (`status`, `list`, `logs`, `peek`,
+`diff`, `report`), **Task controls** (`task`, with `show`, `stop`, `restart`, `edit` and `prompt` under
+it) and **Diagnostics** (`doctor`, `diagnostics`, `clean`, `emit`). Below the groups the same page prints
+the exit codes this CLI produces and every `CAO_*` environment variable it reads, so the two questions
+asked most often about a run that ended are answered without opening a document.
+
+Every command and subcommand answers `--help`, and each one ends with worked examples and the exit codes
+that command in particular produces — `cao run --help` names `3 paused for you`, `cao list --help` does
+not, because it cannot pause. A command nobody has is a usage error, exit `2`, and names the nearest one
+it knows:
+
+```
+$ cao statu
+error: unknown command 'statu'
+(Did you mean status?)
+(add --help for usage)
+```
+
 ## Checking the installation
 
 Most "it does not work" is the environment. `cao doctor` reads what the orchestrator reads when it starts

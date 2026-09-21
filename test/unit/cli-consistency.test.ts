@@ -498,6 +498,26 @@ describe('root help groups', () => {
     const names = ['CAO_CLAUDE_COMMAND', 'CAO_CODEX_COMMAND', 'CAO_EMIT', 'CAO_HOME', 'CAO_DEBUG', 'CAO_ASCII', 'CAO_ALT_SCREEN', 'CAO_THEME', 'CAO_REDUCED_MOTION', 'NO_COLOR', 'COLUMNS'];
     for (const name of names) expect(help).toContain(name);
   });
+
+  /**
+   * §2.7 gives each behaviour change of this beta a paragraph in docs/capabilities.md, and this is the
+   * paragraph that rots first: it repeats the four groups and the commands under them in prose, which a
+   * new command does not join by itself.
+   */
+  it('are the groups docs/capabilities.md describes, with every command under them', async () => {
+    const text = await fs.readFile(path.join(process.cwd(), 'docs', 'capabilities.md'), 'utf8');
+    const start = text.indexOf('## Finding the right command');
+    expect(start, 'docs/capabilities.md has no section on finding a command').toBeGreaterThan(0);
+    const section = text.slice(start, text.indexOf(`${NL}## `, start + 1));
+    // The change itself: stdout and 0, where it used to be stderr and 2.
+    expect(section).toContain('stdout');
+    expect(section).toContain('exits `0`');
+    for (const heading of Object.values(COMMAND_GROUPS)) expect(section, heading).toContain(`**${heading.slice(0, -1)}**`);
+    for (const command of buildProgram().commands) {
+      if (command.name() === 'help') continue;
+      expect(section, command.name()).toContain(`\`${command.name()}\``);
+    }
+  });
 });
 
 describe('cao task subcommands [D6]', () => {
