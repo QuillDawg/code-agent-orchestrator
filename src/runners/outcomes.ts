@@ -70,7 +70,7 @@ export const OUTCOME_MAP: readonly OutcomeRule[] = [
     situation: 'argument or schema rejection',
     outcome: 'config_error',
     claude: "commander's `error: unknown option '--x'` on stderr, or `invalid_json_schema` from the API",
-    codex: 'a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one CAO asked for',
+    codex: 'a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one `cao` asked for',
     follows: 'the task fails immediately without spending `retry.attempts`; `onFailure` decides the run',
   },
   {
@@ -129,7 +129,7 @@ export function outcomeMapTable(): string {
   return ['| Situation | Outcome | How Claude Code shows it | How Codex shows it | What follows |', '|---|---|---|---|---|', ...rows].join('\n');
 }
 
-/** A CLI refusing what CAO sent it: the flag, schema or protocol field, and the YAML key behind it. */
+/** A CLI refusing what `cao` sent it: the flag, schema or protocol field, and the YAML key behind it. */
 export interface ConfigRejection {
   /** The rejection in the CLI's own words. */
   detail: string;
