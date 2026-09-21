@@ -273,7 +273,7 @@ describe('animation (§3.2)', () => {
     return base as never;
   };
 
-  function mountRunning(theme?: string): RenderedTree {
+  function mountRunning(theme?: string, screenReader = false): RenderedTree {
     return renderTree(
       <DashboardApp
         run={running()}
@@ -285,7 +285,7 @@ describe('animation (§3.2)', () => {
         onMinimise={() => undefined}
         onInterrupt={() => undefined}
       />,
-      { columns: 120, rows: 40 },
+      { columns: 120, rows: 40, screenReader },
     );
   }
 
@@ -308,6 +308,29 @@ describe('animation (§3.2)', () => {
       tree.unmount();
       if (previous === undefined) delete process.env.CAO_REDUCED_MOTION;
       else process.env.CAO_REDUCED_MOTION = previous;
+    }
+  }, 15_000);
+
+  /**
+   * Ink's own screen-reader flag, which is the third thing that turns the animation off (§3.2). It is a
+   * hook rather than an environment variable, so it cannot be covered by the two cases above: the spinner
+   * and the pulse have to be stopped by the component that reads it, and nothing else in this file would
+   * notice if that half of the condition were deleted.
+   */
+  it('moves nothing when Ink reports a screen reader, which no environment variable says', async () => {
+    const tree = mountRunning('cyberpunk', true);
+    try {
+      await wait(200);
+      const frames: string[] = [];
+      for (let i = 0; i < 6; i += 1) {
+        await wait(150);
+        frames.push(stable(tree.lastText()));
+      }
+      expect(new Set(frames).size, 'something moved with a screen reader attached').toBe(1);
+      // Still says what the task is doing: the spinner is replaced by the static glyph and the word.
+      expect(frames[0]).toContain('Running');
+    } finally {
+      tree.unmount();
     }
   }, 15_000);
 
