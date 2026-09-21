@@ -55,9 +55,38 @@ function cap(lines: number): number {
   return Math.min(MAX_PAGE_BYTES, Math.max(CHUNK, lines * MAX_LINE_BYTES));
 }
 
-/** Split a decoded chunk into lines, cutting the ones no terminal could show anyway. */
-function splitLines(text: string): string[] {
-  return text.split(/\r?\n/).map((line) => (line.length > MAX_LINE_BYTES ? `${line.slice(0, MAX_LINE_BYTES)}${TRUNCATION_MARK}` : line));
+/**
+ * One line of a page: what a terminal should show, and what it cost the file.
+ *
+ * The two are not the same length, which is the whole reason this type exists. A `\r` is stripped before
+ * the line is shown and a line no terminal could show is cut, but both still occupy their bytes on disk —
+ * and it is the bytes that decide where the next page starts.
+ */
+interface RawLine {
+  /** What is shown: the terminator gone, and cut at `MAX_LINE_BYTES` if it had to be. */
+  text: string;
+  /** What it occupies on disk, terminator included — one byte for `\n`, two for `\r\n`, none at EOF. */
+  bytes: number;
+}
+
+/**
+ * Split a decoded chunk into lines, cutting the ones no terminal could show anyway.
+ *
+ * Split on `\n` alone rather than on `/\r?\n/`, so a CRLF log's second terminator byte is still there to be
+ * counted. An attempt's `stdout.log` is the child's bytes verbatim, and on Windows a great many children
+ * write CRLF; a pager that charged every line one byte drifted one byte per line and started the page above
+ * mid-word.
+ */
+function splitLines(text: string): RawLine[] {
+  const parts = text.split('\n');
+  return parts.map((part, index) => {
+    const body = part.endsWith('\r') ? part.slice(0, -1) : part;
+    return {
+      text: body.length > MAX_LINE_BYTES ? `${body.slice(0, MAX_LINE_BYTES)}${TRUNCATION_MARK}` : body,
+      // The last part ended at the end of the text, not at a newline, so it is charged no terminator.
+      bytes: Buffer.byteLength(part, 'utf8') + (index < parts.length - 1 ? 1 : 0),
+    };
+  });
 }
 
 async function withFile<T>(file: string, fn: (handle: fs.FileHandle, size: number) => Promise<T>, fallback: T): Promise<T> {
@@ -111,15 +140,14 @@ async function pageEndingAt(file: string, until: number, lines: number): Promise
       let start = from;
       if (complete || from > 0) {
         // The first entry is whatever preceded the boundary newline; it is not a whole line, so it goes.
-        const first = all.shift() ?? '';
-        start += Buffer.byteLength(first, 'utf8') + 1;
+        start += all.shift()?.bytes ?? 0;
       }
       if (all.length > lines) {
         const dropped = all.slice(0, all.length - lines);
-        start += dropped.reduce((total, line) => total + Buffer.byteLength(line, 'utf8') + 1, 0);
+        start += dropped.reduce((total, line) => total + line.bytes, 0);
         all = all.slice(-lines);
       }
-      return { lines: all, start, end, size, atStart: start <= 0, atEnd: end >= size, scanned };
+      return { lines: all.map((line) => line.text), start, end, size, atStart: start <= 0, atEnd: end >= size, scanned };
     },
     EMPTY(),
   );
@@ -171,8 +199,8 @@ export async function readPageAfter(file: string, offset: number, lines = LOG_PA
       else if (text.endsWith('\n')) all.pop();
       let end = start;
       if (all.length > lines) all = all.slice(0, lines);
-      for (const line of all) end += Buffer.byteLength(line, 'utf8') + 1;
-      return { lines: all, start, end: Math.min(end, size), size, atStart: start <= 0, atEnd: end >= size, scanned };
+      for (const line of all) end += line.bytes;
+      return { lines: all.map((line) => line.text), start, end: Math.min(end, size), size, atStart: start <= 0, atEnd: end >= size, scanned };
     },
     EMPTY(),
   );

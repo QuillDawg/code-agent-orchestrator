@@ -60,6 +60,42 @@ describe('the log pager (§3.7)', () => {
     expect((await readPageBefore(p, second.start, 10)).lines).toEqual(first.lines);
   });
 
+  it('pages a CRLF log without drifting a byte a line', async () => {
+    // A Windows CLI writes CRLF, and an attempt's `stdout.log` is the child's bytes verbatim. The
+    // terminator is two bytes, and every offset a page reports has to say so: a page that counted one
+    // drifts a byte per line and starts the next page mid-word.
+    const crlf = '\r\n';
+    const p = await write('crlf.log', `${Array.from({ length: 50 }, (_, i) => `line ${i}`).join(crlf)}${crlf}`);
+    const tail = await readTailPage(p, 10);
+    expect(tail.lines).toEqual(Array.from({ length: 10 }, (_, i) => `line ${40 + i}`));
+    expect(tail.atEnd).toBe(true);
+
+    const older = await readPageBefore(p, tail.start, 10);
+    expect(older.lines).toEqual(Array.from({ length: 10 }, (_, i) => `line ${30 + i}`));
+    expect(older.end).toBe(tail.start);
+
+    const first = await readPageAfter(p, 0, 10);
+    expect(first.lines).toEqual(Array.from({ length: 10 }, (_, i) => `line ${i}`));
+    const second = await readPageAfter(p, first.end, 10);
+    expect(second.lines).toEqual(Array.from({ length: 10 }, (_, i) => `line ${10 + i}`));
+    expect((await readPageBefore(p, second.start, 10)).lines).toEqual(first.lines);
+  });
+
+  it('keeps the offsets right on a CRLF file that does not end in a newline', async () => {
+    // `a\r\nbb\r\nccc`: "a" is bytes 0-3, "bb" is 3-7, "ccc" is 7-10 and ends the file unterminated.
+    const p = await write('crlf-open.log', ['a', 'bb', 'ccc'].join('\r\n'));
+    const tail = await readTailPage(p, 2);
+    expect(tail.lines).toEqual(['bb', 'ccc']);
+    expect(tail.start).toBe(3);
+    expect(tail.end).toBe((await fs.stat(p)).size);
+    expect((await readPageBefore(p, tail.start, 2)).lines).toEqual(['a']);
+
+    const page = await readPageAfter(p, 0, 2);
+    expect(page.lines).toEqual(['a', 'bb']);
+    expect(page.end).toBe(7);
+    expect((await readPageAfter(p, page.end, 2)).lines).toEqual(['ccc']);
+  });
+
   it('is an empty page for a file that is not there, rather than a throw', async () => {
     const missing = await readTailPage(file('nope.log'), 10);
     expect(missing.lines).toEqual([]);
