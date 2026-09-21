@@ -364,7 +364,7 @@ describe('the keys the footer and ? agree on', () => {
     const sections = helpSections('main', 'session');
     const composer = sections.find((section) => /composer/i.test(section.title));
     expect(composer, 'the composer has no section in ?').toBeDefined();
-    expect(composer!.keys.map((k) => k.keys)).toContain('Ctrl+J');
+    expect(composer!.keys.map((k) => k.keys)).toContain('Ctrl+J or \\+Enter');
     expect(composer!.keys.map((k) => k.keys)).toContain('Ctrl+O');
     // And no other panel grows one.
     expect(helpSections('main', 'overview').some((s) => /composer/i.test(s.title))).toBe(false);
@@ -372,8 +372,8 @@ describe('the keys the footer and ? agree on', () => {
     // The reference table at the bottom of `?` leaves out whatever the sections above it have already
     // explained, and moving the composer keys into a section of their own must not put them back: `Ctrl+J`
     // and `Ctrl+O` are answered there in the words of the field they are pressed in.
-    const reference = sections.find((section) => /Moving around/.test(section.title))!.keys.map((key) => key.keys);
-    expect(reference).not.toContain('Ctrl+J');
+    const reference = (sections.find((section) => /Moving around/.test(section.title))?.keys ?? []).map((key) => key.keys);
+    expect(reference).not.toContain('Ctrl+J or \\+Enter');
     expect(reference).not.toContain('Ctrl+O');
   });
 

@@ -198,8 +198,7 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
   // and would then advertise `Enter send` over a panel with no composer open. It is a section here rather
   // than a row there because `?` is the only place these can be read at all - inside a field, `?` is text.
   const composer = focus === 'main' && tab === 'session' ? [{ title: 'The composer (Enter)', keys: composerKeys() }] : [];
-  const described = new Set([...panel.keys, ...composer.flatMap((section) => section.keys), ...global].map((row) => row.keys));
-  return [
+  const sections = [
     ...(observer ? [{ title: 'Another process owns this run', keys: observerKeys(observer) }] : []),
     ...(ended?.length ? [{ title: 'This run has ended', keys: endedKeys(ended) }] : []),
     { title: `${panel.title} ${glyph('dash')} the panel with the keys`, keys: panel.keys },
@@ -208,13 +207,21 @@ export function helpSections(focus: FocusRegion, tab: WorkspaceTab, ended?: Ende
     { title: 'The task editor (E)', keys: editKeys() },
     { title: 'Transcript viewer (F)', keys: viewerKeys() },
     { title: 'When a worker needs you', keys: promptKeys() },
-    // The rest of §3.2's table, in the words `docs/capabilities.md` uses, because `?` is also where an
+  ];
+  // Every chord the sections above have already given, not only the first three of them. The filter below
+  // used to be built from the panel, the composer and `Anywhere` alone, so `Esc`, `Ctrl+O` and the newline
+  // chord were each described twice on one screen - once by the form or the viewer that owns them and again
+  // at the bottom - which is how two descriptions of one key drift apart.
+  const described = new Set(sections.flatMap((section) => section.keys).map((row) => row.keys));
+  const rest = navigationHelp().filter((row) => !described.has(row.keys));
+  return [
+    ...sections,
+    // What is left of §3.2's table, in the words `docs/capabilities.md` uses, because `?` is also where an
     // operator looks up a chord they half-remember. Last, because it is the reference rather than the
     // answer: what this panel is usually opened for is the section at the top, the one about the panel
-    // behind it. Minus whatever the sections above already describe - `Q` and `Ctrl+C` mean something
-    // different in each mode and those sections are the ones that know which, and a key described twice on
-    // one screen is how the two descriptions drift apart.
-    { title: `Moving around ${glyph('dash')} the whole table`, keys: navigationHelp().filter((row) => !described.has(row.keys)) },
+    // behind it. Called "the rest of the table" rather than "the whole table" because that is what it is:
+    // most of §3.2 is already above, under the section that knows what the chord means in this mode.
+    ...(rest.length ? [{ title: `Moving around ${glyph('dash')} the rest of the table`, keys: rest }] : []),
   ];
 }
 

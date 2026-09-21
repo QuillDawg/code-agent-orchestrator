@@ -82,7 +82,7 @@ export function navigationKeys(): NavigationKey[] {
     { input: 'Q', behaviour: 'Quit request', note: 'not inside a composer' },
     { input: 'Ctrl+C', behaviour: 'Graceful stop; the workspace stays open' },
     { input: 'Ctrl+O', behaviour: 'In a composer: open it in $VISUAL / $EDITOR', note: 'mirrors `O` in the Changes view' },
-    { input: 'Ctrl+J', behaviour: 'Newline in a composer; Enter submits', note: 'Shift+Enter works only where the kitty protocol is on' },
+    { input: 'Ctrl+J or \\+Enter', behaviour: 'Newline in a composer; Enter submits', note: 'Shift+Enter works only where the kitty protocol is on' },
   ];
 }
 
@@ -160,7 +160,7 @@ export function editKeys(): KeyHelp[] {
   return [
     { keys: `${UD()}`, what: 'move between the fields; Enter on the last one goes to Save' },
     { keys: 'Ctrl+O', what: 'write the prompt in $VISUAL / $EDITOR' },
-    { keys: 'Ctrl+J', what: 'a newline (a trailing backslash then Enter does the same)' },
+    { keys: 'Ctrl+J or \\+Enter', what: 'a newline; both work on every terminal' },
     { keys: 'Enter', what: 'Save; a running or waiting task is asked about first' },
     { keys: 'Esc', what: 'close the form; nothing is sent' },
   ];
@@ -254,7 +254,7 @@ const sessionKeys = (): KeyHelp[] => [
 export function composerKeys(): KeyHelp[] {
   return [
     { keys: 'Enter', what: 'send the message', short: 'send' },
-    { keys: 'Ctrl+J', what: 'a newline (Shift+Enter too, where the terminal reports it)' },
+    { keys: 'Ctrl+J or \\+Enter', what: 'a newline: either of these on any terminal, Shift+Enter where the terminal reports it' },
     { keys: 'Ctrl+O', what: 'write the message in $VISUAL / $EDITOR' },
     { keys: 'Ctrl+F', what: 'Start a fresh session rather than resume the one it reported' },
     { keys: `Ctrl+Z / Ctrl+W`, what: 'undo the last edit / delete the word before the cursor' },

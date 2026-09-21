@@ -19,7 +19,7 @@ cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
                                      The task editor (E)
                                        ↑↓                 move between the fields; Enter on the last one goes to Save
                                        Ctrl+O             write the prompt in $VISUAL / $EDITOR
-                                       Ctrl+J             a newline (a trailing backslash then Enter does the same)
+                                       Ctrl+J or \+Enter  a newline; both work on every terminal
                                        Enter              Save; a running or waiting task is asked about first
                                        Esc                close the form; nothing is sent
 
@@ -35,6 +35,6 @@ cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
                                                           reason
                                        #-# / ↑↓ Enter     choose an answer    T type one    N decline
 
-                                     Moving around — the whole table
+                                     Moving around — the rest of the table
                                      ▼ # more   ↑↓ scroll   Esc close
   Esc close   ↑↓ move   Enter choose   updated #s ago

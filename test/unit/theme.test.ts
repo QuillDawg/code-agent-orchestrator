@@ -16,7 +16,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
-import { navigationKeys } from '../../src/tui/workspace/keys.js';
+import { composerKeys, editKeys, navigationKeys } from '../../src/tui/workspace/keys.js';
 import { helpSections } from '../../src/tui/workspace/panels.js';
 import { STATE_TOKEN, resolveTheme } from '../../src/tui/theme.js';
 import { glyph } from '../../src/util/glyphs.js';
@@ -95,13 +95,24 @@ describe('the key table is written down once (§3.2)', () => {
     for (const key of navigationKeys()) {
       expect(rows.some((row) => row.keys === key.input), `? never mentions ${key.input}`).toBe(true);
     }
-    // The chords the "Anywhere" section owns are not repeated under "Moving around": each of them means
-    // something different in each mode, and that section is the one that knows which.
-    const counts = new Map<string, number>();
-    for (const row of rows) counts.set(row.keys, (counts.get(row.keys) ?? 0) + 1);
-    for (const key of ['Q', 'Ctrl+C', 'Ctrl+P', '?', 'Tab / Shift+Tab']) {
-      expect(counts.get(key) ?? 0, `${key} is described more than once`).toBeLessThanOrEqual(1);
-    }
+    // "Moving around" is the reference at the bottom, and it repeats nothing a section above it has already
+    // given - whichever section that was. One key described twice on one screen is how the two descriptions
+    // drift apart, and the section that owns a chord is the one that knows what it means in this mode.
+    const above = new Set(sections.slice(0, -1).flatMap((s) => s.keys).map((row) => row.keys));
+    const repeated = (sections[sections.length - 1]?.keys ?? []).filter((row) => above.has(row.keys)).map((row) => row.keys);
+    expect(repeated, 'the bottom of `?` repeats a row it has already given').toEqual([]);
+  });
+
+  /**
+   * `[D15]` and §3.2 bind two newlines that every terminal can type, and Shift+Enter only where the kitty
+   * protocol reports it. A help row that names one of the two tells a composer user to reach for a chord
+   * their terminal may not send, so every field that takes a newline has to name both.
+   */
+  it('names both newline chords wherever a field takes one', () => {
+    const rows = [...navigationKeys().map((k) => k.input), ...composerKeys().map((k) => k.keys), ...editKeys().map((k) => k.keys)];
+    const newline = rows.filter((row) => row.includes('Ctrl+J'));
+    expect(newline.length, 'no surface offers a newline at all').toBe(3);
+    for (const row of newline) expect(row, `${row} names Ctrl+J and not the backslash`).toContain('\\+Enter');
   });
 
   it('names the arrows in whichever alphabet the terminal can draw', () => {

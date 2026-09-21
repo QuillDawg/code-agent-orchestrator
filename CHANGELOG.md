@@ -47,10 +47,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 - **Screen-reader mode.** When Ink reports a screen reader the header and the footer each collapse to a
   single line, the lists announce their position as `3 of 12` rather than `3/12`, and nothing animates - so
   a reader is not read three rows of chrome before the row that changed.
-- **The navigation table of §3.2 is written down once.** `?` lists it under **Moving around** and
+- **The navigation table of §3.2 is written down once.** `?` answers with every row of it - under the
+  section that owns the chord where there is one, and under **Moving around** for whatever is left - and
   `docs/capabilities.md` carries it as a table; both are generated from one array in
   `src/tui/workspace/keys.ts`, and a test rebuilds the document's table from that array, so the screen and
-  the page cannot drift apart.
+  the page cannot drift apart. No key is described twice on one screen.
 - **The Logs tab.** Every file a run writes, read a page at a time: the orchestrator's `orchestrator.log`,
   the run's `events.jsonl`, and each attempt's `events.jsonl`, `stdout.log`, `stderr.log` and `prompt.md`.
   `v` steps through the four views — normalized events, stderr, raw output, prompts — `[` and `]` through
@@ -386,8 +387,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 - **A terminal that reports no colour at all gets `mono` even when `--theme cyberpunk` asked for it.** A
   violet escape a terminal will not render arrives as nothing, and then only the glyph and the word are
   left - which is what `mono` is built for.
-- **`?` scrolls at 120x40.** It gained §3.2's whole navigation table as a last section, and seven sections
-  do not fit forty rows however they are laid out. The panel says how much is below the fold and `PgUp`/
+- **`?` scrolls at 120x40.** It gained the rest of §3.2's navigation table as a last section, and six
+  sections do not fit forty rows however they are laid out. The panel says how much is below the fold and `PgUp`/
   `PgDn` reach it, as every other list in the workspace does.
 - **The Overview's one-line summaries end in the terminal's own ellipsis.** The error and interaction lines
   beside a task were cut with a literal `…` whatever `CAO_ASCII` said, which is mojibake on the console
@@ -569,6 +570,15 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Fixed
 
+- **`?` no longer describes the same key twice on one screen.** The reference table at the bottom left out
+  whatever the panel, the composer and the "Anywhere" section had already given, but not what the task
+  editor, the transcript viewer or the prompt had - so `Esc`, `Ctrl+O` and the newline chord each appeared
+  twice, once in the words of the field that owns them and once in the table's. It now leaves out
+  everything any section above it has said, and is titled "the rest of the table", which is what it is.
+- **The `?` panel and the workspace name both newline chords.** §3.2 and `[D15]` bind `Ctrl+J` *and* a
+  trailing `\` before `Enter`, and the composer, the task editor and the answer field have always accepted
+  both; the help row named only `Ctrl+J`, which is the one a terminal can fail to deliver. All three rows,
+  and the table in `docs/capabilities.md` generated from them, now name both.
 - **A multi-line prompt in the task editor is drawn as it was written.** The form wrapped the whole prompt
   as though it were a single line, so the cut landed wherever the width ran out rather than at the author's
   line ends - an ordinary `prompt: |` block came back with `- write the tests` split into `- write` and
