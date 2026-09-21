@@ -67,7 +67,7 @@ The file itself looks like this:
   "configPath": "C:/Projects/my-app/workflow.yaml",
   "machine": { "hostname": "DESKTOP-K2R9", "platform": "win32", "arch": "x64" },
   "pid": 24188,
-  "cliVersion": "0.1.0-beta.3",
+  "cliVersion": "2.0.0-beta.1",
   "state": "running",
   "startedAt": "2026-09-10T08:14:02.411Z",
   "heartbeatAt": "2026-09-10T09:02:22.108Z",

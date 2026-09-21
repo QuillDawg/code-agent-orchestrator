@@ -130,7 +130,7 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
 
 | Requirement | Why |
 |---|---|
-| **Node.js 22+** | The CLI itself |
+| **Node.js 22.12+** | The CLI itself (commander 15 sets the floor; `cao doctor` checks it) |
 | **git** | Worktree isolation, diff capture, merge-back |
 | **Claude Code** and/or **Codex CLI**, installed and authenticated | The workers. `claude --version` / `codex --version` should work |
 
@@ -1189,7 +1189,8 @@ npm run build
 npm run dev -- run examples/sequential-issues.yaml --dry-run
 ```
 
-Node 22 is pinned in `.nvmrc`, and `.editorconfig` carries the whitespace conventions. CI runs typecheck,
+The Node 22 line is pinned in `.nvmrc` and `engines.node` is `>=22.12.0`, the floor commander 15 sets;
+`.editorconfig` carries the whitespace conventions. CI runs typecheck,
 lint, test and build on Node 22 and 24, on Linux and Windows. It needs a real `git` but never an agent CLI,
 because the suites drive the fake agents in `test/fixtures/`.
 

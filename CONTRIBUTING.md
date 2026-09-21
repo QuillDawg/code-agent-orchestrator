@@ -15,8 +15,9 @@ npm run build
 npm link            # optional: puts your checkout's `cao` on PATH
 ```
 
-Node 22 or newer (`.nvmrc` pins 22; CI also runs 24). A real `git` is needed for the worktree and
-end-to-end suites — without it they skip themselves with a message rather than failing.
+Node 22.12 or newer: `.nvmrc` pins the 22 line, and commander 15 sets the 22.12 floor (CI also runs 24).
+A real `git` is needed for the worktree and end-to-end suites — without it they skip themselves with a
+message rather than failing.
 
 This is an npm workspace root. `packages/protocol/` is `code-agent-orchestrator-protocol`, the wire
 contract shared with CAO Desktop, and `cao` depends on it like any other dependency. `npm install` links

@@ -919,11 +919,11 @@ and says what it found, one line per check:
 
 ```
 $ cao doctor
-cao 0.1.0-beta.3
+cao 2.0.0-beta.1
 Repository: /home/me/projects/api
 Run state:  /home/me/projects/api/.orchestrator/runs
 
-✓ Node.js            v22.11.0 (requires >=22)
+✓ Node.js            v22.12.0 (requires >=22.12.0)
 ✓ git                2.47.0, worktrees supported
 ✓ claude             2.1.267 (Claude Code) [streamJson, structuredOutput, isolatedConfig]  (claude)
 ! codex              not found  (codex): spawn codex ENOENT

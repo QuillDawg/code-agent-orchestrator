@@ -49,3 +49,45 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+  # What `npm test` cannot reach: the artifact itself. This job packs the tarball, installs it into a
+  # scratch global prefix and drives the installed `cao` against the fake agents, on both operating
+  # systems, because a `files` or `bin` mistake shows up on one and not the other.
+  package:
+    name: Packaged CLI on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # The fixture run in the smoke creates a worktree and a commit, exactly as a real run does.
+      - name: Configure git
+        run: |
+          git --version
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git config --global init.defaultBranch main
+          git config --global core.autocrlf false
+
+      - run: npm ci
+
+      # Ink 7.0.0-7.0.5 rendered garbled output on every Windows terminal (ink#969, fixed by #971 in
+      # 7.0.6). The caret range allows those versions, so the floor is checked on what actually resolved.
+      - name: Assert the resolved ink is at or above 7.0.6
+        run: |
+          node -e "const f='7.0.6';const v=JSON.parse(require('fs').readFileSync('node_modules/ink/package.json','utf8')).version;const p=s=>s.split('-')[0].split('.').map(Number);const[a,b]=[p(v),p(f)];const ok=a[0]!==b[0]?a[0]>b[0]:a[1]!==b[1]?a[1]>b[1]:a[2]>=b[2];console.log('resolved ink '+v+(ok?' >= ':' < ')+f);if(!ok)process.exit(1)"
+
+      - run: npm run smoke:pack
+
+      # Only what a user installs. A dev-only advisory is not shipped and does not fail the build; if a
+      # production one ever has to be accepted, the exception is written down in SECURITY.md.
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high

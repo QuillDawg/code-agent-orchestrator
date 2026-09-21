@@ -359,6 +359,18 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   again, as does *Refresh the provider quotas* in `Ctrl+P`. The readers start when the workspace opens and
   are stopped, process killed and timer dropped, when it closes; a headless run starts neither. Per-task
   tokens and cost are a different question and stay in the usage table (`U`).
+- **`npm run smoke:pack` drives the tarball npm would publish, not the source tree.** It packs both
+  workspace packages, installs them into a scratch global prefix, and runs the installed `cao` against the
+  fake agents: `--help`, a bare invocation, an unknown command and a near miss, `doctor --json` with no
+  probe, a fixture run with `--no-tui`, `ui` in a non-TTY and `diagnostics --out`. Everything a published
+  artifact can get wrong and a source-tree test cannot see - a path missing from `files`, a `bin` npm
+  strips, a dependency that only resolves because the repository has it - fails here instead of after
+  `npm publish`. `code-agent-orchestrator-protocol` is installed beside the CLI because tsup leaves it
+  external in the bundle, which is the same reason it has to be published beside it. It lives in
+  `scripts/smoke-packaged.mjs`, cleans up its temp directories on the way out including after a failure,
+  and CI runs it on `ubuntu-latest` and `windows-latest` in a new `package` job that also asserts the
+  resolved Ink is at or above the 7.0.6 Windows rendering fix and that `npm audit --omit=dev` finds
+  nothing high or critical.
 
 ### Changed
 
@@ -569,6 +581,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   partial-work state. The scheduler honours provider delays and does not retry permanent failures.
 - Claude supports explicit inherited or isolated configuration and treats reported MCP/plugin startup
   failures as failures even if the CLI process exits successfully.
+- **`engines.node` is `>=22.12.0`; it was `>=22`.** commander 15 declares `>=22.12.0` of its own, so the
+  old floor advertised a Node - anything from 22.0 to 22.11 - that the CLI's own argument parser says it
+  does not run on. `.nvmrc` still names the 22 line, which resolves above the floor, and `cao doctor`
+  reports the range it finds in the manifest, so its Node line now reads `requires >=22.12.0`. Nothing
+  that already ran on a supported Node is affected.
 
 ### Fixed
 

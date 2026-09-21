@@ -6,7 +6,7 @@ Pre-1.0, only the newest published release gets fixes. There are no backports to
 
 | Version | Supported |
 |---|---|
-| `0.1.x` (beta) | yes |
+| `2.0.x` (beta) | yes |
 | anything older | no |
 
 ## Reporting a vulnerability

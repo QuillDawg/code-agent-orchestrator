@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { PROTOCOL_VERSION } from 'code-agent-orchestrator-protocol';
 
 const root = process.cwd();
 const read = (...parts: string[]) => fs.readFile(path.join(root, ...parts), 'utf8');
@@ -33,7 +34,21 @@ interface PackageJson {
   scripts: Record<string, string>;
 }
 
-const pkg = JSON.parse(await read('package.json')) as PackageJson;
+const pkg = JSON.parse(await read('package.json')) as PackageJson & { dependencies: Record<string, string> };
+const protocolPkg = JSON.parse(await read('packages', 'protocol', 'package.json')) as PackageJson;
+
+/** Compare release numbers, ignoring any prerelease tail: `2.0.0-beta.1` sorts as `2.0.0`. */
+const order = (version: string): number[] => version.split('-')[0]!.split('.').map(Number);
+const atLeast = (version: string, floor: string): boolean => {
+  const [a, b] = [order(version), order(floor)];
+  for (let i = 0; i < 3; i += 1) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return true;
+};
+/** The lowest version a caret or tilde range can install — what a fresh `npm install` could pick. */
+const lowest = (range: string): string => range.replace(/^[\^~>=]+/, '').trim();
+const resolved = async (name: string): Promise<string> => (JSON.parse(await read('node_modules', name, 'package.json')) as { version: string }).version;
 
 describe('package.json', () => {
   it('carries the metadata npm and GitHub render on the front page', () => {
@@ -75,10 +90,119 @@ describe('package.json', () => {
     expect(pkg.files).toContain('docs/*.md');
   });
 
-  it('agrees with .nvmrc about the Node version', async () => {
+  it('agrees with .nvmrc about the Node line and clears every production dependency floor', async () => {
     const nvmrc = (await read('.nvmrc')).trim();
     expect(nvmrc).toBe('22');
-    expect(pkg.engines.node).toBe(`>=${nvmrc}`);
+    const floor = /^>=\s*(\d+)(?:\.\d+)*$/.exec(pkg.engines.node);
+    expect(floor).not.toBeNull();
+    // `.nvmrc` names the line a contributor develops on; `engines` names the oldest release that runs.
+    expect(floor![1]).toBe(nvmrc);
+    // A floor below what a dependency declares is a promise the install cannot keep: commander 15 says
+    // `>=22.12.0`, so a bare `>=22` would advertise Node 22.0 as supported and break there.
+    for (const name of Object.keys(pkg.dependencies)) {
+      const declared = (JSON.parse(await read('node_modules', name, 'package.json')) as { engines?: { node?: string } }).engines?.node;
+      // Only the plain `>=x[.y[.z]]` form is compared; a union like execa's `^18.19 || >=20.5` is a lower
+      // bar than this project's floor has ever been and nothing useful comes of parsing it.
+      const simple = declared === undefined ? undefined : /^>=\s*([\d.]+)$/.exec(declared)?.[1];
+      if (simple !== undefined) expect(atLeast(lowest(pkg.engines.node), simple), `${name} needs node ${declared}`).toBe(true);
+    }
+  });
+});
+
+/**
+ * §4 S5 and `[D2]`: the release is `2.0.0-beta.1` on the `beta` tag, the protocol package moves on its own
+ * train to `0.2.0` (`[D39]`, additive only), and `PROTOCOL_VERSION` — the on-disk contract, a different
+ * number for a different reason — does not move at all.
+ */
+describe('release versions', () => {
+  it('is 2.0.0-beta.1, and says so in the changelog', async () => {
+    expect(pkg.version).toBe('2.0.0-beta.1');
+    expect(await read('CHANGELOG.md')).toContain(`## [${pkg.version}]`);
+  });
+
+  it('carries the protocol package at its own minor, with the CLI range following it', async () => {
+    expect(protocolPkg.version).toBe('0.2.0');
+    expect(await read('packages', 'protocol', 'CHANGELOG.md')).toContain(`## [${protocolPkg.version}]`);
+    // The range has to admit what the workspace builds, or a published CLI installs a protocol its bundle
+    // was never compiled against.
+    const range = pkg.dependencies['code-agent-orchestrator-protocol']!;
+    expect(range).toBe(`^${protocolPkg.version}`);
+    expect(atLeast(protocolPkg.version, lowest(range))).toBe(true);
+    expect(await resolved('code-agent-orchestrator-protocol')).toBe(protocolPkg.version);
+  });
+
+  it('leaves PROTOCOL_VERSION at 1: the wire major did not move with the package', () => {
+    expect(PROTOCOL_VERSION).toBe(1);
+  });
+});
+
+/**
+ * The tarball, listed rather than remembered. `files` is a set of globs, and what they actually expand to on
+ * disk is the thing nobody looks at until an internal note is on npm. Adding a document under `docs/` turns
+ * this red on purpose: it ships, so it gets reviewed here first.
+ */
+describe('tarball contents', () => {
+  const listing = async (dir: string): Promise<string[]> =>
+    (await fs.readdir(path.join(root, dir), { withFileTypes: true })).filter((e) => e.isFile()).map((e) => `${dir}/${e.name}`).sort();
+
+  it('publishes these reference documents and no others', async () => {
+    expect((await listing('docs')).filter((f) => f.endsWith('.md'))).toEqual([
+      'docs/agent-cli-integration.md',
+      'docs/architecture.md',
+      'docs/cao-v2-beta-decisions.md',
+      'docs/cao-v2-beta-spec.md',
+      'docs/capabilities.md',
+      'docs/configuration.md',
+      'docs/desktop.md',
+      'docs/models.md',
+    ]);
+    // `docs/*.md` is one level deep, which is what keeps docs/research out; assert the directory is still
+    // there, so the glob is doing the excluding rather than an empty directory faking it.
+    expect((await fs.readdir(path.join(root, 'docs', 'research'))).length).toBeGreaterThan(0);
+  });
+
+  it('publishes the examples as workflows plus the one file they are run against', async () => {
+    const examples = await listing('examples');
+    expect(examples.length).toBeGreaterThanOrEqual(12);
+    expect(examples.filter((f) => !f.endsWith('.yaml'))).toEqual(['examples/documentation-smoke-target.md']);
+  });
+
+  it('has no .npmignore, so `files` is the only thing deciding', async () => {
+    await expect(fs.access(path.join(root, '.npmignore'))).rejects.toThrow();
+  });
+});
+
+/**
+ * `npm test` never sees the artifact: it imports source through the repository's own node_modules. The
+ * packaged smoke is what installs the tarball and runs it, so what is asserted here is that it exists and
+ * that CI actually runs it — on both operating systems, since a `files` or `bin` mistake shows up on one.
+ */
+describe('packaged smoke', () => {
+  it('is wired into npm run smoke:pack, building first', () => {
+    expect(pkg.scripts['smoke:pack']).toBe('npm run build && node scripts/smoke-packaged.mjs');
+  });
+
+  it('exists and drives the commands the release is accepted on', async () => {
+    const smoke = await read('scripts', 'smoke-packaged.mjs');
+    for (const command of ['--help', 'doctor', 'run', 'ui', 'diagnostics']) expect(smoke).toContain(command);
+    // It installs the workspace protocol package too: it is external in the bundle, so a published CLI
+    // without it beside it does not start.
+    expect(smoke).toContain('code-agent-orchestrator-protocol');
+  });
+
+  it('runs in CI on both operating systems, with the ink floor and a production audit', async () => {
+    const ci = parseYaml(await read('.github', 'workflows', 'ci.yml')) as {
+      jobs: Record<string, { strategy?: { matrix?: { os?: string[] } }; steps: { run?: string }[] }>;
+    };
+    const job = ci.jobs['package'];
+    expect(job).toBeDefined();
+    expect(job!.strategy?.matrix?.os).toEqual(['ubuntu-latest', 'windows-latest']);
+    const runs = job!.steps.map((s) => s.run ?? '').join('\n');
+    expect(runs).toContain('npm run smoke:pack');
+    expect(runs).toContain('npm audit --omit=dev');
+    // The ink floor is checked on the resolved tree in CI as well as here, because `npm ci` there and
+    // `npm install` here can land on different versions of the same caret range.
+    expect(runs).toContain('7.0.6');
   });
 });
 
@@ -137,18 +261,6 @@ describe('GitHub templates', () => {
  * #971 in 7.0.6), and Ink 7 needs React 19.2 or newer to run at all.
  */
 describe('UI stack', () => {
-  const order = (version: string): number[] => version.split('-')[0]!.split('.').map(Number);
-  const atLeast = (version: string, floor: string): boolean => {
-    const [a, b] = [order(version), order(floor)];
-    for (let i = 0; i < 3; i += 1) {
-      if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
-    }
-    return true;
-  };
-  /** The lowest version a caret or tilde range can install — what a fresh `npm install` could pick. */
-  const lowest = (range: string): string => range.replace(/^[\^~>=]+/, '').trim();
-  const resolved = async (name: string): Promise<string> => (JSON.parse(await read('node_modules', name, 'package.json')) as { version: string }).version;
-
   it('resolves ink at or above the Windows rendering fix in 7.0.6', async () => {
     expect(atLeast(await resolved('ink'), '7.0.6')).toBe(true);
     expect(atLeast(lowest((pkg as unknown as { dependencies: Record<string, string> }).dependencies['ink']!), '7.0.6')).toBe(true);

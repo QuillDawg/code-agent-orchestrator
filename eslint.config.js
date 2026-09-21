@@ -46,6 +46,17 @@ export default tseslint.config(
     },
   },
   {
+    // The packaging smoke is plain Node ESM outside tsconfig — it drives a tarball install, so it cannot
+    // import anything the repository compiles. No program to read means no type-aware rule can run on it.
+    files: ['scripts/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      // The type-aware defaults above are set for every file; this one has no project to be found in.
+      parserOptions: { projectService: false, project: false, program: null },
+      globals: { console: 'readonly', process: 'readonly', URL: 'readonly', TextDecoder: 'readonly', TextEncoder: 'readonly' },
+    },
+  },
+  {
     // Hook rules belong to the React files. Elsewhere they only misread `useColor`, which is not a hook.
     files: ['**/*.tsx'],
     plugins: { 'react-hooks': reactHooks },

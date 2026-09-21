@@ -283,7 +283,7 @@ function parseVersion(text: string): number[] | undefined {
 }
 
 /**
- * Whether the running Node satisfies `engines.node`. That field is `>=22` and is expected to stay a
+ * Whether the running Node satisfies `engines.node`. That field is `>=22.12.0` and is expected to stay a
  * single lower bound; a range this cannot read is reported as unknown rather than guessed at, because
  * telling a working installation that its Node is wrong is worse than saying nothing.
  */

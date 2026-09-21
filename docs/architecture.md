@@ -357,10 +357,15 @@ Everything the run controller and the inbox add to `workflow.json` is additive: 
   depends on a caret range and re-exports every symbol from `src/index.ts`, so a consumer of the library
   sees the same surface whichever package a type is declared in. The package tarball is `dist/` plus its
   README, CHANGELOG and LICENSE; `files` in the root package keeps `packages/` out of `cao`'s own tarball.
+  tsup leaves the protocol import external in the bundle rather than inlining it, so the two packages are
+  published together: an installed `cao` without `code-agent-orchestrator-protocol` beside it does not
+  start. `npm run smoke:pack` is what proves that, by installing both tarballs and running the result.
 - CI (`.github/workflows/ci.yml`) runs typecheck, lint, test and build on Node 22 and 24, on
   `ubuntu-latest` and `windows-latest`. It needs a real `git`; it never needs Claude or Codex, because every
   agent process in the suites is a fake Claude or Codex CLI under `test/fixtures/`. Without `git` the worktree and end-to-end
-  suites skip themselves with a message instead of failing inside `git init`.
+  suites skip themselves with a message instead of failing inside `git init`. A second job, `package`, runs
+  the packaged smoke on both operating systems, asserts the resolved Ink is at or above 7.0.6 (the Windows
+  rendering fix) and fails on a high or critical `npm audit --omit=dev` finding.
 
 ## Extending
 
