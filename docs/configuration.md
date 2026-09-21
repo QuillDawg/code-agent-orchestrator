@@ -497,4 +497,4 @@ that invocation, and `cao` never creates or writes this file except through `cao
 `TERM=dumb` terminal and any terminal that reports no colour force `mono` whatever the four say). The
 rest of the workspace's CLI flags and environment variables are in the
 [README](../README.md#environment-variables) and
-[docs/capabilities.md](capabilities.md#watching-a-run).
+[docs/capabilities.md](capabilities.md#the-workspace).
