@@ -11,6 +11,7 @@
  */
 import type { AttemptDiff, DiffFileRecord } from 'code-agent-orchestrator-protocol';
 import { paint, sanitizeText, type Style } from '../color.js';
+import { themeFor, type Theme } from '../../tui/theme.js';
 
 /** Metadata lines of a unified patch. Painted like git's `color.diff.meta`, not as additions or removals. */
 const META =
@@ -37,19 +38,27 @@ function safeLine(line: string): string {
 /**
  * Colour `+`, `-` and `@@` lines the way git does. Line endings are preserved byte for byte, so a coloured
  * patch still has its CRLFs and its final newline; the only escape sequences left are the ones added here.
+ *
+ * The shades come from the token table [D35] rather than from three colour names written down here: this
+ * is the renderer the workspace's Changes tab draws with as well as the one `cao diff` pipes, and an
+ * addition painted basic-ANSI green sat beside a `Completed` painted `ok` on the same screen without the
+ * two greens being the same green. A caller with a theme passes it; `cao diff` has only `color`, and
+ * `themeFor` hands it the do-nothing theme when that is false - so a redirected patch is still what git
+ * wrote, byte for byte.
  */
-export function paintPatch(patch: string, color: boolean): string {
+export function paintPatch(patch: string, color: boolean, theme?: Theme): string {
   if (!color || patch === '') return patch;
+  const t = themeFor(color, theme);
   return patch
     .split('\n')
     .map((raw) => {
       const line = safeLine(raw);
       // `+++`/`---` first: they start with a `+`/`-` but are file headers, not content.
-      if (line.startsWith('+++') || line.startsWith('---')) return paint(line, 'bold');
-      if (line.startsWith('@@')) return paint(line, 'cyan');
-      if (line.startsWith('+')) return paint(line, 'green');
-      if (line.startsWith('-')) return paint(line, 'red');
-      if (META.test(line)) return paint(line, 'bold');
+      if (line.startsWith('+++') || line.startsWith('---')) return t.paint(line, 'bold');
+      if (line.startsWith('@@')) return t.paint(line, 'accent2');
+      if (line.startsWith('+')) return t.paint(line, 'ok');
+      if (line.startsWith('-')) return t.paint(line, 'danger');
+      if (META.test(line)) return t.paint(line, 'bold');
       return line;
     })
     .join('\n');

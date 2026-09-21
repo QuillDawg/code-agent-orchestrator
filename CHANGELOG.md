@@ -365,9 +365,18 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 - **`--theme mono` and `NO_COLOR` now emit bold, dim and inverse where they used to emit nothing at all.**
   Under the old mono a selected row and a focused panel were painted with styles the theme then threw away,
   so neither was visible; they are now inverse and a doubled border. No SGR that sets a *colour* is emitted
-  in either mode, which is what `NO_COLOR` asks for. Plain output is untouched: `cao logs`, `cao peek` and
-  the line renderer paint nothing when they are told there is no colour, exactly as before, so a piped or
-  redirected run produces the bytes it always has.
+  in either mode, which is what `NO_COLOR` asks for. A pipe is untouched: `cao logs`, `cao peek`, `cao
+  report`, `cao diff` and the line renderer paint nothing when they are told there is no colour, exactly as
+  before, so a redirected run produces the bytes it always has.
+- **`cao logs`, `cao peek`, `cao report` and `cao diff` paint in the cyberpunk palette when colour is on.**
+  The transcript, the markdown renderer and the patch renderer are shared with the workspace, and they now
+  ask the token table for a colour rather than naming one. Where a coloured run used to emit the basic ANSI
+  sixteen - green for agent text, cyan for a tool line, yellow for a command, grey for a tool result, and
+  green, red and cyan for a patch's additions, removals and hunk headers - it now emits that token's shade
+  at whatever depth the terminal reports: truecolor on a terminal that says so, the 256-colour cube on one
+  that says that, and the same sixteen slots as before on a 16-colour one. The text, the layout and the
+  classification of every line are unchanged, and a pipe, a redirect or `NO_COLOR` still gets no escape at
+  all.
 - **A terminal that reports no colour at all gets `mono` even when `--theme cyberpunk` asked for it.** A
   violet escape a terminal will not render arrives as nothing, and then only the glyph and the word are
   left - which is what `mono` is built for.

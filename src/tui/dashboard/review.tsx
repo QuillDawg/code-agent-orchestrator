@@ -184,8 +184,8 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
   const selectedBinary = selected?.file.binary ?? false;
   const selectedPatch = selected ? cache[cacheKey(selected.group)]?.patch ?? '' : '';
   const pane = useMemo(
-    () => (selectedPath === '' || selectedPatch === '' ? EMPTY_PANE : buildPane(selectedPatch, { path: selectedPath, binary: selectedBinary }, color)),
-    [selectedPath, selectedBinary, selectedPatch, color],
+    () => (selectedPath === '' || selectedPatch === '' ? EMPTY_PANE : buildPane(selectedPatch, { path: selectedPath, binary: selectedBinary }, color, theme)),
+    [selectedPath, selectedBinary, selectedPatch, color, theme],
   );
   const paneLines = pane.lines;
   const hunks = pane.hunks;

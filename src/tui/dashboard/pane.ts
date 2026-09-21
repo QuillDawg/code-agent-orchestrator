@@ -7,12 +7,12 @@
  * push a diff line past the right edge while the pane still measured it as short; they are expanded here
  * instead, so the length the pane sees is the width the terminal draws.
  *
- * Building the lines is a pure function of `(patch, file, colour)` so the view can memoise it on those three
- * and not rebuild a three-hundred-hunk patch on every spinner tick.
+ * Building the lines is a pure function of `(patch, file, colour, theme)` so the view can memoise it on those
+ * four and not rebuild a three-hundred-hunk patch on every spinner tick.
  */
-import { paint } from '../../cli/color.js';
 import { sanitizeText } from '../../util/text.js';
 import { paintPatch, patchForFile } from '../../cli/render/diff.js';
+import { themeFor, type Theme } from '../theme.js';
 
 const TAB = String.fromCharCode(9);
 /** The terminal default. A diff line's `+`/`-`/space marker shifts the stops by one, exactly as a pager does. */
@@ -46,19 +46,20 @@ export interface PaneFile {
  * The pane's lines for one file of `patch`. Empty when the patch has no section for it — the caller says why,
  * because only it knows whether the attempt is still running, captured nothing, or was truncated.
  */
-export function buildPane(patch: string, file: PaneFile, color: boolean): PaneContent {
+export function buildPane(patch: string, file: PaneFile, color: boolean, theme?: Theme): PaneContent {
   const section = patchForFile(patch, file.path).replace(/\n$/, '');
   if (section === '') return EMPTY_PANE;
   // Sanitize before painting: the patch's own escapes must go, the ones paintPatch adds must stay.
   const plain = dropRedundantHeaders(section.split('\n')).map((line) => expandTabs(sanitizeText(line)));
   // Painting line by line keeps the coloured array lined up with the plain one the hunk offsets index.
-  const lines = plain.map((line) => paintPatch(line, color));
+  const t = themeFor(color, theme);
+  const lines = plain.map((line) => paintPatch(line, color, t));
   if (!file.binary) return { lines, hunks: hunkStarts(plain) };
   // A binary section carries the whole file base85-encoded (`--binary`, so that `git apply` can replay it).
   // That is for git, not for a reader: keep the headers and say what the rest is.
   const payload = plain.findIndex((l) => l.startsWith('GIT binary patch') || l.startsWith('Binary files '));
   if (payload < 0) return { lines, hunks: [] };
-  return { lines: [...lines.slice(0, payload + 1), paint('  (binary contents omitted; the captured patch carries them)', 'dim', color)], hunks: [] };
+  return { lines: [...lines.slice(0, payload + 1), t.paint('  (binary contents omitted; the captured patch carries them)', 'dim')], hunks: [] };
 }
 
 /** Header lines whose content the pane already shows above it: the paths, and the blob hashes behind them. */

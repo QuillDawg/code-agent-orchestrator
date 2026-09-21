@@ -12,6 +12,7 @@ import {
 } from '../../src/cli/render/diff.js';
 import { executionOrder } from '../../src/cli/util.js';
 import { stripAnsi } from '../../src/cli/color.js';
+import { resolveTheme } from '../../src/tui/theme.js';
 import type { DiffFileRecord, WorkflowRun } from 'code-agent-orchestrator-protocol';
 
 const PATCH = [
@@ -74,27 +75,49 @@ const RECORDS: DiffFileRecord[] = [
 ];
 
 describe('paintPatch', () => {
+  /**
+   * The sixteen-colour theme, pinned. `paintPatch` takes its shades from the token table [D35], which
+   * downsamples to whatever depth the terminal reports - so a test asserting escape bytes without saying
+   * which depth it means would pass on this machine and fail on a runner with no COLORTERM.
+   */
+  const t16 = resolveTheme({ env: {}, level: 1 });
+
   it('leaves the patch byte for byte alone without colour', () => {
     expect(paintPatch(PATCH, false)).toBe(PATCH);
     expect(paintPatch('', true)).toBe('');
   });
 
   it('colours content lines but not the file headers they start like', () => {
-    const painted = paintPatch(PATCH, true).split('\n');
-    expect(painted[6]).toBe('[31m-gone[39m'); // red removal
-    expect(painted[7]).toBe('[32m+added[39m'); // green addition
-    expect(painted[4]).toBe('[36m@@ -1,3 +1,3 @@[39m'); // cyan hunk header
+    const painted = paintPatch(PATCH, true, t16).split('\n');
+    expect(painted[6]).toBe('[91m-gone[39m'); // the `danger` token, downsampled
+    expect(painted[7]).toBe('[32m+added[39m'); // the `ok` token, downsampled
+    expect(painted[4]).toBe('[96m@@ -1,3 +1,3 @@[39m'); // the `accent2` token, downsampled
     expect(painted[2]).toBe('[1m--- a/src/a.ts[22m'); // `---`/`+++` are metadata, not removals
     expect(painted[3]).toBe('[1m+++ b/src/a.ts[22m');
     expect(painted[0]).toBe('[1mdiff --git a/src/a.ts b/src/a.ts[22m');
     expect(painted[5]).toBe(' keep'); // context lines stay plain
-    expect(stripAnsi(paintPatch(PATCH, true))).toBe(PATCH);
+    expect(stripAnsi(paintPatch(PATCH, true, t16))).toBe(PATCH);
+  });
+
+  /**
+   * The Changes tab and `cao diff` share this renderer, and the tab draws beside states painted from the
+   * token table. An addition in basic-ANSI green next to a `Completed` in `#22c55e` is two greens on one
+   * screen, so the patch asks the table for its shades like everything else does (§3.2, [D35]).
+   */
+  it('takes its shades from the token table, at the depth the theme was built for', () => {
+    const truecolor = resolveTheme({ env: {}, level: 3 });
+    const painted = paintPatch(PATCH, true, truecolor).split(String.fromCharCode(10));
+    expect(painted[7]).toBe(truecolor.paint('+added', 'ok'));
+    expect(painted[6]).toBe(truecolor.paint('-gone', 'danger'));
+    expect(painted[4]).toBe(truecolor.paint('@@ -1,3 +1,3 @@', 'accent2'));
+    // Not one of the sixteen a colour name would have produced: that is the whole point of the table.
+    expect(painted[7]).not.toContain('[32m');
   });
 
   it('keeps CRLF endings and the final newline', () => {
     const crlf = 'diff --git a/x b/x\r\n@@ -0,0 +1 @@\r\n+one\r\n';
-    expect(stripAnsi(paintPatch(crlf, true))).toBe(crlf);
-    expect(paintPatch(crlf, true).endsWith('\r[39m\n')).toBe(true);
+    expect(stripAnsi(paintPatch(crlf, true, t16))).toBe(crlf);
+    expect(paintPatch(crlf, true, t16).endsWith('\r[39m\n')).toBe(true);
   });
 });
 
@@ -215,11 +238,12 @@ describe('escape sequences a worker put in the diff', () => {
   it('are dropped from a coloured patch and left alone in the byte-exact one', () => {
     const patch = ['diff --git a/x b/x', '@@ -0,0 +1 @@', `+${ESC}[2Jwiped${CR}not really`, ''].join('\n');
     expect(paintPatch(patch, false)).toBe(patch); // a pipe gets what git wrote, escape sequences included
-    const painted = paintPatch(patch, true);
+    const theme = resolveTheme({ env: {}, level: 1 });
+    const painted = paintPatch(patch, true, theme);
     expect(painted).not.toContain(`${ESC}[2J`);
     expect(painted).not.toContain(CR);
     // still an addition: the line is cleaned before it is classified, not after
-    expect(painted).toContain(`${ESC}[32m+wipednot really${ESC}[39m`);
+    expect(painted).toContain(theme.paint('+wipednot really', 'ok'));
   });
 
   it('are dropped from a stat path when it is painted, and kept when it is piped', () => {
