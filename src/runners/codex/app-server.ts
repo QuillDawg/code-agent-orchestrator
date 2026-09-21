@@ -18,6 +18,7 @@ import { configErrorOutcome, killedMessage, openToolMessage, type ConfigRejectio
 import { ensureDir } from '../../util/fs.js';
 import { nowIso, truncate } from '../../util/misc.js';
 import { codexExtraArgsSecurityConflict, resolveCodexPermissions } from './permissions.js';
+import { forwardCodexRateLimits } from './quota.js';
 import {
   REQUEST_DECLINED, REQUEST_UNSUPPORTED, approvalResponse, cancelResponse, interactionFromRequest,
   isAnswerableRequest, parseQuestions, quoteQuestions, userInputResponse,
@@ -477,6 +478,13 @@ export async function runCodexAppServer(config: CodexAppServerOptions, input: Ru
             hooks.onFileChange({ path: filePath, op }); entry({ kind: 'tool', ts: nowIso(), tool: 'fileChange', line: `${op} ${filePath}`, filePath, fileOp: op });
           }
         }
+        return;
+      }
+      if (message.method === 'account/rateLimits/updated') {
+        // Emitted only during turns, which the workspace's own quota process never runs (§3.6, `[D28]`):
+        // this is the attempt handing its reading to the footer, so a busy run refreshes faster than the
+        // five-minute timer. Nothing subscribes in a headless run, so nothing happens there.
+        forwardCodexRateLimits(params.rateLimits);
         return;
       }
       if (message.method === 'thread/tokenUsage/updated') {

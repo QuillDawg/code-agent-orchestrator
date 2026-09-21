@@ -592,6 +592,34 @@ bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny w
 their options; `T` types an answer. The worker continues the moment you answer. Set `hooks.onInputRequired`
 to be notified elsewhere.
 
+### How much of your plan is left
+
+The footer carries one chip per provider, showing what that provider says about its own rate-limited
+windows — never a number `cao` worked out for itself, and never a category `cao` invented:
+
+```
+codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago      claude · unavailable · see /usage in Claude Code
+```
+
+**Codex.** The workspace keeps one `codex app-server` open for the session — never one per attempt — and
+asks it for `account/read` and `account/rateLimits/read` when you arrive, every five minutes after that, and
+whenever you ask. Both are account reads: no thread is opened, no turn is started and nothing is billed.
+Whatever windows the server reports are shown, labelled from their own duration (`5h`, `7d`, else `Nm`) with
+the reset time in your time zone; a window the server does not report is not drawn. While a task is running,
+the rate-limit updates its own app-server receives are folded in too, so a busy run refreshes faster than
+the timer. The chip says `codex · sign in with ChatGPT for quotas` when Codex is authenticated by API key —
+the server refuses quota reads for those — and `unavailable` when the CLI is missing or below 0.48.0, the
+first version with the read. A failed refresh never blanks a good reading: it keeps the numbers and says
+`stale` with their age.
+
+**Claude.** `claude · unavailable · see /usage in Claude Code`. There is no documented programmatic read of
+the Pro/Max usage bars, and `cao` makes no network call of its own to find one.
+
+`Tab` to the footer and press `R` to read them again, or pick *Refresh the provider quotas* from `Ctrl+P`.
+The readers start when the workspace opens and stop when it closes; a headless run (`--no-tui`, non-TTY,
+`CI`) starts neither the process nor the timer. Per-task tokens and cost are a different question and live
+in the usage table (`U`).
+
 ### The workspace stays open when the run ends
 
 Success, failure, a pause or a Ctrl+C: the workspace stays. The Overview leads with the outcome, the failed
@@ -615,7 +643,7 @@ workspace on a run that ended earlier, or on one another terminal is executing.
 <details>
 <summary><strong>Workspace keys</strong></summary>
 
-`Tab`/`Shift+Tab` move between the task list, the tab bar and the panel · arrows, `PgUp`/`PgDn` and
+`Tab`/`Shift+Tab` cycle the task list, the tab bar, the panel and the footer · arrows, `PgUp`/`PgDn` and
 `Home`/`End` navigate whatever has focus · `Enter` opens it · `Esc` closes a dialog or steps back ·
 `Ctrl+P` opens a command palette over every action and every task id · `/` searches the focused list or
 the report · `?` lists the keys of whatever has focus, plus the ones that work anywhere · `Q` quits ·
@@ -626,6 +654,7 @@ restart a failed, blocked, cancelled or skipped task · `E` edit an unfinished t
 choose a tab, `Enter` opens it and focuses its panel. In the Overview: `↑↓` (plus `PgUp`/`PgDn`,
 `Home`/`End`) move the task table · `F`/`L` follow the selected task · `R` restart it · `E` edit it · `U`
 usage (tokens, context, cost, time in tools; `S` sorts by cost), full-screen · `C` jump to the Changes tab.
+In the footer: `R` reads the provider quotas again.
 
 `Q` while the run is going asks first: **stay**, **stop and quit**, or **continue in plain output** — the
 old minimise, where the run keeps printing lines and `D` or `Enter` reopens the workspace. On a run that
@@ -637,8 +666,8 @@ the window. See [above](#the-workspace-stays-open-when-the-run-ends) for the end
 any of the three in `$VISUAL`/`$EDITOR`, and `Ctrl+Z`/`Ctrl+W` in the composer are the chords the workspace
 reads; the transcript viewer adds `Ctrl+A` to scroll up. Every other `Ctrl`+key is left to the terminal.
 Below 100 columns the sidebar collapses to a one-line task strip, and the footer gives up its freshness
-chip first, then its quota chip, then the focused panel's own keys — `? help` and the way out survive
-last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than
+chip first, then the quota chips from the right — the providers that will never report a number go before
+the ones that did — then the focused panel's own keys; `? help` and the way out survive last. The help screen and the usage table use a compact layout too, so no frame is wider or taller than
 the terminal it is drawn in; the usage table drops its cache, turns, time and tools columns there,
 `cao task <id>` still reports all of them.
 

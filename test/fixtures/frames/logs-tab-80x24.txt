@@ -21,4 +21,4 @@ logs <task> prints it.
 
 
 
-←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   quota: stage #
+←→ tab   Enter open   Ctrl+P palette   ? help   Q quit

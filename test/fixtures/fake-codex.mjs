@@ -35,6 +35,17 @@
  * FAKE_CODEX_RESUME_CONFLICT=1 makes `thread/resume` answer "already has an active writer".
  * FAKE_CODEX_AUTH=0 makes `login status` fail. FAKE_CODEX_TRACE=<file> appends one JSON line per
  * invocation (task, attempt, cwd, argv, prompt) so tests can assert what CAO actually launched.
+ *
+ * The account methods the usage footer reads (spec §3.6, §7.2), app-server only. Both are account-scoped:
+ * they need no thread and start no turn, and each one appends a trace line naming the method, so a test can
+ * prove a headless run never asked.
+ *   FAKE_CODEX_ACCOUNT = chatgpt (default) | apiKey | none | refused
+ *     chatgpt: `account/read` answers {type:'chatgpt', email, planType}; apiKey and none answer the shapes
+ *     the server gives an API-key login and a machine with no login; refused additionally makes
+ *     `account/rateLimits/read` fail with the server's -32600 "chatgpt authentication required" message.
+ *   FAKE_CODEX_RATE_LIMITS = default (300-minute primary, 10080-minute secondary) | no-secondary (the
+ *     secondary window is null) | by-limit-id (the default pair plus a `rateLimitsByLimitId` map)
+ *   FAKE_CODEX_RATE_LIMITS_UPDATE=1 emits one sparse `account/rateLimits/updated` during the turn.
  */
 import readline from 'node:readline';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -342,6 +353,53 @@ function protocolViolation(detail) {
   emit({ method: 'turn/completed', params: { threadId, turn: { id: 'turn-1', status: 'failed', items: [], itemsView: 'full', error: { message: `client response violates the app-server protocol: ${detail}`, codexErrorInfo: 'badRequest', additionalDetails: null } } } });
 }
 
+// ---------------------------------------------------------------------------
+// The account methods the usage footer reads (§3.6, §7.2). Account-scoped: no thread, no turn, no billing.
+// ---------------------------------------------------------------------------
+
+const accountMode = process.env.FAKE_CODEX_ACCOUNT ?? 'chatgpt';
+
+/** `account/read` answers one of these; `null` is what a machine with no login gets. */
+const ACCOUNTS = {
+  chatgpt: { type: 'chatgpt', email: 'operator@example.com', planType: 'Pro' },
+  refused: { type: 'chatgpt', email: 'operator@example.com', planType: 'Pro' },
+  apiKey: { type: 'apiKey' },
+  none: null,
+};
+
+/** A window is `usedPercent`, how long it runs, and when it rolls over — `resetsAt` in unix **seconds**. */
+const window = (usedPercent, windowDurationMins, resetsInMins) => ({
+  usedPercent,
+  windowDurationMins,
+  resetsAt: Math.floor(Date.now() / 1000) + resetsInMins * 60,
+});
+
+/**
+ * `account/rateLimits/read`. The default pair is the one the real server reports for a ChatGPT plan: a
+ * 300-minute primary and a 10080-minute secondary. The variants are the two shapes a client must not
+ * assume away — a missing secondary, and extra limits keyed by `limitId`.
+ */
+function rateLimitsResult() {
+  const shape = process.env.FAKE_CODEX_RATE_LIMITS ?? 'default';
+  const primary = window(42, 300, 53);
+  const secondary = shape === 'no-secondary' ? null : window(61, 10080, 4320);
+  const rateLimits = { primary, secondary, planType: 'Pro', limitId: 'default' };
+  if (shape !== 'by-limit-id') return { rateLimits };
+  return {
+    rateLimits,
+    rateLimitsByLimitId: {
+      // `default` is the snapshot above, so a client that drew it twice would be drawing one window twice.
+      default: rateLimits,
+      'gpt-5-codex': { primary: window(8, 60, 12), secondary: null },
+    },
+  };
+}
+
+/** The sparse notification the server emits during a turn: the window that moved, and nothing else. */
+function emitRateLimitsUpdate() {
+  emit({ method: 'account/rateLimits/updated', params: { rateLimits: { primary: window(77, 300, 41) } } });
+}
+
 const COMMAND_DECISIONS = ['accept', 'acceptForSession', 'decline', 'cancel'];
 
 /**
@@ -385,6 +443,14 @@ rl.on('line', (raw) => {
   const message = JSON.parse(raw);
   if (message.method === 'initialize') {
     emit({ id: message.id, result: { userAgent: 'fake-codex' } });
+  } else if (message.method === 'account/read') {
+    trace({ method: 'account/read' });
+    emit({ id: message.id, result: { account: ACCOUNTS[accountMode] ?? ACCOUNTS.chatgpt } });
+  } else if (message.method === 'account/rateLimits/read') {
+    trace({ method: 'account/rateLimits/read' });
+    // The one refusal that is not a failure: the server will not read quotas for an API-key login (§7.2).
+    if (accountMode === 'refused') emit({ id: message.id, error: { code: -32600, message: 'chatgpt authentication required to read rate limits' } });
+    else emit({ id: message.id, result: rateLimitsResult() });
   } else if (message.method === 'thread/start' || message.method === 'thread/resume') {
     if (mode === 'overload-once' && !overloaded) {
       overloaded = true;
@@ -457,6 +523,8 @@ rl.on('line', (raw) => {
     }
     emit({ id: message.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null } } });
     activeTurnId = 'turn-1';
+    // Rate limits move while a turn runs, and this is the only moment the server says so (§7.2).
+    if (process.env.FAKE_CODEX_RATE_LIMITS_UPDATE === '1') emitRateLimitsUpdate();
     if (mode === 'steer') {
       // The turn stays open so the host has something to steer into. Bounded, so a test that never steers
       // (or one whose steer is refused) still ends instead of hanging the suite.

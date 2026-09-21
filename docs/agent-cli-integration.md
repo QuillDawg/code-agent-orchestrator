@@ -165,6 +165,26 @@ Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protoco
 
 Stable command and file-change approval requests become the same runner-neutral `Interaction` used by Claude. Typed `codexErrorInfo` values drive retry classification. The transports never silently fall back into one another; `exec` remains the default while app-server is experimental.
 
+### Reading the account quota
+
+The workspace opens a **second** kind of app-server, one per interactive session and never per attempt
+(`src/runners/codex/quota.ts`). It handshakes with `initialize { clientInfo: { name: "cao", version } }` —
+no `experimentalApi`, because it asks for nothing else — then `initialized`, then two account-scoped reads:
+
+| Method | Since | What it answers |
+|---|---|---|
+| `account/read` | — | `{ account: { type: "chatgpt", email, planType } \| { type: "apiKey" } \| null }` |
+| `account/rateLimits/read` | 0.48.0 | `{ rateLimits: { primary?, secondary?, planType?, limitId? }, rateLimitsByLimitId? }`, each window `{ usedPercent, windowDurationMins, resetsAt }` with `resetsAt` in unix **seconds** |
+
+Neither opens a thread or starts a turn, so neither is billable. They are re-read on entry, every five
+minutes, and on demand (`R` in the footer). The sparse `account/rateLimits/updated` notification is emitted
+only *during* a turn, which this process never runs, so the attempt app-servers forward the ones they see to
+the same snapshot; it is merged into the last read rather than replacing it. `account/rateLimits/read` is
+refused with `-32600 chatgpt authentication required to read rate limits` for an API-key login, which the
+footer shows as `authRequired` rather than as an error. Below 0.48.0, or with no CLI, the chip is
+`unavailable`. The process is killed and its stdin closed when the workspace unmounts — the stdio server
+exits on EOF — and a crashed one is started again at most once per five minutes.
+
 CAO answers exactly three server requests — `item/commandExecution/requestApproval`,
 `item/fileChange/requestApproval` and `item/tool/requestUserInput`. Everything else, including
 `item/permissions/requestApproval`, `mcpServer/elicitation/request` and the legacy `applyPatchApproval` /

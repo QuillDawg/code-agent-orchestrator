@@ -33,7 +33,8 @@ import { glyph } from '../util/glyphs.js';
 import { BELL } from '../util/misc.js';
 import { errorMessage } from '../util/errors.js';
 import type { WorkspaceRole } from '../tui/workspace/chrome.js';
-import type { DashboardController, DashboardOptions, WorkspaceView } from '../tui/app.js';
+import type { DashboardController, DashboardOptions, QuotaFactory, WorkspaceView } from '../tui/app.js';
+import { startQuotaMonitors } from '../runners/quota.js';
 import { ownershipBadge, ownershipBanner } from './ownership.js';
 import type { RunObserver } from '../workflow/control/observer.js';
 import type { Interaction, InteractionAnswer, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
@@ -117,6 +118,12 @@ export interface WorkspaceSessionOptions {
    * imports the real one before the loop starts, so `src/tui/` is still never loaded by a headless run.
    */
   createDashboard?: DashboardFactory;
+  /**
+   * Injected by tests: the provider quota readers to start when the workspace mounts (§3.6). Left out, the
+   * real ones are used; a test that mounts a real tree passes a fake so that `npm test` spawns no
+   * `codex app-server` and makes no call of any kind.
+   */
+  quota?: QuotaFactory;
 }
 
 interface Session extends WorkspaceSession {
@@ -244,6 +251,9 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     onResume: (request) => settle({ kind: 'resume', request }),
     altScreen: opts.altScreen,
     theme: opts.theme,
+    // The provider quota readers (§3.6, `[D31]`). A factory: nothing starts until the Ink tree mounts, and
+    // nothing at all in a headless run, which never gets this far.
+    quota: opts.quota ?? ((handlers) => startQuotaMonitors({ ...handlers, cwd: run.repositoryRoot })),
   });
 
   const ensureDashboard = (run: WorkflowRun, bus: EventBus, controller: RunController, view: WorkspaceView): DashboardController => {

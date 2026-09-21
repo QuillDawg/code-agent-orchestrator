@@ -15,7 +15,7 @@
  * in `src/tui/` keeps a `useState` for something another panel has to agree about.
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { ResolvedTask, TaskRunState, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import type { QuotaSnapshot, ResolvedTask, TaskRunState, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import type { EventBus } from '../events/event-bus.js';
 import { systemClock, type Clock } from '../util/misc.js';
 
@@ -46,10 +46,16 @@ export const TAB_LABEL: Record<WorkspaceTab, string> = {
  * Tab and Shift+Tab move between those three. The rest are regions a full-screen view owns, and `modal` is
  * a prompt, which takes the keys from whatever had them.
  */
-export type FocusRegion = 'tasks' | 'tabs' | 'main' | 'detail' | 'transcript' | 'review' | 'hunks' | 'modal';
+export type FocusRegion = 'tasks' | 'tabs' | 'main' | 'footer' | 'detail' | 'transcript' | 'review' | 'hunks' | 'modal';
 
-/** The three panels Tab cycles through, in the order it visits them. */
-export const FOCUS_PANELS = ['tasks', 'tabs', 'main'] as const satisfies readonly FocusRegion[];
+/**
+ * The panels Tab cycles through, in the order it visits them.
+ *
+ * The footer joined them in stage 3: it is the only place the provider quota chips are, and §3.6 asks for
+ * `R` to re-read them there. A region with keys that nothing can focus is a region whose keys do not
+ * exist, so it is a stop on the cycle rather than a fourth meaning for a chord.
+ */
+export const FOCUS_PANELS = ['tasks', 'tabs', 'main', 'footer'] as const satisfies readonly FocusRegion[];
 
 /**
  * What is open over the shell and holds the keys: the command palette, the search field of the focused
@@ -127,6 +133,12 @@ export interface PresentationState {
   snapshot: RunSnapshot | null;
   /** Controls sent from this window, oldest first (§2.3). */
   controls: ControlRecord[];
+  /**
+   * The last thing each provider said about its quota (§3.6, §2.6), in the order the providers first
+   * reported. One entry per provider: a snapshot is a replacement, never an addition, or a five-minute
+   * refresh would grow the footer a chip at a time.
+   */
+  quotas: QuotaSnapshot[];
 
   setView(view: View): void;
   setTab(tab: WorkspaceTab): void;
@@ -149,6 +161,8 @@ export interface PresentationState {
   recordControl(record: Pick<ControlRecord, 'id' | 'label'>): void;
   /** The owner answered (or did not): the row keeps its place in the order it was sent in. */
   settleControl(id: string, status: ControlRecord['status'], reason?: string): void;
+  /** A provider reported its quota; it replaces whatever that provider said last (§3.6). */
+  setQuota(snapshot: QuotaSnapshot): void;
 }
 
 export type PresentationStore = StoreApi<PresentationState>;
@@ -179,6 +193,7 @@ export function createPresentationStore(clock: Clock = systemClock): Presentatio
     notice: null,
     snapshot: null,
     controls: [],
+    quotas: [],
 
     setView: (view) => set({ view }),
     setTab: (tab) => set({ tab }),
@@ -217,6 +232,11 @@ export function createPresentationStore(clock: Clock = systemClock): Presentatio
     },
     settleControl: (id, status, reason) =>
       set({ controls: get().controls.map((c) => (c.id === id ? { ...c, status, ...(reason ? { reason } : {}) } : c)) }),
+    setQuota: (snapshot) => {
+      const quotas = get().quotas;
+      const at = quotas.findIndex((q) => q.provider === snapshot.provider);
+      set({ quotas: at < 0 ? [...quotas, snapshot] : quotas.map((q, i) => (i === at ? snapshot : q)) });
+    },
   }));
 }
 
@@ -292,6 +312,7 @@ export const selectCursor = (s: PresentationState): number => s.cursor;
 export const selectNotice = (s: PresentationState): string | null => s.notice;
 export const selectSnapshot = (s: PresentationState): RunSnapshot | null => s.snapshot;
 export const selectControls = (s: PresentationState): ControlRecord[] => s.controls;
+export const selectQuotas = (s: PresentationState): QuotaSnapshot[] => s.quotas;
 export const selectRun = (s: PresentationState): WorkflowRun | null => s.snapshot?.run ?? null;
 export const selectTasks = (s: PresentationState): ResolvedTask[] => taskList(s.snapshot);
 export const selectSelectedTask = (s: PresentationState): ResolvedTask | null => taskList(s.snapshot)[s.cursor] ?? null;

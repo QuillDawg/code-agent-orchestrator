@@ -54,7 +54,7 @@ const LEAVING_KEYS: Record<KeyMode, [KeyHelp, KeyHelp]> = {
 /** Answered everywhere, whatever has focus, in the words this mode makes true. */
 export function globalKeys(mode: KeyMode = 'executing'): KeyHelp[] {
   return [
-    { keys: 'Tab / Shift+Tab', what: 'move between the task list, the tabs and the panel' },
+    { keys: 'Tab / Shift+Tab', what: 'cycle the task list, the tabs, the panel and the footer' },
     { keys: 'Ctrl+P', what: 'command palette: every action and every task id' },
     { keys: '?', what: 'the keys of whatever has focus' },
     ...LEAVING_KEYS[mode],
@@ -196,6 +196,12 @@ export function composerKeys(): KeyHelp[] {
   ];
 }
 
+/**
+ * The footer (§3.6). One key, because the footer shows rather than does: the provider quota chips and how
+ * old the picture is, and the only thing an operator can ask of them is "read it again".
+ */
+const footerKeys = (): KeyHelp[] => [{ keys: 'R', what: 'read the provider quotas again', short: 'refresh quotas' }];
+
 const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
   ({
     overview: overviewKeys,
@@ -217,6 +223,7 @@ const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
 export function panelHelp(focus: FocusRegion, tab: WorkspaceTab, taken: ReadonlySet<string> = new Set()): PanelHelp {
   const keep = (keys: KeyHelp[]): KeyHelp[] => (taken.size === 0 ? keys : keys.filter((help) => !(help.keys.length === 1 && taken.has(help.keys.toUpperCase()))));
   if (focus === 'tabs') return { title: 'Tabs', keys: keep(tabBarKeys()) };
+  if (focus === 'footer') return { title: 'Footer', keys: keep(footerKeys()) };
   if (focus === 'main') return { title: TAB_LABEL[tab], keys: keep(mainKeys(tab)) };
   return { title: 'Tasks', keys: keep(taskListKeys()) };
 }

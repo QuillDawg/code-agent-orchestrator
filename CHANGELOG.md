@@ -267,9 +267,29 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   a second `Ctrl+F` or when the composer closes — `Ctrl+Z` undoes the last edit, `Ctrl+W` deletes the word
   before the cursor, and `Esc` closes it keeping the draft until you quit. A paste arrives whole and one over 20 lines is shown as `[pasted N lines]` with
   every byte kept. Inside the composer every printable key is text, so `q` types a `q`.
+- **The footer says how much of your plan is left.** One chip per provider, carrying what that provider
+  says about its own rate-limited windows — `codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago` —
+  with the labels taken from the windows' own durations and the reset time in your time zone. `cao`
+  computes nothing here and invents no category: a window the provider did not report is not drawn.
+  Codex is read through one `codex app-server` kept open for the session, never one per attempt: it sends
+  `initialize`, `initialized`, `account/read` and `account/rateLimits/read` on entry, every five minutes,
+  and whenever you ask. Both are account reads — no thread, no turn, nothing billed — and the rate-limit
+  updates a running task's own app-server receives are folded into the same reading, so a busy run
+  refreshes faster than the timer. A failed refresh never blanks a good one: the numbers stay and the chip
+  says `stale` with their age. An API-key login reads `codex · sign in with ChatGPT for quotas`, because
+  the server refuses quota reads for those; a CLI that is missing or below 0.48.0 reads `unavailable`.
+  Claude reads `claude · unavailable · see /usage in Claude Code`: no programmatic read of the Pro/Max
+  bars is documented, and `cao` makes no network call of its own to find one. `R` on the footer reads them
+  again, as does *Refresh the provider quotas* in `Ctrl+P`. The readers start when the workspace opens and
+  are stopped, process killed and timer dropped, when it closes; a headless run starts neither. Per-task
+  tokens and cost are a different question and stay in the usage table (`U`).
 
 ### Changed
 
+- **`Tab` now has a fourth stop: the footer.** It used to cycle the task list, the tab bar and the panel;
+  it now cycles those three and the footer, where `R` reads the provider quotas again. Nothing else about
+  those three changed, and `R` still restarts the selected task everywhere it did before — the footer is a
+  focus stop precisely so that the new key is its own rather than a fourth meaning for `R`.
 - **`cao` on its own prints the help to stdout and exits 0.** It used to print the same help to *stderr*
   and exit 2, so `cao | less` showed nothing and a shell treated "what is this" as a failure. A real usage
   error — an unknown command, a missing argument, a bad option value — is still exit 2, and an unknown

@@ -37,4 +37,4 @@ Tasks #/#                            ✗ implement-renderer failed  after # atte
 
 
 
-↑↓ select   F / L follow   R restart   E edit   U usage   C changes   Ctrl+P palette   ? help   Q quit   quota: stage #
+↑↓ select   F / L follow   R restart   E edit   U usage   C changes   Ctrl+P palette   ? help   Q quit   updated #s ago

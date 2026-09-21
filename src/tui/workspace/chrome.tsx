@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import { type ResolvedTask, type TaskRunState, type WorkflowRun, ACTIVE_TASK_STATES, addUsage } from 'code-agent-orchestrator-protocol';
+import { type QuotaSnapshot, type ResolvedTask, type TaskRunState, type WorkflowRun, ACTIVE_TASK_STATES, addUsage } from 'code-agent-orchestrator-protocol';
 import { STATE_LABEL, stateGlyph, summarize } from '../../workflow/states.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatDuration, formatDurationShort } from '../../util/duration.js';
@@ -18,6 +18,7 @@ import { agentLabel, formatCost, formatTokens } from '../format.js';
 import { TAB_LABEL, WORKSPACE_TABS, type WorkspaceTab } from '../store.js';
 import type { Theme } from '../theme.js';
 import { windowOf } from '../window.js';
+import { quotaChips } from './quota.js';
 import type { FooterColumn } from './layout.js';
 
 /** Who is driving: this process holds the run, or it is watching one another process owns (§2.1). */
@@ -309,22 +310,31 @@ export interface FooterProps {
   /** When the displayed snapshot was taken, for the freshness column. */
   snapshotAge: number;
   notice?: string | null;
+  /** What each provider last said about its quota (§3.6); empty until the first reading arrives. */
+  quotas?: readonly QuotaSnapshot[];
+  /** The frame's clock, which is what ages the quota chips. */
+  now?: number;
+  /** Whether the footer holds the keys, so `R` is its own and the chips say they can be refreshed. */
+  focused?: boolean;
 }
 
 /**
  * The footer: the keys of the focused panel, then the chords that always work, then the provider quota
- * chips, then how old the picture is. The chips are a placeholder until stage 3 reads a real quota; they
- * say so rather than showing a number nothing measured.
+ * chips, then how old the picture is.
+ *
+ * One chip per provider, drawn from the snapshot that provider last published (§3.6) — including the
+ * states that will never carry a number, because a provider that cannot answer is worth exactly one line
+ * saying so, once.
  *
  * `columnsShown` says which chips the terminal's *width* allows (`footerColumnsFor`); what is drawn also
  * has to leave room for the keys, so a chip is dropped here too when the line is full — in the same order,
- * freshness before quota.
+ * freshness first, then the chips from the right.
  */
-export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice }: FooterProps): React.JSX.Element {
+export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice, quotas, now, focused }: FooterProps): React.JSX.Element {
   const hintCells = hints ? hints.split(HINT_GAP) : [];
   const alwaysCells = always ?? [];
   const chipCells: string[] = [];
-  if (columnsShown.includes('quota')) chipCells.push('quota: stage 3');
+  if (columnsShown.includes('quota')) chipCells.push(...quotaChips(quotas ?? [], now ?? Date.now()));
   if (columnsShown.includes('freshness')) chipCells.push(`updated ${formatDurationShort(Math.max(0, snapshotAge))} ago`);
 
   const cells = [...hintCells, ...alwaysCells, ...chipCells];
@@ -339,7 +349,7 @@ export function Footer({ hints, always, columns, theme, columnsShown, snapshotAg
   return (
     <Box flexDirection="column">
       {notice ? <Text wrap="truncate-end">{theme.paint(notice, 'warning')}</Text> : null}
-      <Text wrap="truncate-end">{theme.paint(kept.join(HINT_GAP), 'muted')}</Text>
+      <Text wrap="truncate-end">{theme.paint(kept.join(HINT_GAP), focused ? 'selection' : 'muted')}</Text>
     </Box>
   );
 }

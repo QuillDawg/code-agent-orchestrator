@@ -37,4 +37,4 @@ Tasks #/#                            Logs
 
 
 
-←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   quota: stage #   updated #s ago
+←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   updated #s ago

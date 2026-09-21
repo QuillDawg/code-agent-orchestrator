@@ -37,4 +37,4 @@ Tasks #/#                            ✓ implement-parser  # file seen while it 
 
 
                                      ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
-Ctrl+P palette   ? help   Q quit   quota: stage #   updated #s ago
+Ctrl+P palette   ? help   Q quit   updated #s ago

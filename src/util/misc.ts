@@ -25,6 +25,19 @@ export const systemClock: Clock = {
 };
 
 /**
+ * `systemClock` with timers that do not hold the process open.
+ *
+ * For work that only matters while something else is already running - the workspace's quota refresh
+ * (§3.6, `[D31]`) is the first of them. A refresh timer that kept the event loop alive would turn "the run
+ * finished" into "the run finished and the process hangs for five minutes".
+ */
+export const backgroundClock: Clock = {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => setTimeout(fn, ms).unref(),
+  clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout),
+};
+
+/**
  * The terminal bell, used to get an operator's attention when a worker needs them. Built from its code point
  * rather than written literally: a raw 0x07 in the source is invisible in an editor and silently dropped by
  * formatters and copy-paste, which would remove the behaviour with nothing to notice it.

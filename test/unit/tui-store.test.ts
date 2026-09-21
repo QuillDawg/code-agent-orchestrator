@@ -162,16 +162,17 @@ describe('the workspace shell state', () => {
     expect(selectTab(store.getState())).toBe('changes');
   });
 
-  it('cycles focus through the three panels, wrapping as Tab does', () => {
+  it('cycles focus through the panels, wrapping as Tab does', () => {
     const store = createPresentationStore(fakeClock());
     const seen: string[] = [store.getState().focus];
     for (let i = 0; i < FOCUS_PANELS.length; i += 1) {
       store.getState().moveFocus(1);
       seen.push(store.getState().focus);
     }
-    expect(seen).toEqual(['tasks', 'tabs', 'main', 'tasks']);
+    // The footer is a stop from stage 3: it is where the quota chips are and `R` re-reads them (§3.6).
+    expect(seen).toEqual(['tasks', 'tabs', 'main', 'footer', 'tasks']);
     store.getState().moveFocus(-1);
-    expect(store.getState().focus).toBe('main');
+    expect(store.getState().focus).toBe('footer');
     // A focus a full-screen view took (a prompt, the transcript) rejoins the cycle at the first panel.
     store.getState().setFocus('modal');
     store.getState().moveFocus(1);

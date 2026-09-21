@@ -28,8 +28,10 @@ import {
   type Interaction,
   type InteractionAnswer,
   addUsage,
+  type QuotaSnapshot,
   type TranscriptEntry,
 } from 'code-agent-orchestrator-protocol';
+import type { QuotaMonitor } from '../runners/quota.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { RunController } from '../workflow/control/controller.js';
 import { controlEnvelope } from '../workflow/control/commands.js';
@@ -60,6 +62,7 @@ import {
   selectListCursor,
   selectNotice,
   selectOverlay,
+  selectQuotas,
   selectSnapshot,
   selectTab,
   selectView,
@@ -148,7 +151,20 @@ export interface DashboardOptions {
   onQuit?: () => void;
   /** Start another execution of this run (§2.4, [D36]); absent, and in observer mode, the actions are off. */
   onResume?: (request: ResumeRequest) => void;
+  /**
+   * Starts the provider quota readers when this tree mounts, and is stopped when it unmounts (§3.6,
+   * `[D31]`).
+   *
+   * A factory rather than a started monitor, and optional, because the two together are what keeps the
+   * quota process out of everywhere it does not belong: a headless command never builds one, and a tree
+   * mounted in a test spawns nothing unless the test hands it something to spawn. `createWorkspaceSession`
+   * fills it in for the real workspace.
+   */
+  quota?: QuotaFactory;
 }
+
+/** What `DashboardOptions.quota` is: given somewhere to publish snapshots, it returns the running readers. */
+export type QuotaFactory = (handlers: { onSnapshot: (snapshot: QuotaSnapshot) => void }) => QuotaMonitor;
 
 /** Who owns the run this workspace is showing, and what that lets it do (§2.1, [D37]). */
 export interface WorkspaceView {
@@ -281,6 +297,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const drafts = useStore(store, selectDrafts);
   const editCursor = useStore(store, selectListCursor(EDIT_CURSOR));
   const controls = useStore(store, selectControls);
+  const quotas = useStore(store, selectQuotas);
 
   const [, setTick] = useState(0);
   const [pending, setPending] = useState<PendingItem | null>(props.shared.queue[0] ?? null);
@@ -313,8 +330,11 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   useFocus({ id: 'tasks', autoFocus: true });
   useFocus({ id: 'tabs' });
   useFocus({ id: 'main' });
+  // The footer is a focus stop from stage 3: it is where the provider quota chips are, and §3.6 gives them
+  // a key of their own. `useFocus` is registered in the order Tab visits, so it is last.
+  useFocus({ id: 'footer' });
   const { activeId, focus: focusPanel, focusPrevious, enableFocus, disableFocus } = useFocusManager();
-  const focus: FocusRegion = activeId === 'tabs' ? 'tabs' : activeId === 'main' ? 'main' : 'tasks';
+  const focus: FocusRegion = activeId === 'tabs' ? 'tabs' : activeId === 'main' ? 'main' : activeId === 'footer' ? 'footer' : 'tasks';
   const overlayOpen = overlay.kind !== 'none';
   /**
    * The composer holds the keys exactly as an overlay does (§3.2, `[D15]`), even though it is part of a
@@ -341,6 +361,36 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   useEffect(() => {
     if (!keysTaken) focusPanel(lastPanel.current);
   }, [keysTaken, focusPanel]);
+
+  // ------------------------------------------------------------------ quotas (§3.6, [D31])
+  /**
+   * The readers, for as long as this tree is on screen.
+   *
+   * Started here rather than by the session because "the workspace is mounted" is exactly the condition
+   * §3.6 attaches them to: a minimised workspace has no footer to fill, and an unmounted one must leave no
+   * `codex app-server` behind. The cleanup is the kill.
+   */
+  const quotaMonitor = useRef<QuotaMonitor | null>(null);
+  const startQuota = props.quota;
+  useEffect(() => {
+    if (!startQuota) return;
+    const monitor = startQuota({ onSnapshot: (snapshot) => store.getState().setQuota(snapshot) });
+    quotaMonitor.current = monitor;
+    return () => {
+      quotaMonitor.current = null;
+      monitor.stop();
+    };
+  }, [startQuota, store]);
+
+  const refreshQuotas = (): void => {
+    const monitor = quotaMonitor.current;
+    if (!monitor) {
+      store.getState().setNotice('This window is not reading any provider quotas.');
+      return;
+    }
+    monitor.refresh();
+    store.getState().setNotice(`Reading the provider quotas again${glyph('ellipsis')}`);
+  };
 
   // ------------------------------------------------------------------ effects
   useEffect(() => {
@@ -794,6 +844,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             },
           ]),
       { id: 'action:usage', label: 'Usage per task', hint: 'U', run: () => store.getState().setView({ kind: 'usage' }) },
+      { id: 'action:quota', label: 'Refresh the provider quotas', hint: 'R in the footer', run: () => refreshQuotas() },
       { id: 'action:help', label: 'Help for the focused panel', hint: '?', run: () => store.getState().setOverlay({ kind: 'help' }) },
       { id: 'action:quit', label: props.finished ? 'Quit the workspace' : 'Quit: stay, stop and quit, or plain output', hint: 'Q', run: requestQuit },
     );
@@ -1118,6 +1169,17 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         else if (list === 'report') state.moveListCursor('report', delta, 10_000);
         else state.setCursor(Math.max(0, Math.min(store.getState().cursor + delta, visible.length - 1)));
       };
+
+      // The footer's one key comes before everything else that answers `R` (§3.6): while the footer holds
+      // the keys, `R` reads the quotas again rather than re-running a task, which is the whole reason the
+      // footer is a focus stop rather than a fourth meaning for a chord.
+      if (focus === 'footer') {
+        if (lower === 'r') refreshQuotas();
+        else if (input === '?') state.setOverlay({ kind: 'help' });
+        else if (key.escape) focusPanel('tasks');
+        else if (lower === 'q') requestQuit();
+        return;
+      }
 
       // The observer's controls come first, for the same reason the ended run's do below: `R` here means
       // "ask the owner to re-run this", and the local restart it would otherwise reach has nothing to act on.
@@ -1463,6 +1525,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         columnsShown={layout.footerColumns}
         snapshotAge={now - (snapshot?.at ?? now)}
         notice={notice}
+        quotas={quotas}
+        now={now}
+        focused={focus === 'footer' && !overlayOpen && !composerOpen}
       />
     </Box>
   );

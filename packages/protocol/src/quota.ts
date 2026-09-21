@@ -23,7 +23,12 @@ export interface QuotaSnapshot {
   protocol: ProtocolVersion;
   provider: 'codex' | 'claude';
   readAt: string;
-  state: 'ok' | 'stale' | 'unavailable' | 'authRequired' | 'error';
+  /**
+   * `loading` is the state of a provider that is being asked right now and has never answered: §3.6 lists
+   * it beside the rest, and a reader that had to represent "no snapshot at all" separately would have two
+   * ways to say the same thing. Nothing persists a snapshot, so no file has ever carried the other five.
+   */
+  state: 'loading' | 'ok' | 'stale' | 'unavailable' | 'authRequired' | 'error';
   reason?: string;
   planType?: string;
   windows: QuotaWindow[];

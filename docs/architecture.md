@@ -49,7 +49,7 @@ src/
                               which states, which dependents block one, the workflow validator run over the edited task, and
                               appending the TaskRevision - shared by the scheduler, `cao task edit` and the TUI form so the
                               three cannot answer differently)
-  runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect)
+  runners/                    task-runner.ts (TaskRunner, RunnerRegistry; the typed failure contract itself is RunnerFailure, in the protocol package), capabilities.ts; claude/ (claude-runner, event-parser, protocol = stdio control protocol, models = context windows, contract, transient, detect); codex/ (exec runner, app-server, permissions, failure normalization, detect, quota = the session-long app-server that reads account/rateLimits for the footer); quota.ts (the runner-neutral set of provider quota readers the workspace starts)
   execution/                  process-manager.ts (registry, ring buffers, timeouts, tree kill), signals.ts (Ctrl+C), hooks.ts
   context/context-builder.ts  structured results → "# Previous Task Context"
   conditions/evaluator.ts     safe `when` expression grammar
@@ -73,14 +73,15 @@ src/
                               opens: the rows, the round-tripping drafts, the inline validation and the read-only context
                               section; the decisions themselves come from workflow/control/edit.ts), prompt-editor.ts (the
                               prompt in $VISUAL/$EDITOR through terminal.ts's suspendTerminal, which hands the terminal over
-                              and takes it back), keys.ts (every key the workspace answers, written down once so the footer and
+                              and takes it back), quota.ts (one provider's quota as the line the footer
+                              has room for), keys.ts (every key the workspace answers, written down once so the footer and
                               `?` cannot drift apart), layout.ts (row budgets and the 80x24 compact-layout thresholds)
                               dashboard/ (modal.tsx for permission prompts, questions and approvals; review.tsx + files.ts + editor.ts for the
                               Changes tab; activity.ts for the activity cell; pane.ts), history.ts (attempt and interaction tables, shared
                               by `cao task` and the detail view; revisionRows renders the edit history under Attempts), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
                               surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
                               package), logs.tsx, follow.ts (file tailer), store.ts (the zustand store the workspace is fed from: the
-                              run snapshot, the focused tab and panel, per-list cursors, drafts, notices and overlays)
+                              run snapshot, the focused tab and panel, per-list cursors, drafts, notices, overlays and the per-provider quota snapshots)
   util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
                               instruction the scheduler appends to deny messages, and the helpers that take it back off for an
                               operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,

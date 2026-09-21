@@ -10,7 +10,7 @@ Tasks #/#                            Tasks — the panel with the keys
                                        /                search the task list
 
                                      Anywhere
-                                       Tab / Shift+Tab  move between the task list, the tabs and the panel
+                                       Tab / Shift+Tab  cycle the task list, the tabs, the panel and the footer
                                        Ctrl+P           command palette: every action and every task id
                                        ?                the keys of whatever has focus
                                        Q                quit: stay, stop and quit, or carry on in plain output
@@ -37,4 +37,4 @@ Tasks #/#                            Tasks — the panel with the keys
 
 
 
-Esc close   ↑↓ move   Enter choose   quota: stage #   updated #s ago
+Esc close   ↑↓ move   Enter choose   updated #s ago

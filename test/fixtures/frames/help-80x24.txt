@@ -11,7 +11,7 @@ Tasks — the panel with the keys
   /                search the task list
 
 Anywhere
-  Tab / Shift+Tab  move between the task list, the tabs and the panel
+  Tab / Shift+Tab  cycle the task list, the tabs, the panel and the footer
   Ctrl+P           command palette: every action and every task id
   ?                the keys of whatever has focus
   Q                quit: stay, stop and quit, or carry on in plain output
@@ -21,4 +21,4 @@ The task editor (E)
   ↑↓               move between the fields; Enter on the last one goes to Save
   Ctrl+O           write the prompt in $VISUAL / $EDITOR
 ▼ ## more   ↑↓ scroll   Esc close
-Esc close   ↑↓ move   Enter choose   quota: stage #
+Esc close   ↑↓ move   Enter choose
