@@ -8,6 +8,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+## [2.0.0-beta.1] - 2026-09-21
+
 ### Added
 
 - **Seven new `cao doctor` checks**, each graded with its evidence and one line saying what to do about it,
@@ -92,7 +94,7 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   failed task, its failure category, the latest error line and what can be done about it; the review view
   (`C`) is the Changes tab; `report.md` is the Report tab, rendered as markdown; and the transcript viewer
   (`F`) and the usage table (`U`) still open over the whole terminal. Session, Logs and Diagnostics are
-  placeholders that say which stage fills them and what answers the same question today.
+  placeholders that say which release fills them and what answers the same question today.
 - **`cao ui [run]`.** Opens the workspace on a run nobody is executing — the run directory answers every
   read, so the logs, the earlier attempts, the diffs and `report.md` are the same ones `cao logs`,
   `cao diff` and `cao report` print — and offers the same resume actions as a run that has just ended. On a
@@ -192,8 +194,8 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   hint every other denial carries), the attempt is recorded as `cancelled` and the task ends `cancelled`
   — which `restart` and `cao resume` already accept. A task whose attempt has already ended and is merging
   back cannot be aborted, so the command is acknowledged as `accepted` and takes effect when that
-  finalization lands, ending the task rather than spending a retry on it. No key or CLI flag sends this
-  yet; the screens and commands that will are next.
+  finalization lands, ending the task rather than spending a retry on it. `cao task stop` now sends
+  it (see below).
 - **`cao run --emit`, `cao resume --emit`, `CAO_EMIT` and `cao emit enable|disable|status`: the switch that
   turns announcing on.** In precedence order, `--emit` / `--no-emit` on the command line wins over
   `CAO_EMIT=1` / `CAO_EMIT=0`, which wins over the per-user opt-in `cao emit enable` writes to
@@ -915,6 +917,34 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   [packages/protocol/CHANGELOG.md](packages/protocol/CHANGELOG.md) said `TaskRevision` and `PromptDelivery`
   were shapes `cao` would write "from a later release" and that `edit`/`prompt` "will not appear" in a
   registry entry; both now say `cao` writes and advertises them.
+- The whole set read again as the person installing `2.0.0-beta.1` next week. [README.md](README.md) gained
+  the workspace-era quick start (`cao run` stays open, `cao ui` reattaches, `--no-tui` for CI), a CLI
+  reference grouped the way `cao --help` actually groups it, and a "What changed in 2.0" section naming
+  every behaviour change with the old behaviour beside it.
+  [docs/capabilities.md](docs/capabilities.md)'s "Watching a run" is now "The workspace", and its two
+  dangling links to an editor and a composer that had no headings of their own now land on real "Editing an
+  unfinished task" and "Prompting a task" sections; "Where the truth lives" named only `stop, kill, restart`
+  under `requests/` and only "outcome, timings, session id, usage" under `attempt.json`, both missing what
+  `edit` and `prompt` added.
+  [docs/desktop.md](docs/desktop.md) still called `stop`, `kill`, `restart`, `edit` and `prompt` a "later
+  release", as if a desktop app were the only thing that could ever ask a run to do something; it now says
+  plainly that all five are built and already exercised by the workspace's own observer mode and by
+  `cao task edit`/`prompt` from another terminal, and narrows "not built yet" to what is actually still
+  gated: a permission decision made on the owner's behalf.
+  [docs/architecture.md](docs/architecture.md)'s diagram and directory-structure block predated the run
+  controller, the request inbox and the store entirely, and had drifted besides — `tui/dashboard/` read as
+  nested inside `tui/workspace/` when it is a sibling, and newer files across `cli/commands/`, `workflow/`,
+  `workflow/control/`, `runners/` and `tui/` were missing outright. Both are rebuilt from the tree as it
+  stands, and the "one door into a running workflow" claim is now qualified with the one place that is not
+  true: `cao task edit`'s offline path, which the spec itself allows.
+  [docs/agent-cli-integration.md](docs/agent-cli-integration.md)'s verified-version header still named an
+  older Claude Code build, and its steering section described Claude deny-mode and `codex exec` as having no
+  channel at all without ever saying what happens instead; it now documents stop-and-continue for both, and
+  names `turn/steer`'s Codex ≥ 0.99.0 floor and what happens below it.
+  [docs/configuration.md](docs/configuration.md) now states plainly, next to the evidence for it, that no
+  YAML key changed in this beta. `CONTRIBUTING.md` lists `npm run smoke:pack` beside the other two local
+  checks the release depends on, and `SECURITY.md` gained a paragraph on the request inbox's trust boundary,
+  pointing at `docs/desktop.md` for the contract in full.
 
 ### Security
 

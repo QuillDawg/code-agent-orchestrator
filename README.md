@@ -51,6 +51,7 @@ npm install -g code-agent-orchestrator@beta
 - [Workflow file cheat sheet](#workflow-file-cheat-sheet)
 - [CLI reference](#cli-reference)
 - [Environment variables](#environment-variables)
+- [What changed in 2.0](#what-changed-in-20)
 - [Troubleshooting and FAQ](#troubleshooting-and-faq)
 - [Documentation](#documentation)
 - [Development](#development)
@@ -169,6 +170,12 @@ whenever something does not work. `--probe` adds the checks that **start each mo
 
 Five minutes from install to a running workflow.
 
+`cao run` opens a persistent terminal workspace and keeps it open after the run ends, whether it succeeded,
+failed or was interrupted — see [Watching a run](#watching-a-run). `cao ui <run-id>` opens the same
+workspace from any other terminal, on a run this one owns or one already finished. In CI, over SSH without
+a real terminal, or piped into a log, `cao run --no-tui` skips it and prints plain lines instead; a non-TTY
+or `CI` gets the same behaviour automatically, with no flag needed.
+
 **1. Go to the project you want worked on.** The directory you launch from becomes the repository root.
 
 ```bash
@@ -227,9 +234,12 @@ cao run             # go
 
 Both accept a path. Without one they look for `workflow.yaml`, `workflow.yml` or `cao.yaml` in the current
 directory. The startup header shows which repository the run will operate on; if it is not the one you
-expected, stop and fix `repository:` or your current directory.
+expected, stop and fix `repository:` or your current directory. `cao run` opens the workspace once
+validation passes and stays there for the life of the run — and after it, whatever the outcome.
 
-**4. While it runs**, from any other terminal:
+**4. While it runs**, everything below is a tab in the workspace itself (Overview, Session, Logs, Changes,
+Report), so there is usually nothing else to open. The same questions answered from any other terminal, or
+after minimising with `Q`:
 
 ```bash
 cao status                       # progress table for the latest run
@@ -240,11 +250,15 @@ cao stop                         # interrupt the run, as Ctrl+C would
 cao report                       # the whole run, ready to paste into a PR
 ```
 
-**5. If it stops** (Ctrl+C, crash, failure, approval gate):
+**5. If it stops** (Ctrl+C, crash, failure, approval gate), the workspace stays open with the reason and the
+resume actions on screen — see
+[The workspace stays open when the run ends](#the-workspace-stays-open-when-the-run-ends). To come back to
+it later, or from a different terminal:
 
 ```bash
 cao list
-cao resume <run-id>
+cao ui <run-id>       # reopen the workspace: resume, re-run a task, or just read the report
+cao resume <run-id>   # the same resume, headless
 ```
 
 Prompts are opaque to `cao`. `/implement 101` is only an example; any prompt, slash command or skill works:
@@ -891,27 +905,46 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 
 ## CLI reference
 
+Grouped the way `cao --help` groups them.
+
+### Run
+
 | Command | What it does |
 |---|---|
-| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--activity`, `--debug`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
+| `cao run [workflow]` | Create and execute a run, in the workspace by default. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--activity`, `--debug`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
+| `cao resume [run]` | Continue an interrupted, failed or paused run, in the workspace by default. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, `--debug`, plus the `cao run` overrides |
+| `cao ui [run]` | Open the workspace on a run, or choose from the recent runs of this repository. Owner or observer, per [Watching a run](#watching-a-run). With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>`, `--verbose` |
+| `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
-| `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, `--debug`, plus the `cao run` overrides |
-| `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>`, `--verbose` |
-| `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
+
+### Inspect
+
+| Command | What it does |
+|---|---|
 | `cao status [run]` | Progress table, run directory and orchestrator pid. `--json` |
 | `cao list` | Runs of this repository, newest first. `--limit N`, `--json` |
 | `cao logs [run] [task]` | A worker's transcript as one document. `--follow` opens the viewer; `--thinking`, `--raw`, `--stderr`, `--prompt`, `--attempt N`, `-n N`, `--json` |
 | `cao peek [run] <task>` | What a worker is doing right now, with context size, cost and files. `--follow`, `--json` |
+| `cao diff [run] [task]` | What a task changed, as a unified diff `git apply` accepts. `--stat`, `--name-only`, `--file <path>`, `--attempt N`, `--json` |
+| `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
+
+### Task controls
+
+| Command | What it does |
+|---|---|
 | `cao task [run] <task>` | Everything recorded about one task: status, model, attempts, PID, cwd, branch, dependencies, usage, changed files, interactions. `--json`. This is `cao task show`, the default subcommand; a task whose own name is a subcommand is reached with `cao task show <name>` |
 | `cao task stop\|restart [run] <task>` | Cancel the attempt a task is running, or run a finished, unsuccessful task again. Applied by the process that owns the run: directly when that is this one, otherwise through a request it answers. `--wait <seconds>` (default 30), `--repository <dir>` |
 | `cao task prompt [run] <task>` | Say something to a task: steer the worker it is running, stop and continue it, or start a stopped task again carrying the message. Without a mode flag the one the task's state allows is chosen and printed. `--message <text>` or `--file <path>`, `--steer`, `--follow-up`, `--stop-and-continue`, `--fresh-session`, `--wait <seconds>` (default 30), `--no-tui`, `--repository <dir>`. A session that is no longer on disk is refused rather than silently replaced; with nobody executing the run a follow-up resumes it to carry the message |
 | `cao task edit [run] <task>` | Change an unfinished task's prompt, agent, model, effort, timeout, retries or budget. Validated before anything stops. `--prompt <text>` or `--prompt-file <path>`, `--agent claude\|codex`, `--model <id>`, `--effort <level>`, `--timeout <duration>`, `--retries <n>`, `--budget <usd>`, `--restart`, `--wait <seconds>` (default 30), `--repository <dir>`. With nobody executing the run the edit is written into it and the resume that applies it is named; `--restart` is refused there |
-| `cao diff [run] [task]` | What a task changed, as a unified diff `git apply` accepts. `--stat`, `--name-only`, `--file <path>`, `--attempt N`, `--json` |
-| `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
-| `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
-| `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
+
+### Diagnostics
+
+| Command | What it does |
+|---|---|
 | `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, the terminal, the storage the runs are written to, the protocol the run directories were written with, the sessions a follow-up would resume, which controls the installed CLIs can carry, the login mode behind the quota chips, stale locks, abandoned runs and leftover worktrees, with a fix hint under each failing check. `--probe` also starts each agent mode a run can use; without it nothing is started and nothing is spent. `--repository <dir>`, `--json` |
 | `cao diagnostics [run]` | One JSON file describing a run, to attach to a bug report: doctor facts (no probes), the redacted workflow, the run events, `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its `stderr.log`, and the inbox. Transcripts, prompts and diffs only with `--include transcripts,prompts,diffs`, follow-up text included. Everything passes through the run's redactor; nothing is uploaded. `--out <file>` (required), `--repository <dir>` |
+| `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
+| `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
 
 **Exit codes**
 
@@ -953,6 +986,61 @@ Workflow hooks additionally receive `CAO_RUN_ID`, `CAO_RUN_STATE`, `CAO_TASK_ID`
 `CAO_TASK_STATE`, `CAO_ATTEMPT`, `CAO_ATTEMPT_KIND`, `CAO_BRANCH`, `CAO_WORKDIR`, `CAO_HOOK` and, for
 `hooks.onInputRequired`, `CAO_INTERACTION_KIND`, `CAO_INTERACTION_TITLE` and `CAO_INTERACTION_TOOL`.
 See [docs/configuration.md](docs/configuration.md#hooks).
+
+## What changed in 2.0
+
+Every item below is a genuine behaviour change, not a new YAML key: no workflow key was added, removed or
+renamed, and an existing workflow file runs exactly as it did before.
+
+- **`cao run` and `cao resume` open a persistent workspace that stays open after the run ends** — on
+  success, failure, a paused approval gate or a graceful `Ctrl+C` — showing the failed task, its error and
+  the resume actions. It used to exit about 50 ms after the run finished, so the screen that showed a
+  failure was the screen that disappeared with it.
+- **`cao ui [run]` is new.** It opens that same workspace on a run nobody is executing (reading the run
+  directory the way `cao status`, `cao logs` and `cao diff` always have), read-only on a run another
+  terminal owns, or a picker over the recent runs of this repository when none is named.
+- **The dashboard is now a workspace**: a header, a sidebar task list, and a tabbed main panel — Overview,
+  Session, Logs, Changes, Report, Diagnostics — with a footer for whatever has focus. The task table, the
+  review view, the transcript viewer and the usage table are the same views the old dashboard had, now
+  reached as tabs of one shell; **Session, Logs and Diagnostics are new** — there was previously no way to
+  see a task's live transcript and composer, page through a run's raw log files, or inspect retry and
+  control history without leaving the dashboard for `cao logs`, `cat orchestrator.log` or nothing at all.
+- **`cao task edit` and `cao task prompt` are new**, and `cao task stop`/`restart` now reach a run owned by
+  another terminal through a request file instead of only the process that started it. There was previously
+  no way to change an unfinished task's prompt, agent, model, effort, timeout, retries or budget, or to say
+  anything to a running worker, short of stopping the whole run and editing the workflow file.
+- **The workspace opens in the alternate screen by default.** It used to draw into the terminal's normal
+  buffer, leaving every frame of the run in scrollback. Turn it off with `--no-alt-screen`,
+  `CAO_ALT_SCREEN=0`, or the `"altScreen"` key in `~/.cao/config.json`.
+- **`Q` asks before it leaves.** It used to minimise immediately; while a run is going it now offers stay,
+  stop and quit, or continue in plain output (the old minimise — `D` or `Enter` reopens). `Ctrl+C` used to
+  close the workspace; it now asks the run to stop and keeps the workspace open to show the result. A
+  second `Ctrl+C` within 20 seconds still force-kills the workers and exits `130`, unchanged.
+- **Bare `cao` prints its help to stdout and exits `0`.** It used to print the same text to stderr and exit
+  `2`, so `cao | less` showed nothing and a shell read "what is this" as a failure.
+- **Root help is grouped into Run, Inspect, Task controls and Diagnostics** (see
+  [CLI reference](#cli-reference)) instead of one flat list of commands, and every command's `--help` now
+  ends with worked examples and the exit codes that command actually produces.
+- **`cao doctor` starts no agent unless you pass `--probe`.** Live probes used to run by default, so an
+  ordinary `cao doctor` cost a small model call and up to a minute per agent mode; `--no-probe` is still
+  accepted, now as a deprecated no-op, and probe rows print `not probed (pass --probe)` instead of being
+  silently skipped.
+- **A usage footer with one quota chip per provider is new.** Codex's chip reads its own `codex app-server`
+  for `5h`/`7d`-style windows; Claude's reads `unavailable · see /usage in Claude Code`, because no
+  programmatic read of it exists. There was no account-quota reporting of any kind before.
+- **`cao diagnostics [run] --out <file>` is new**: one redacted JSON bundle — doctor facts, the workflow,
+  run events, the orchestrator log, every attempt record and stderr tail — for a bug report, instead of
+  gathering those files by hand.
+- **`--debug` on `cao run` and `cao resume` is new**, equivalent to setting `CAO_DEBUG=1` for that run.
+- **The cyberpunk theme is the workspace's default identity**, chosen with `--theme cyberpunk|mono` or
+  `CAO_THEME`, with `CAO_REDUCED_MOTION=1` turning off the spinner and the activity pulse. The old dashboard
+  had no theme to choose and painted colour unconditionally.
+- **`R` now restarts a skipped task, not only a failed, blocked or cancelled one** — a task skipped because
+  its condition was false, or because a dependency it waited on failed, can be restarted once that is
+  dealt with, while the run is still active.
+- **Backspace and Delete are no longer the same key.** The terminal library CAO draws with was upgraded;
+  Backspace now erases the character behind the cursor when typing a denial reason or a `/` search, and
+  Delete no longer does. Everything you type still lands the same way; only that one key moved.
 
 ## Troubleshooting and FAQ
 

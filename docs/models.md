@@ -243,7 +243,7 @@ Once a run exists, `cao task edit <task> --model <id> --effort <level>` changes 
 resolved model or effort in the run — without touching the workflow file, and validated the same way as
 above before anything is stopped. That is a change to *this run's* record, not to workflow configuration:
 a fresh `cao run` of the same YAML still gets what the file says. See
-[capabilities.md](capabilities.md#editing-an-unfinished-task).
+[capabilities.md](capabilities.md#resume-after-a-crash-or-ctrlc).
 
 ## Smaller models
 

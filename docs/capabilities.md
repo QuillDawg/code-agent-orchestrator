@@ -298,6 +298,16 @@ kill. A request that cannot be read, or that was written by a newer `cao` than t
 decisions — approving a gate, answering a worker's question — are deliberately **not** taken from a file:
 they are refused with a reason, and stay something you do in the terminal that owns the run.
 
+`cao emit status` prints what a run started by this `cao` will accept, on its `Controls:` row.
+
+`cao resume` takes the same overrides as `cao run`: `--max-concurrency`, `--permission-mode` and
+`--claude-command`, so a run interrupted because it was too parallel or too restricted can be continued with
+different settings instead of started again.
+
+Only one run at a time per repository: `cao run` refuses to start while another orchestrator process holds a
+run there (they would share the working tree and the `orchestrator/<task>` branch names), and names the run,
+its pid, and the commands to watch or stop it.
+
 `cao task stop <task>` and `cao task restart <task>` are the same mechanism aimed at one task rather than the
 whole run: the first cancels the attempt a task is running and ends it as `cancelled`, the second sends a
 task that finished without succeeding back to `pending`. Both go to whichever process owns the run — a call
@@ -307,6 +317,8 @@ Cancel it first, then restart it.`). `--wait <seconds>` (default 30) is how long
 elapsed wait is not a refusal, and says so, because the request is still in `requests/` and is applied when
 the owner next reads it. With nobody executing the run there is nothing to ask, and both say so and name
 `cao resume`.
+
+### Editing an unfinished task
 
 `cao task edit <task>` takes the same three routes and adds a fourth. It changes an unfinished task's
 prompt, agent, model, effort, timeout, retries or budget (`claude.maxBudgetUsd`, Claude only; a Codex task
@@ -327,6 +339,8 @@ the fields and never their values; `cao task <id>` prints the history under **At
 records the revision it ran. The fourth route is **no owner**: with nothing executing the run, the edit is
 written straight into it and the resume that applies it is named, and `--restart` is refused there because a
 resume is what starts the task.
+
+### Prompting a task
 
 `cao task prompt <task>` says something to a task. Which of three things that means is decided from the
 task's state and from whether its worker has a live channel, and the command prints the one it chose:
@@ -372,16 +386,6 @@ or when the composer closes. `Ctrl+J` (or a trailing `\` then `Enter`) is a newl
 draft in `$VISUAL`/`$EDITOR`, `Ctrl+Z` undoes the last edit, and `Esc` closes it keeping the draft. A paste arrives
 whole; one over 20 lines is shown as `[pasted N lines]` with every byte kept. Inside the composer every
 printable key is text, so `q` types a `q`.
-
-`cao emit status` prints what a run started by this `cao` will accept, on its `Controls:` row.
-
-`cao resume` takes the same overrides as `cao run`: `--max-concurrency`, `--permission-mode` and
-`--claude-command`, so a run interrupted because it was too parallel or too restricted can be continued with
-different settings instead of started again.
-
-Only one run at a time per repository: `cao run` refuses to start while another orchestrator process holds a
-run there (they would share the working tree and the `orchestrator/<task>` branch names), and names the run,
-its pid, and the commands to watch or stop it.
 
 ---
 
@@ -510,7 +514,7 @@ Each hook sees `CAO_RUN_ID`, `CAO_TASK_ID`, `CAO_TASK_STATE`, `CAO_TASK_TYPE`, `
 
 ---
 
-## Watching a run
+## The workspace
 
 ```bash
 cao status                      # progress, context size, cost and files per task
@@ -1062,7 +1066,7 @@ you open it there.
     lock.json                   # owning pid + heartbeat
     stop.json                   # a pending `cao stop` request, consumed by the running orchestrator
     report.md                   # the run's own report, rewritten whenever the run ends
-    requests/<ULID>-<kind>.json # control requests from another process: stop, kill, restart
+    requests/<ULID>-<kind>.json # control requests from another process: stop, kill, restart, edit, prompt
       acks/<ULID>.json          #   the one answer to each, written before the request is deleted
       rejected/                 #   a request that could not be read, moved rather than deleted
     interactions/               # reserved: pending-interaction payloads for a desktop app to render
@@ -1071,7 +1075,7 @@ you open it there.
       context.md                # exactly what was injected
       attempts/<n>/
         prompt.md               # exactly what was sent
-        attempt.json            # outcome, timings, session id, usage
+        attempt.json            # outcome, timings, session id, usage, revision, prompt deliveries
         diff.patch              # unified diff of this attempt's own changes
         diff.json               # per file: path, status A/M/D/R, +/- lines, binary flag
         stdout.log              # raw agent output

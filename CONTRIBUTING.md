@@ -117,6 +117,7 @@ npm test -- test/unit          # one directory
 npm test -- report             # one file, by substring
 npm run test:watch
 npm run test:agents            # the checks that need the real CLIs on PATH
+npm run smoke:pack             # pack, install, and smoke the packaged CLI against the fakes
 ```
 
 `npm run test:agents` is the check to run before touching a runner. It builds the argv for a matrix of
@@ -124,6 +125,12 @@ workflow options through the production argument builders and asserts that every
 the installed binary advertises, on the right side of the subcommand, with a value the help text allows. It
 lives outside `npm test` (`vitest.agents.config.ts`) so the default suite stays offline, and it skips - with
 the reason printed - when `codex` or `claude` is missing or below `MINIMUM_AGENT_VERSIONS`.
+
+`npm run smoke:pack` packs the tarball, installs it into a scratch global prefix, and drives the packaged
+`cao` against the fake agents - `--help`, a bare invocation, `doctor --json` with no probe, a fixture run,
+`ui` in a non-TTY, `diagnostics --out` - so a `files`, `bin` or `exports` entry missing from `package.json`
+fails here instead of at publish. It lives in `scripts/smoke-packaged.mjs` and cleans up its own temp
+directories; run it after touching anything packaging depends on.
 
 The layout:
 
@@ -165,6 +172,7 @@ npm run typecheck
 npm run lint        # eslint 10 flat config, type-aware, over src and test
 npm test
 npm run test:agents # if you touched a runner, its arguments or its detection
+npm run smoke:pack  # if you touched package.json's files/bin/exports, or anything under scripts/
 ```
 
 CI runs exactly these plus `npm run build`, on Node 22 and 24, on Linux and Windows. Windows is not optional:

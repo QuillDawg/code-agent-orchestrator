@@ -3,8 +3,8 @@
 `cao` is, and stays, a standalone CLI: nothing in this document requires a desktop app to be
 installed, running, or to exist at all. This page describes the one capability `cao` gained so
 that a separate desktop application — `cao-desktop`, developed in its own repository with its own
-release train — can watch and, later, control a run without `cao` importing it or knowing it is
-there.
+release train — can watch, and control everything short of a permission decision, without `cao`
+importing it or knowing it is there.
 
 If you never install the desktop app, nothing here changes how `cao` behaves. Read this page when
 you want to know exactly what "announcing a run" means, what it writes to your machine, and how to
@@ -13,11 +13,13 @@ tell why a desktop app is not showing a run you expect it to.
 ## The split
 
 `cao` runs the workflow: it owns the lock file, the heartbeat, the scheduler, every agent process.
-The desktop app — when one exists — discovers runs, watches their progress, and (in a later
-release) answers prompts and stops or spawns runs. The two communicate through files on disk,
-never through a shared library or a network call, and **either can be absent**: a `cao` run with no
-desktop app watching behaves exactly as it always has, and a desktop app with no `cao` run to watch
-just shows nothing.
+The desktop app — when one exists — discovers runs, watches their progress, and sends the same
+`stop`, `kill`, `restart`, `edit` and `prompt` requests any other terminal can, described below.
+Approving or rejecting a gate, and answering a question a worker asked, are what it still cannot
+do: those stay behind the presence gating described below, not built in this release. The two
+communicate through files on disk, never through a shared library or a network call, and **either
+can be absent**: a `cao` run with no desktop app watching behaves exactly as it always has, and a
+desktop app with no `cao` run to watch just shows nothing.
 
 The files exchanged this way are versioned. Every one of them carries a `protocol` field — currently
 `1` — as its first key. A reader (either side) that sees a higher `protocol` than it understands
@@ -94,8 +96,8 @@ so an older reader talking to a newer `cao` degrades by feature, not by refusing
 
 ## Asking a run to do something: `requests/`
 
-A surface that wants a run to stop, to be killed, or to restart a task writes a file into that
-run's own directory and reads the answer back out of it:
+A surface that wants a run to stop, to be killed, or to restart, edit or prompt a task writes a
+file into that run's own directory and reads the answer back out of it:
 
 ```
 .orchestrator/runs/<run-id>/
@@ -117,10 +119,24 @@ for the life of the run: resending the same one after a lost ack returns the fir
 rather than doing the thing twice. `reason` is a sentence written for a person, and is what a
 surface should show when a request is refused.
 
-`approve`, `reject` and `answer` are **not** accepted from disk in this release. They are read and
-answered with a rejection saying so, because a permission decision is exactly the thing that must
-not be grantable by anyone who can write a file in the repository; they are unlocked by the
-presence gating described below, not before it.
+This is not a mechanism invented for a desktop app that does not exist yet, either: `cao ui`
+opened on a run another process owns is already exactly this kind of reader and sender. That
+window — the **observer** — takes no lock, reads `workflow.json` and `live.json` the way `cao
+status` does, and its own `S`, `K` and `R` keys write `stop`, `kill` and `restart` requests into
+this same inbox and show the acks that come back (see
+[capabilities.md](capabilities.md#watching-a-run-another-terminal-owns) for the window itself).
+`cao task edit` and `cao task prompt`, run from a terminal that does not own the run, write `edit`
+and `prompt` requests the same way. A desktop app reading and writing these files would be one
+more caller of a contract the observer window and those CLI commands already exercise, not a new
+one built for it — see [architecture.md](architecture.md#request-inbox) for the owner side of the
+same mechanics.
+
+`approve`, `reject` and `answer` are **not** accepted from disk in this release. A request file of
+one of those kinds is read and answered with a rejection rather than acted on — the ack's `reason`
+is the literal sentence `permission controls are not accepted from disk until presence gating
+ships` — because a permission decision is exactly the thing that must not be grantable by anyone
+who can write a file in the repository; they are unlocked by the presence gating described below,
+not before it.
 
 `machine` matters for the same reason `capabilities` does: a `pid` only means something on the
 machine that wrote it. A bare hostname is not enough to tell that on its own — a WSL2 shell takes
@@ -274,11 +290,14 @@ previous run already wrote — it only decides what the *next* run does.
 
 `~/.cao` is created owner-only: `0700` on POSIX, and on Windows the per-user profile ACL it inherits
 by being under your home directory — a permission this code never widens. The reason to be careful
-here is concrete rather than theoretical: once the parts of this contract that are not built yet
-land (a directory where a desktop app asks `cao` to answer a prompt or stop a task on its behalf),
-**whatever can write into that directory can approve a tool call in a process that runs arbitrary
-commands**. On an ordinary single-user machine that is already true of the repository itself, but it
-is exactly the boundary that must never be widened.
+here is concrete rather than theoretical: once the one part of this contract that is not built yet
+lands — a desktop app asking `cao` to approve a gate or answer a question a worker asked, on the
+owner's behalf — **whatever can write into the directory that request travels through can approve
+a tool call in a process that runs arbitrary commands**. Stopping, killing, restarting, editing and
+prompting a task already cross this same boundary today and carry no such risk, because none of
+them is a permission decision — which is exactly why `approve`, `reject` and `answer` stay refused
+from disk until that part lands. On an ordinary single-user machine the risk above is already true
+of the repository itself, but it is exactly the boundary that must never be widened.
 
 Concretely, that means: never point `CAO_HOME` at a network drive, a UNC path, `/tmp`, or any
 directory shared between users or machines. `cao` refuses to use one on its own, once, the first

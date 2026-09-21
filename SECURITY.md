@@ -58,7 +58,7 @@ escape those rules. For example:
   `report.md` or a captured diff;
 - one task reading or corrupting another's worktree, branch or run state;
 - a crafted workflow file causing arbitrary code execution through anything other than `hooks`;
-- privilege gained through the run directory, the lock file or the `stop.json` request file.
+- privilege gained through the run directory, the lock file or the request inbox (`stop.json`, `requests/`).
 
 ### Out of scope
 
@@ -68,6 +68,18 @@ escape those rules. For example:
 - Vulnerabilities in Claude Code, Codex or Node itself — report those to their own projects.
 - Shell commands in `hooks`, which are yours by definition.
 - Running a workflow file you do not trust. That is equivalent to running its author's scripts.
+
+## The request inbox trust boundary
+
+Every run keeps a small inbox at `.orchestrator/runs/<run-id>/requests/`: the file-based channel a second
+terminal, a script, or eventually `cao-desktop` uses to ask the owning orchestrator to stop, kill, restart,
+edit or prompt a task without holding its lock. The owner treats every file it finds there as a request,
+never a command — it is checked against the same validation and staleness rules a call made in-process
+would get, and it only ever does what it already names. `approve`, `reject` and `answer` are refused from
+disk outright, with the reason spelled out in the ack (`permission controls are not accepted from disk
+until presence gating ships`): a permission decision is exactly the thing that must not be grantable by
+anyone who can write a file into the repository. See [docs/desktop.md](docs/desktop.md) for the full
+inbox, registry and presence contract.
 
 ## The desktop app trust boundary
 

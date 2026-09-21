@@ -2,7 +2,7 @@
 
 How `cao` actually invokes each agent, and how it decides whether a task succeeded.
 
-Verified against Claude Code **2.1.267** and codex-cli **0.154.0** — the invocation lines below are the argv `buildClaudeArgs`, `buildCodexArgs` and `buildCodexAppServerArgs` actually build, and `npm run test:agents` checks every flag in them against the installed CLIs' help. Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
+Verified against Claude Code **2.1.275** and codex-cli **0.154.0** — the invocation lines below are the argv `buildClaudeArgs`, `buildCodexArgs` and `buildCodexAppServerArgs` actually build, and `npm run test:agents` checks every flag in them against the installed CLIs' help. Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
 
 Both runners share one rule: **a process exit code is never a result.** Success requires a schema-valid JSON object from the worker.
 
@@ -388,16 +388,32 @@ an operator to guess. Nothing falls back automatically — `exec` stays `exec`.
 
 ## Steering a worker that is running
 
-Answering a request is one thing; **saying something the worker did not ask for** is another. Only two of
-the four transports have a channel for it, and which one an attempt has decides what can be done with it.
+Answering a request is one thing; **saying something the worker did not ask for** is another.
+`cao task prompt [run] <task> --message ...` picks one of two modes for a `running` task — **steer**, into
+the turn that is already running, or **stop and continue**, which cancels the attempt and starts a fresh
+one carrying the message — and only two of the four transports have a live channel to steer through. The
+other two always take the stop-and-continue path while the task is running; naming the wrong mode
+explicitly (`--steer` on a transport with no channel, `--stop-and-continue` on a task that has already
+stopped) is refused rather than silently redirected `[D23]`.
 
 | Transport | Channel | What a message does | Delivery states |
 |---|---|---|---|
 | claude ask | the open stdin | written as a stream-json `user` message; the CLI queues it and starts a new turn when the current one ends | `queued`, then `accepted` when the CLI echoes it (`--replay-user-messages`) or, without the flag, when the next turn begins; `failed` if the process exits first |
-| claude deny | none — stdin was closed at spawn | nothing; the transport is reported as `none` | — |
-| codex appServer | `turn/steer { threadId, input, expectedTurnId }` | goes into the turn that is running | `accepted` on the result, with the turn id; `rejected` carrying the server's own sentence |
-| codex exec | none — one turn, then the process exits | nothing; the transport is reported as `none` | — |
+| claude deny | none — stdin was closed at spawn | **stop and continue**: the worker is cancelled, then a new attempt starts with `--resume <session id>` (or fresh, if the session is not resumable) carrying the message under `# User Input` | `delivered` once the new attempt starts |
+| codex appServer | `turn/steer { threadId, input, expectedTurnId }` — Codex ≥ 0.99.0 (`STEER_MINIMUM_VERSIONS.codex`) | goes into the turn that is running | `accepted` on the result, with the turn id; `rejected` carrying the server's own sentence |
+| codex exec | none — one turn, then the process exits | **stop and continue**: the worker is cancelled, then a new attempt starts with `codex exec resume <thread>` carrying the message under `# User Input` | `delivered` once the new attempt starts |
 
+- **Stop and continue is the fallback, not a smaller steer.** It is one controller command with one
+  acknowledgment: the in-flight attempt's `AbortController` fires, whatever it was asking a human is denied
+  first (the same settling `cancelTask` does on its own, `[D22]`), and the task is put back to `pending` so
+  the ordinary attempt launch carries the queued message — the same `--resume <session>` /
+  `codex exec resume <thread>` a follow-up to a stopped task already uses (see
+  [Permissions and live prompts](#permissions-and-live-prompts)), not a special case of it. `cao task prompt`
+  without a mode flag chooses stop-and-continue automatically for these two transports and says so in its
+  acknowledgment.
+- **Below Codex 0.99.0, `turn/steer` does not exist**, so `appServer` also falls back to stop-and-continue
+  even though a channel is open; `cao doctor` reports the missing control by version rather than failing
+  the run.
 - **The message is recorded twice**: as a delivery on the attempt (`attempt.prompts` in `workflow.json` —
   who sent it, the transport, the state, the reason) and as a `user` entry in the attempt's `events.jsonl`,
   which every transcript surface draws as the operator's turn rather than as something the agent said. The

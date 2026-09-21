@@ -4,13 +4,15 @@ All notable changes to `code-agent-orchestrator-protocol` are documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) **on its own train**: it moves only when the
-contract moves, so most `code-agent-orchestrator` releases do not bump it (spec §4.1.1).
+contract moves, so most `code-agent-orchestrator` releases do not bump it.
 
 `PROTOCOL_VERSION` is a different number and changes for a different reason. This file's version says
 "is the shared code you compiled against still the shared code that is installed"; `PROTOCOL_VERSION` says
 "can this artifact read this file at all".
 
-## [0.2.0]
+## [Unreleased]
+
+## [0.2.0] - 2026-09-21
 
 The first minor since the package was cut. Everything in it is additive: no existing field changed meaning,
 `PROTOCOL_VERSION` stays `1`, and a `0.1.0` consumer compiles against `0.2.0` unchanged except for the one

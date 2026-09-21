@@ -2,6 +2,12 @@
 
 A workflow is a YAML file validated with a strict schema (`cao validate`). It can run Claude Code or Codex tasks; unknown keys under `execution`, `git`, `hooks`, `claude`, `codex`, `retry` and `context` are errors.
 
+**2.0.0-beta.1 changes no YAML key.** Nothing on this page was added, removed or renamed for the interactive
+workspace: every key here validates exactly as it did before. What 2.0 adds is a new way to work with a run
+once it exists — `cao ui`, task editing and prompting, the usage footer — and one small file outside any
+workflow, [`~/.cao/config.json`](#user-level-configuration-caoconfigjson), documented at the bottom of this
+page.
+
 ## Top level
 
 ```yaml
