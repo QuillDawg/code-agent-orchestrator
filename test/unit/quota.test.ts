@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import type { QuotaSnapshot } from 'code-agent-orchestrator-protocol';
 import {
   CODEX_QUOTA_MINIMUM_VERSION,
+  QUOTA_HANDSHAKE_TIMEOUT_MS,
   QUOTA_REFRESH_MS,
   SIGN_IN_FOR_QUOTAS,
   forwardCodexRateLimits,
@@ -384,6 +385,55 @@ describe('the Codex quota process (§3.6, [D28])', () => {
     });
     expect(harness.latest().state).toBe('ok');
     expect(harness.latest().windows).toHaveLength(1);
+    harness.monitor.stop();
+  });
+
+  /**
+   * The other half of the same race, on the failure side. `publishReading` learned to respect the account
+   * read's verdict; a failure did not, so the process exiting — or any rate-limit error whose wording is
+   * not the auth one — published `error` or `stale` over "sign in with ChatGPT for quotas".
+   */
+  it('keeps authRequired when the quota process exits under it', async () => {
+    const harness = start();
+    await harness.settled();
+    harness.server.answer({ id: harness.server.idOf('initialize'), result: {} });
+    harness.server.answer({ id: harness.server.idOf('account/read'), result: { account: { type: 'apiKey' } } });
+    expect(harness.latest().state).toBe('authRequired');
+
+    harness.server.crash();
+    expect(harness.latest().state).toBe('authRequired');
+    expect(harness.latest().reason).toBe(SIGN_IN_FOR_QUOTAS);
+
+    // And a limits error that is *not* the auth message does not talk it round either.
+    const other = start();
+    await other.settled();
+    other.server.answer({ id: other.server.idOf('initialize'), result: {} });
+    other.server.answer({ id: other.server.idOf('account/read'), result: { account: { type: 'apiKey' } } });
+    other.server.answer({ id: other.server.idOf('account/rateLimits/read'), error: { code: -32000, message: 'upstream is busy' } });
+    expect(other.latest().state).toBe('authRequired');
+
+    harness.monitor.stop();
+    other.monitor.stop();
+  });
+
+  it('gives up on a handshake nobody answers rather than loading for ever', async () => {
+    const harness = start();
+    await harness.settled();
+    expect(harness.latest().state).toBe('loading');
+    expect(harness.server.sent.filter((m) => m.method === 'initialize')).toHaveLength(1);
+    // The pipe opened and the server said nothing. Neither the five-minute timer nor `R` acts on a channel
+    // that is open but not ready, so without a timeout the chip loads for the life of the workspace.
+    harness.clock.tick(QUOTA_HANDSHAKE_TIMEOUT_MS - 1);
+    expect(harness.latest().state).toBe('loading');
+
+    harness.clock.tick(1);
+    expect(harness.latest().state).toBe('error');
+    expect(harness.latest().reason).toContain('handshake');
+    expect(harness.server.stopped).toBe(true);
+
+    // And the next five-minute read starts one again, exactly as a crash would.
+    harness.clock.tick(QUOTA_REFRESH_MS);
+    expect(harness.server.opens).toBe(2);
     harness.monitor.stop();
   });
 

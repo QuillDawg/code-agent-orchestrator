@@ -35,6 +35,16 @@ export const CODEX_QUOTA_MINIMUM_VERSION = '0.48.0';
  */
 export const QUOTA_REFRESH_MS = 5 * 60_000;
 
+/**
+ * How long the handshake may go unanswered before the process is treated as gone.
+ *
+ * Every other path here waits for a *ready* channel: the five-minute timer and `R` both do nothing while
+ * one is open but has not answered `initialize`, so a server that accepts the pipe and then says nothing
+ * left the chip on `loading` for the life of the workspace and only a process exit could recover it. Thirty
+ * seconds is far longer than a local process needs to answer a method that reads nothing.
+ */
+export const QUOTA_HANDSHAKE_TIMEOUT_MS = 30_000;
+
 /** What the app-server calls this client. Short on purpose: it appears in Codex's own logs. */
 export const QUOTA_CLIENT_NAME = 'cao';
 
@@ -285,6 +295,8 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
   let accountId = 0;
   let limitsId = 0;
   let timer: unknown;
+  /** Armed while an `initialize` is outstanding; a server that never answers is a server that has gone. */
+  let handshakeTimer: unknown;
   /** When the process last went away, so a restart happens at most once per interval (§3.6). */
   let crashedAt: number | undefined;
   let rateLimits: CodexRateLimits | undefined;
@@ -322,8 +334,16 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
     publish(base('ok', windows, readAt));
   };
 
-  /** A read failed. Keep the last good one and age it; only a chip that never had one says `error`. */
+  /**
+   * A read failed. Keep the last good one and age it; only a chip that never had one says `error`.
+   *
+   * Silent once the account read has settled `authRequired`, for the same reason `publishReading` is: the
+   * verdict on whether there is anything to show belongs to the account read, and a failure arriving after
+   * it — the process exiting, or a rate-limit error whose wording is not the auth one — would otherwise
+   * publish `error` or `stale` over the one sentence that tells the operator what to do about it.
+   */
   const degrade = (reason: string): void => {
+    if (authBlocked) return;
     const windows = quotaWindows(rateLimits, byLimitId);
     const at = readAt ?? nowIso();
     publish({ ...base(windows.length ? 'stale' : 'error', windows, at), reason: sanitizeText(reason) });
@@ -334,10 +354,16 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
     publish({ ...base(state, [], nowIso()), reason: sanitizeText(reason) });
   };
 
+  const clearHandshakeTimer = (): void => {
+    if (handshakeTimer !== undefined) clock.clearTimeout(handshakeTimer);
+    handshakeTimer = undefined;
+  };
+
   const closeChannel = (): void => {
     const current = channel;
     channel = undefined;
     ready = false;
+    clearHandshakeTimer();
     current?.stop();
   };
 
@@ -368,6 +394,7 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
     }
     const error = message.error as { message?: unknown } | undefined;
     if (message.id === initializeId) {
+      clearHandshakeTimer();
       if (error) {
         degrade(`the Codex quota process refused the handshake: ${String(error.message ?? 'no reason given')}`);
         closeChannel();
@@ -423,6 +450,7 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
         if (channel !== opened) return;
         channel = undefined;
         ready = false;
+        clearHandshakeTimer();
         if (stopped) return;
         crashedAt = clock.now();
         degrade('the Codex quota process exited; it is started again at the next five-minute read');
@@ -431,6 +459,13 @@ export function startCodexQuota(options: CodexQuotaOptions): QuotaMonitor {
     channel = opened;
     // No `experimentalApi`: this client asks for nothing beyond the two account reads (§3.6).
     opened.send({ id: initializeId, method: 'initialize', params: { clientInfo: { name: QUOTA_CLIENT_NAME, version: options.version } } });
+    handshakeTimer = clock.setTimeout(() => {
+      handshakeTimer = undefined;
+      if (stopped || ready || channel !== opened) return;
+      degrade('the Codex quota process did not answer the handshake; it is started again at the next five-minute read');
+      closeChannel();
+      crashedAt = clock.now();
+    }, QUOTA_HANDSHAKE_TIMEOUT_MS);
   };
 
   const tick = (): void => {
