@@ -50,7 +50,7 @@ cao run workflow.yaml --dry-run
 **Check that the agents a workflow needs are actually installed.** `cao validate` probes every agent the workflow references and prints their versions:
 
 ```
-Agents:      claude: 2.1.259 (Claude Code) (claude)  codex: NOT FOUND (codex): ...
+Agents:         claude 2.1.278 (Claude Code) (claude)  codex NOT FOUND (codex): not found on PATH
 ```
 
 A missing CLI is reported here but does not fail validation — detection happens again when the task launches, so you can validate a mixed-agent workflow on a machine that only has one of them.
@@ -93,7 +93,7 @@ If a model name above is unfamiliar, it was released after your Claude Code CLI 
 codex --help          # what your CLI accepts
 ```
 
-The examples in this repository use `gpt-5.6-terra` (implementation) and `gpt-5.6-sol` (lighter review passes). Substitute whatever your Codex account offers.
+The examples in this repository use `gpt-5.6-terra` ([`model-selection.yaml`](../examples/model-selection.yaml)) and `gpt-5.6-luna` ([`documentation-codex.yaml`](../examples/documentation-codex.yaml), [`documentation-combined.yaml`](../examples/documentation-combined.yaml)); the rest set no Codex model and take whatever your CLI defaults to. Substitute whatever your Codex account offers.
 
 ## Effort levels
 
@@ -101,7 +101,7 @@ The examples in this repository use `gpt-5.6-terra` (implementation) and `gpt-5.
 
 The schema accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`.
 
-**Claude Code accepts `low`, `medium`, `high`, `xhigh` and `max`** (confirmed by `claude --help` on 2.1.259). `none` and `minimal` exist for Codex; if you set either on a Claude task, `cao validate` warns and the flag is dropped rather than passed to a CLI that would reject it. Haiku has no effort levels at all, so a Haiku task drops whatever `effort` it inherits, again with a warning, instead of passing `--effort` for the CLI to ignore.
+**Claude Code accepts `low`, `medium`, `high`, `xhigh` and `max`** (confirmed by `claude --help` on 2.1.278). `none` and `minimal` exist for Codex; if you set either on a Claude task, `cao validate` warns and the flag is dropped rather than passed to a CLI that would reject it. Haiku has no effort levels at all, so a Haiku task drops whatever `effort` it inherits, again with a warning, instead of passing `--effort` for the CLI to ignore.
 
 | Level | Use for |
 |---|---|

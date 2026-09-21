@@ -37,7 +37,8 @@ under your home directory:
 ~/.cao/
   config.json           # your per-user opt-in and preferences
   runs/<key>.json        # one file per run this user has started, on this machine
-  presence/<pid>.json    # one file per surface (a desktop app, say) that is currently watching
+  presence/<pid>.json    # one file per surface currently watching - nothing writes one in this
+                         #   release, so this directory is usually absent (see Presence, below)
 ```
 
 `~` is `os.homedir()`. Set `CAO_HOME` to use a different directory instead — the whole tree above

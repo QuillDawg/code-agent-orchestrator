@@ -21,7 +21,7 @@ environment:                     # passed to every worker; keys that look secret
   NODE_ENV: development
 envFile: .env.orchestrator       # KEY=value lines; every value is treated as a secret
 agent: claude                    # default agent: claude (compatibility default) | codex
-model: gpt-5.6-terra             # optional agent model default
+model: opus                      # optional agent model default, for whichever agent is in force
 effort: high                     # optional reasoning effort default
 claude: { ... }                  # Claude-specific options
 codex: { ... }                   # Codex-specific options
@@ -47,6 +47,7 @@ The resolved repository, the launch directory and the config path are printed in
 ```yaml
 execution:
   mode: sequential               # sequential (default) | dag
+  sequential: true               # the older spelling of the same thing, still honoured: false means dag
   maxConcurrency: 1              # >= 1
   workingDirectoryStrategy: repositoryRoot   # | launchDirectory
   workspaceStrategy:             # or a single string: shared | worktree
@@ -98,7 +99,7 @@ git:
 ```
 
 With `captureDiff` on, every attempt ends with its own `diff.patch` and `diff.json` in the attempt directory
-(see [capabilities.md](capabilities.md#where-the-truth-lives)). A worktree task is diffed from its base commit
+(see [Persisted state](#persisted-state)). A worktree task is diffed from its base commit
 to its branch head; a shared-tree task from a snapshot of the working tree taken when the attempt started to
 one taken when it ended, so changes the agent made through the shell — and files it created and deleted again
 — are captured just as accurately as tool-driven edits. Snapshots are written to a throwaway git index and
@@ -280,7 +281,7 @@ tasks:
 
 Expands to `implement-101`, `implement-102`, `implement-103`.
 
-**An item is either a scalar or an object, and the prompt must match.** A scalar item (`- 101`) is reachable only as `{{item}}`; an object item exposes its keys as `{{item.number}}`. Mixing the two under one prompt fails validation for whichever items lack the field, so keep a collection uniform. Object keys are *not* promoted to bare placeholders — `{{issueNumber}}` only resolves if `issueNumber` is a field on the task itself. Object items may override `name`, `type`, `parallelGroup`, `dependsOn`, `workingDirectory`, `timeout`, `retries`, `retry`, `onFailure`, `when`, `context`, `env`, `claude`, `workspace`, `prompt`, `template`. The id suffix comes from `id`, `key`, `number`, `issue` or `name`, otherwise the 1-based index. Referencing the source id (`dependsOn: [implement]`, `context.from: [implement]`) expands to all children.
+**An item is either a scalar or an object, and the prompt must match.** A scalar item (`- 101`) is reachable only as `{{item}}`; an object item exposes its keys as `{{item.number}}`. Mixing the two under one prompt fails validation for whichever items lack the field, so keep a collection uniform. Object keys are *not* promoted to bare placeholders — `{{issueNumber}}` only resolves if `issueNumber` is a field on the task itself. Object items may override `name`, `type`, `parallelGroup`, `dependsOn`, `workingDirectory`, `timeout`, `retries`, `retry`, `onFailure`, `when`, `context`, `env`, `claude`, `codex`, `agent`, `model`, `effort`, `workspace`, `prompt`, `template` — the whole per-task set, so one item of a collection can be given a different agent or a bigger effort than its siblings (see [resolution order](models.md#resolution-order)). The id suffix comes from `id`, `key`, `number`, `issue` or `name`, otherwise the 1-based index. Referencing the source id (`dependsOn: [implement]`, `context.from: [implement]`) expands to all children.
 
 ### `context`
 
@@ -379,7 +380,7 @@ Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TA
 |---|---|---|
 | `success` | validated result with status success | – |
 | `failed` | worker reported failure, or exit without a valid result (`invalid_result`, after the session was asked for it, see below), non-zero exit (`crash`), `timeout` | yes |
-| `api_error` | the agent exited because of a transient API/network problem (HTTP 5xx, overloaded, rate limit, connection reset) | yes, by resuming the session |
+| `api_error` | the agent exited because of a transient API/network problem (HTTP 5xx and 429, overload, and connection, stream or network failures) | yes, by resuming the session |
 | `config_error` | the agent CLI refused what CAO sent it: an argument, the output schema, a JSON-RPC parameter, or a version/capability the workflow needs | no - and it does not spend `retry.attempts` |
 | `blocked` | worker reported it cannot proceed | no |
 | `needs_input` | worker asked a question: run pauses; answer with `cao resume --task <id> --input "..."` | after input |
@@ -433,31 +434,44 @@ After a task succeeds CAO updates the source workflow atomically, preserving com
   state: completed
   completion:
     completedAt: 2026-09-03T12:34:56.000Z
-    runId: 20260903-123456-abc
+    runId: 2026-09-03-001
 ```
 
 A fresh `cao run` skips marked tasks. Selecting a task with `--task` or `--from` clears its marker before rerunning it. `foreach` tasks store child completion under `completion.tasks` so a partially completed collection can continue safely. The per-run snapshot below remains the authoritative execution history and recovery record.
 
 ```
 .orchestrator/
-  latest                        # id of the most recent run
+  latest                          # id of the most recent run
   runs/<run-id>/
-    workflow.json               # full run snapshot (resolved workflow, task states, attempts)
-    events.jsonl                # append-only event log
-    live.json                   # throttled live status for status/peek from other terminals
-    lock.json                   # owning orchestrator pid + heartbeat
+    workflow.json                 # full run snapshot: resolved workflow, task states, attempts,
+                                  #   rewritten atomically after every transition
+    events.jsonl                  # append-only run log: state changes and summaries
+    live.json                     # throttled live status for status/peek from other terminals
+    lock.json                     # owning orchestrator pid + heartbeat
+    stop.json                     # a pending `cao stop` request, consumed by the running orchestrator
+    report.md                     # the run's own report, rewritten whenever the run ends
     orchestrator.log
+    requests/<ULID>-<kind>.json   # control requests from another process: stop, kill, restart, edit, prompt
+      acks/<ULID>.json            #   the one answer to each, written before the request is deleted
+      rejected/                   #   a request that could not be read, moved rather than deleted
+    interactions/                 # reserved: pending-interaction payloads for a desktop app to render
     tasks/<task-id>/
-      result.json               # final structured result (+ git info, usage)
-      context.md                # what was injected into the prompt
+      result.json                 # final structured result (+ git info, usage)
+      context.md                  # what was injected into the prompt
       attempts/<n>/
-        attempt.json
-        prompt.md
-        stdout.log              # raw stream-json from Claude
+        attempt.json              # outcome, timings, session id, usage, revision, prompt deliveries
+        prompt.md                 # exactly what was sent
+        diff.patch                # unified diff of this attempt's own changes
+        diff.json                 # per file: path, status A/M/D/R, +/- lines, binary flag
+        stdout.log                # raw stream-json from Claude
         stderr.log
-        events.jsonl            # normalized activity/text/result entries (a completion object is a result, not text)
-  worktrees/<task-id>/          # parallel task worktrees
+        events.jsonl              # normalized activity/text/result entries (a completion object is a result, not text)
+  worktrees/<task-id>/            # parallel task worktrees
 ```
+
+`diff.patch` and `diff.json` are written only with [`git.captureDiff`](#git) on, which is the default.
+[docs/capabilities.md](capabilities.md#where-the-truth-lives) explains why each of these files exists and
+what distinguishes the run log from an attempt's.
 
 Secret values (from `envFile`, secret-looking `environment` keys and common token patterns) are redacted from everything persisted.
 

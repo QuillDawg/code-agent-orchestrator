@@ -2,7 +2,7 @@
 
 How `cao` actually invokes each agent, and how it decides whether a task succeeded.
 
-Verified against Claude Code **2.1.275** and codex-cli **0.154.0** — the invocation lines below are the argv `buildClaudeArgs`, `buildCodexArgs` and `buildCodexAppServerArgs` actually build, and `npm run test:agents` checks every flag in them against the installed CLIs' help. Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
+Verified against Claude Code **2.1.278** and codex-cli **0.154.0** — the invocation lines below are the argv `buildClaudeArgs`, `buildCodexArgs` and `buildCodexAppServerArgs` actually build, and `npm run test:agents` checks every flag in them against the installed CLIs' help. Everything agent-specific lives behind the `TaskRunner` interface in `src/runners/`: `claude/` and `codex/`.
 
 Both runners share one rule: **a process exit code is never a result.** Success requires a schema-valid JSON object from the worker.
 
@@ -79,7 +79,7 @@ A session that ends its turn without the JSON completion object (prose such as "
 - **ask** (default whenever a dashboard is attached): the worker is started with `--input-format stream-json --permission-prompt-tool stdio`. Every permission prompt and every `AskUserQuestion` call arrives on stdout as a control request and the worker blocks on that tool until the orchestrator answers on stdin. The task shows as `waiting` (**Needs you**) meanwhile.
 - **deny** (headless runs, or set explicitly): `--permission-prompts none`; anything that would prompt is denied by the CLI itself and surfaces in `permission_denials`.
 
-The wire protocol (verified against Claude Code 2.1.259 and the Agent SDK):
+The wire protocol (verified against the same Claude Code and the Agent SDK):
 
 ```
 → stdout  {"type":"control_request","request_id":"<id>","request":{"subtype":"can_use_tool","tool_name":"Bash",
@@ -181,8 +181,9 @@ minutes, and on demand (`R` in the footer). The sparse `account/rateLimits/updat
 only *during* a turn, which this process never runs, so the attempt app-servers forward the ones they see to
 the same snapshot; it is merged into the last read rather than replacing it. `account/rateLimits/read` is
 refused with `-32600 chatgpt authentication required to read rate limits` for an API-key login, which the
-footer shows as `authRequired` rather than as an error. Below 0.48.0, or with no CLI, the chip is
-`unavailable`. The process is killed and its stdin closed when the workspace unmounts — the stdio server
+footer shows as `authRequired` rather than as an error. With no CLI the chip is `unavailable`. The read
+arrived in 0.48.0, well below the 0.153.0 a run already requires, so an installed Codex that can run a task
+can always be asked. The process is killed and its stdin closed when the workspace unmounts — the stdio server
 exits on EOF — and a crashed one is started again at most once per five minutes.
 
 CAO answers exactly three server requests — `item/commandExecution/requestApproval`,

@@ -263,7 +263,7 @@ describe('LICENSE', () => {
 });
 
 describe('CI workflow', () => {
-  it('runs the three checks on both Node versions and both operating systems', async () => {
+  it('runs the checks on both Node versions and both operating systems', async () => {
     const ci = parseYaml(await read('.github', 'workflows', 'ci.yml')) as {
       jobs: Record<string, { strategy: { matrix: { os: string[]; node: string[] } }; steps: { run?: string }[] }>;
     };
@@ -280,15 +280,20 @@ describe('CI workflow', () => {
 });
 
 describe('GitHub templates', () => {
-  it('asks a "workflow fails" report for the two listings that answer most of them', async () => {
+  it('asks a "workflow fails" report for the two outputs that answer most of them', async () => {
     const template = await read('.github', 'ISSUE_TEMPLATE', 'workflow-fails.yml');
     const form = parseYaml(template) as { name: string; body: { attributes: { label?: string; description?: string } }[] };
     expect(form.name).toMatch(/workflow fails/i);
     const labels = form.body.map((f) => `${f.attributes.label ?? ''} ${f.attributes.description ?? ''}`).join('\n');
     expect(labels).toContain('cao validate');
     expect(labels).toContain('--json');
-    expect(labels).toMatch(/run directory/i);
+    // The bundle, not a hand-made `ls -R`: it carries the doctor facts, the workflow, the events and
+    // every attempt record, already redacted, which is what the listing was a poor substitute for.
+    expect(labels).toContain('cao diagnostics');
+    expect(labels).toContain('--out');
     expect(labels).toContain('.orchestrator/runs/');
+    // And never the file this tool has never written.
+    expect(labels).not.toContain('run.json');
   });
 
   it('has a pull request template pointing at the same checks CI runs', async () => {

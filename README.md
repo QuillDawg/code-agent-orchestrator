@@ -118,7 +118,8 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
   `cao resume --input`. It never hangs, and it never fails because nobody was there.
 - **Failure handling that costs what you decide.** `retries`, `onFailure: stop | continue | skip_dependents`,
   timeouts, per-task budgets, and previous-failure injection on retry.
-- **Transient API errors resume the same session** (5xx, overload, dropped connection) instead of restarting.
+- **Transient API errors resume the same session** (HTTP 5xx and 429, overload, and connection, stream or
+  network failures) instead of restarting.
 - **Everything on disk.** `.orchestrator/runs/<run-id>/` holds every prompt, result, transcript, diff and
   cost figure. Secrets are redacted.
 - **Per-task diffs and a run report.** `cao diff`, `cao report`, and `report.md` written at the end of every run.
@@ -627,9 +628,8 @@ Whatever windows the server reports are shown, labelled from their own duration 
 the reset time in your time zone — a clock time when it is today, a weekday and a clock time when it is not, a date when it is five or more days out; a window the server does not report is not drawn. While a task is running,
 the rate-limit updates its own app-server receives are folded in too, so a busy run refreshes faster than
 the timer. The chip says `codex · sign in with ChatGPT for quotas` when Codex is authenticated by API key —
-the server refuses quota reads for those — and `unavailable` when the CLI is missing or below 0.48.0, the
-first version with the read. A failed refresh never blanks a good reading: it keeps the numbers and says
-`stale` with their age.
+the server refuses quota reads for those — and `unavailable` when the CLI is missing. A failed refresh never
+blanks a good reading: it keeps the numbers and says `stale` with their age.
 
 **Claude.** `claude · unavailable · see /usage in Claude Code`. There is no documented programmatic read of
 the Pro/Max usage bars, and `cao` makes no network call of its own to find one.

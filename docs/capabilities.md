@@ -256,7 +256,7 @@ cao run workflow.yaml --from implement-102        # this task and everything dow
 
 ### Survive transient API errors for free
 
-When an agent reports a retryable 408/409/429/5xx, overload, or connection/stream failure, `cao` waits with
+When an agent reports a retryable HTTP 5xx or 429, an overload, or a connection, stream or network failure, `cao` waits with
 exponential backoff (never shorter than the provider's retry delay) and relaunches with the same session when
 that provider says continuation is safe. These recoveries do not consume `retry.attempts`.
 
@@ -719,7 +719,7 @@ One chip per provider, carrying what that provider says about its own rate-limit
 codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago      claude · unavailable · see /usage in Claude Code
 ```
 
-**Codex** is read through one `codex app-server` the workspace keeps open for the whole session — never one per attempt. It sends `initialize` and `initialized`, then `account/read` for the auth mode and plan and `account/rateLimits/read` for the windows, on entry, on every five-minute tick and on demand. Both are account-scoped backend reads: no thread is opened, no turn starts, nothing is billed. While a task is running, the `account/rateLimits/updated` notifications that task's own app-server receives are folded into the same reading, so a busy run refreshes faster than the timer; the notification is sparse, so it is merged into the last read rather than replacing it. The chip has six states: `loading` before the first answer, `ok` with the age of the reading, `stale` when a refresh failed — the last good numbers are kept and aged rather than blanked — `authRequired` (`codex · sign in with ChatGPT for quotas`, because the server refuses quota reads for an API-key login), `unavailable` when the CLI is missing or below 0.48.0, the first version with the read, and `error` when a read failed and there has never been a good one to keep. A quota process that crashes is started again at most once every five minutes.
+**Codex** is read through one `codex app-server` the workspace keeps open for the whole session — never one per attempt. It sends `initialize` and `initialized`, then `account/read` for the auth mode and plan and `account/rateLimits/read` for the windows, on entry, on every five-minute tick and on demand. Both are account-scoped backend reads: no thread is opened, no turn starts, nothing is billed. While a task is running, the `account/rateLimits/updated` notifications that task's own app-server receives are folded into the same reading, so a busy run refreshes faster than the timer; the notification is sparse, so it is merged into the last read rather than replacing it. The chip has six states: `loading` before the first answer, `ok` with the age of the reading, `stale` when a refresh failed — the last good numbers are kept and aged rather than blanked — `authRequired` (`codex · sign in with ChatGPT for quotas`, because the server refuses quota reads for an API-key login), `unavailable` when the CLI is missing, and `error` when a read failed and there has never been a good one to keep. A quota process that crashes is started again at most once every five minutes.
 
 **Claude** is `claude · unavailable · see /usage in Claude Code`. No programmatic read of the Pro/Max usage bars is documented, `/usage` is terminal-only, and the API rate-limit response headers describe something else; reading the undocumented OAuth usage endpoint would be a network call of `cao`'s own, which this beta does not make, not even behind a flag.
 
@@ -1080,35 +1080,17 @@ you open it there.
 
 ## Where the truth lives
 
-```
-.orchestrator/
-  latest                        # id of the most recent run
-  runs/<run-id>/
-    workflow.json               # full run snapshot, rewritten atomically after every transition
-                                #   (including run.controls.seen: the answered control commands, last 1000)
-    events.jsonl                # append-only run log: state changes and summaries
-    live.json                   # current progress, usage, file counts, pending interaction
-    lock.json                   # owning pid + heartbeat
-    stop.json                   # a pending `cao stop` request, consumed by the running orchestrator
-    report.md                   # the run's own report, rewritten whenever the run ends
-    requests/<ULID>-<kind>.json # control requests from another process: stop, kill, restart, edit, prompt
-      acks/<ULID>.json          #   the one answer to each, written before the request is deleted
-      rejected/                 #   a request that could not be read, moved rather than deleted
-    interactions/               # reserved: pending-interaction payloads for a desktop app to render
-    tasks/<task-id>/
-      result.json               # structured result + git info + cost/usage
-      context.md                # exactly what was injected
-      attempts/<n>/
-        prompt.md               # exactly what was sent
-        attempt.json            # outcome, timings, session id, usage, revision, prompt deliveries
-        diff.patch              # unified diff of this attempt's own changes
-        diff.json               # per file: path, status A/M/D/R, +/- lines, binary flag
-        stdout.log              # raw agent output
-        stderr.log
-        events.jsonl            # the attempt's transcript, ending with its outcome
-```
+Every prompt, every result and every cost figure for every attempt is on disk and inspectable. A run is a
+directory under `.orchestrator/runs/<run-id>/`, laid out file by file in
+[docs/configuration.md § Persisted state](configuration.md#persisted-state). What follows is why each of
+those files is there.
 
-Every prompt, every result and every cost figure for every attempt is on disk and inspectable.
+`workflow.json` is the run: the resolved workflow and every task's state, rewritten atomically after every
+transition, which is what makes `cao resume` possible after a crash. `live.json` is the cheap read next to
+it — current progress, usage, file counts and any pending interaction — so `cao status` and `cao peek` from
+another terminal cost one small file rather than a parse of the whole run. `lock.json` names the process
+that owns the run and heartbeats; `stop.json` and `requests/` are how another terminal reaches that process,
+one file per command with its single answer written into `acks/` before the request is deleted.
 
 The two diff files are the attempt's own work, isolated from whatever else the repository was doing. A
 worktree task is diffed from its base commit to its branch head (after the checkpoint commit, so uncommitted
