@@ -63,7 +63,7 @@ The two are tied together by a property, not by sharing code: for every fixture 
 `incremental(a).append(b).plan()` equals `planTranscript([...a, ...b])`. Change one and the other's test
 tells you.
 
-Paths are joined with `/`, because the package carries no `node:path`. Every platform CAO runs on accepts
+Paths are joined with `/`, because the package carries no `node:path`. Every platform `cao` runs on accepts
 `/` in a filesystem call; a caller that wants the native separator normalises the string it was handed.
 
 ## Versioning

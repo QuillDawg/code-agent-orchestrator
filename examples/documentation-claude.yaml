@@ -1,3 +1,8 @@
+# Documentation smoke test - Claude.
+# A tiny, bounded, cheap edit to examples/documentation-smoke-target.md, to check that the Claude
+# integration works end to end against a real CLI. Run it, read the diff, then discard it:
+#   cao run examples/documentation-claude.yaml --no-tui
+#   git diff -- examples/documentation-smoke-target.md
 version: 1
 name: Documentation smoke test - Claude
 repository: .
@@ -22,14 +27,10 @@ tasks:
     type: documentation
     timeout: 10m
     prompt: |
-      Review examples/documentation-smoke-target.md for a first-time CAO user.
+      Review examples/documentation-smoke-target.md for a first-time cao user.
       Make exactly one small improvement: add an "Inspect a run" section containing
       `cao status <run-id>` and `cao logs <run-id> <task-id>`, with one concise
       sentence explaining each command.
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style
       and report the changed file in the structured result.
-    state: completed
-    completion:
-      completedAt: 2026-09-10T14:32:51.269Z
-      runId: 2026-09-10-006

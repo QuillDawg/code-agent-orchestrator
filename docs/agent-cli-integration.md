@@ -47,7 +47,7 @@ claude -p \
 | `assistant` — every `text` block | transcript `text` entry (rendered as markdown), or a `result` entry when the message is (or contains) the completion object — see [the completion contract](#the-completion-object-is-protocol-not-prose) |
 | `assistant` — `message.usage` | live usage: cumulative tokens (de-duplicated by message id) and the current context size (`input + cache_read + cache_creation`). The window it is measured against is estimated from the model id (`src/runners/claude/models.ts`: 1M for Fable and for Opus/Sonnet 4.6+, 200K for Haiku and older models) until the `result` event supplies the CLI's own `contextWindow` |
 | `user` (tool results) | transcript `tool_result` entry, truncated to 20 lines / 2 KB |
-| `user` (no tool results) | a message CAO wrote on stdin, echoed back by `--replay-user-messages`; acknowledges a steered follow-up ([below](#steering-a-worker-that-is-running)) |
+| `user` (no tool results) | a message `cao` wrote on stdin, echoed back by `--replay-user-messages`; acknowledges a steered follow-up ([below](#steering-a-worker-that-is-running)) |
 | `control_request` / `can_use_tool` | a permission prompt or `AskUserQuestion` → `Interaction` for the dashboard (ask mode only) |
 | `control_cancel_request` | the worker withdrew a pending prompt |
 | `result` | `subtype`, `is_error`, `result`, `structured_output`, `total_cost_usd`, `duration_ms`, `num_turns`, `stop_reason`, `permission_denials`, and `modelUsage` (per-model tokens, cost and `contextWindow`, summed into the attempt's final usage) |
@@ -147,7 +147,7 @@ codex [--profile P] app-server --stdio [extraArgs...]
 That is the whole command line: the app-server takes no sandbox, approval or model flags. Everything the
 `exec` line puts on the command line — the sandbox policy, the approval policy, the approvals reviewer, the
 model, the effort, the working directory, the extra writable roots and the output schema — is sent instead
-in the `thread/start` (or `thread/resume`) and `turn/start` params, and CAO checks that the envelope the
+in the `thread/start` (or `thread/resume`) and `turn/start` params, and `cao` checks that the envelope the
 server reports back is the one it asked for (a mismatch is a `config_error`, not a retry). Exactly one
 `turn/start` is sent per attempt, because the server treats a second one on a live thread as a steer
 ([below](#steering-a-worker-that-is-running)). `initialize`
@@ -161,7 +161,7 @@ the protocol has no isolation switch that preserves saved authentication.
 `codex.permissionMode` is a preset over sandbox and approval controls. An unattended workspace-write `exec` uses `--approve-for-me`; read-only execution always uses the read-only sandbox with `approval_policy="never"`, even if a runner is invoked directly with contradictory raw options. Workflow validation rejects those contradictions. The low-level `approvalPolicy` key remains for compatibility but is deprecated in favor of `approvals`.
 Security-affecting passthrough arguments are rejected rather than allowed to supersede this envelope.
 
-Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protocol. CAO initializes the server, starts or resumes a thread, starts a schema-constrained turn, records items and cumulative token usage, and waits for the authoritative `turn/completed` event. The process is private to one attempt. Cancellation sends `turn/interrupt` before process-tree termination.
+Set `codex.transport: appServer` to use Codex's experimental JSONL stdio protocol. `cao` initializes the server, starts or resumes a thread, starts a schema-constrained turn, records items and cumulative token usage, and waits for the authoritative `turn/completed` event. The process is private to one attempt. Cancellation sends `turn/interrupt` before process-tree termination.
 
 Stable command and file-change approval requests become the same runner-neutral `Interaction` used by Claude. Typed `codexErrorInfo` values drive retry classification. The transports never silently fall back into one another; `exec` remains the default while app-server is experimental.
 
@@ -186,7 +186,7 @@ arrived in 0.48.0, well below the 0.153.0 a run already requires, so an installe
 can always be asked. The process is killed and its stdin closed when the workspace unmounts — the stdio server
 exits on EOF — and a crashed one is started again at most once per five minutes.
 
-CAO answers exactly three server requests — `item/commandExecution/requestApproval`,
+`cao` answers exactly three server requests — `item/commandExecution/requestApproval`,
 `item/fileChange/requestApproval` and `item/tool/requestUserInput`. Everything else, including
 `item/permissions/requestApproval`, `mcpServer/elicitation/request` and the legacy `applyPatchApproval` /
 `execCommandApproval`, is refused with JSON-RPC `-32601` and recorded in the transcript: a
@@ -257,7 +257,7 @@ human is covered by [waiting for a human](#waiting-for-a-human) instead: it neve
 Codex answers these itself and reports the refusal in the JSONL stream, verbatim (wording from codex-cli
 0.154.0): `command execution approval`, `exec command approval`, `file change approval`, `apply_patch
 approval`, `permissions approval` and `request_user_input`, each `… is not supported in exec mode for thread
-<id>`. CAO recognises those six and ends the attempt as `needs_input` whose `error` quotes the rejection,
+<id>`. `cao` recognises those six and ends the attempt as `needs_input` whose `error` quotes the rejection,
 names the command it was about when the stream said so, and names the option that would have allowed an
 answer (`codex.transport: appServer` with `codex.approvals: host`, or `codex.experimentalUserInput: true`
 for a question). Without that the attempt fell through to `invalid_result` or `crash` depending on the
@@ -287,7 +287,7 @@ that ended `needs_input` because it was blocked on a human — is not a failure 
 | exit 0, no result | `invalid_result` | a `result` event with no `structured_output` and no JSON object in its text | no `final.json` (`exec`), or a turn that completed without a completion object (`appServer`) | the same session is asked for the completion object (`retry.resultNudges`), then the task is retried |
 | result present, fails the contract | `invalid_result` | `structured_output`, or the object lifted out of the result text, fails the contract validator | `final.json` parses but fails the contract validator | same as above: nudge, then retry |
 | transient network/API error | `api_error` | `is_error: true`, or a non-zero exit, carrying `API Error: 5xx`, `529 overloaded`, `429 rate limit`, `ECONNRESET`, `fetch failed`, … | a retryable typed `codexErrorInfo`, or the same transient wording on stderr | backoff, then the session is resumed; free up to `retry.transientAttempts` |
-| argument or schema rejection | `config_error` | commander's `error: unknown option '--x'` on stderr, or `invalid_json_schema` from the API | a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one CAO asked for | the task fails immediately without spending `retry.attempts`; `onFailure` decides the run |
+| argument or schema rejection | `config_error` | commander's `error: unknown option '--x'` on stderr, or `invalid_json_schema` from the API | a clap usage block on stderr (exit 2), `invalid_json_schema` in the stream, JSON-RPC `-32602`, or an `initialize`/`thread/start` envelope that is not the one `cao` asked for | the task fails immediately without spending `retry.attempts`; `onFailure` decides the run |
 | the agent ended the session with an error of its own (max turns, budget, auth, failed start-up) | `crash` | `is_error: true` that is neither transient nor a rejected schema, or an initialization failure reported in the `init` event | a `turn.failed` whose typed failure is not retryable | `retry.attempts` as usual; the message is the agent’s own |
 | process killed externally | `crash` | a non-zero exit or a signal, with no `result` event | a non-zero exit or a signal, with no schema-valid final response | `retry.attempts` as usual; the signal is recorded on the attempt and named in the message |
 | worker still holding an unanswered tool at exit | `crash` | exit 0 with a `tool_use` whose `tool_result` never arrived | exit 0 with a `command_execution` the stream never completed | `retry.attempts` as usual; the transcript ends with the tool call that was never answered |
@@ -297,7 +297,7 @@ that ended `needs_input` because it was blocked on a human — is not a failure 
 
 ### Configuration errors are not retried
 
-`config_error` is the row that changed the most. A CLI that refuses the command line CAO built, an API that
+`config_error` is the row that changed the most. A CLI that refuses the command line `cao` built, an API that
 refuses the output schema, a JSON-RPC `-32602`, or an app-server `initialize`/`thread/start` that does not
 come back with the envelope that was requested: none of them can succeed on a second attempt, and all of
 them used to arrive as `crash` and be retried until `retry.attempts` ran out. They now end the task once,
@@ -313,7 +313,7 @@ Recognised by:
 - **`invalid_json_schema` / `Invalid schema for response_format`** from the model API, on either agent;
 - **JSON-RPC `-32602`** from the Codex app-server;
 - **an app-server `initialize`/`thread/start` mismatch**: a sandbox, approval policy, approval reviewer,
-  model or instruction-source list that is not the one CAO asked for.
+  model or instruction-source list that is not the one `cao` asked for.
 
 ### Preflight: before the first token
 
@@ -427,7 +427,7 @@ stopped) is refused rather than silently redirected.
   found Y`, `cannot steer a review turn`, `cannot steer a compact turn`, `input must not be empty` and
   `active turn uses a different output schema` each mean a different thing an operator has to do next.
 - **`turn/start` is never sent on a thread that has a turn**, because the server routes it to steer: the
-  second turn would silently never happen and its prompt would land in the first. CAO starts exactly one
+  second turn would silently never happen and its prompt would land in the first. `cao` starts exactly one
   turn per attempt and asserts it. The experimental `turn/settings/update` is not used either, so steering
   cannot change a running turn's model or effort.
 - Steering needs a live channel, so it applies to a `running` task and nothing else. A task that has

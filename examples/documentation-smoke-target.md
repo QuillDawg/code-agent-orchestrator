@@ -1,6 +1,6 @@
-# CAO Documentation Smoke Target
+# Code Agent Orchestrator: documentation smoke target
 
-CAO runs agent tasks defined in a workflow file.
+`cao` runs agent tasks defined in a workflow file.
 
 ## Run a workflow
 

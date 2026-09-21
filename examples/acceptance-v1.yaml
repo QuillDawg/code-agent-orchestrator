@@ -1,7 +1,9 @@
-# V1 acceptance scenario:
+# A full end-to-end scenario, exercising most of the engine in one run:
 #   #101 -> (#102 || #103 in isolated worktrees) -> #104 -> PRD review -> code review -> final review
-# Run from the project you want to work on:
-#   cd C:\Projects\MyProject && cao run path\to\acceptance-v1.yaml
+# Sequential and parallel tasks, worktree isolation, review stages and context passing together.
+# For the same shape driven by a `foreach` over a list of issues, see prd-implementation.yaml.
+# Run it from the project you want worked on:
+#   cd path/to/my-project && cao run path/to/examples/acceptance-v1.yaml
 version: 1
 name: Acceptance V1
 repository: .

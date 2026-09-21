@@ -1,3 +1,6 @@
+# Claude implements, Codex reviews - two agent CLIs in one workflow.
+# `agent` is per task, so a single run can use both. See also
+# codex-implementation-claude-review.yaml for the same loop the other way round.
 version: 1
 name: Claude implementation with Codex review
 repository: .

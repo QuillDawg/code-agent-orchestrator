@@ -1,3 +1,6 @@
+# Codex implements, Claude reviews, Codex remediates.
+# The reverse of mixed-agents.yaml: a different vendor reviewing the work catches more than a second
+# pass by the one that wrote it. `remediate` runs only if the review recorded warnings.
 version: 1
 name: Codex implementation with Claude review
 repository: .

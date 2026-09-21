@@ -167,7 +167,7 @@ codex:
 
 Free-form Codex questions stay disabled unless `experimentalUserInput: true`. A question that cannot be answered — the switch is off, or nobody is attached — is declined through the protocol rather than by killing the worker, so it keeps its turn and the work in it; only a worker that cannot finish without an answer ends the task, and then the result quotes the question it asked.
 
-`configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so CAO rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors. The `readOnly` and `fullAccess` presets are security envelopes: raw sandbox/policy values cannot widen or contradict them.
+`configMode: isolated` maps to `--ignore-user-config --ignore-rules` on `exec`. Codex app-server currently has no equivalent that preserves saved authentication, so `cao` rejects that combination rather than claiming isolation it cannot provide. `approvalPolicy` remains a deprecated low-level compatibility setting; conflicting `approvalPolicy` and `approvals` values are validation errors. The `readOnly` and `fullAccess` presets are security envelopes: raw sandbox/policy values cannot widen or contradict them.
 Security-affecting flags (`--sandbox`, approval/bypass flags, `--add-dir`, and equivalent `-c` overrides) are
 rejected in `extraArgs`; use the validated first-class fields so preflight and runtime enforce the same policy.
 
@@ -203,7 +203,7 @@ claude:
 
 **`auto` depends on the model.** Auto mode exists only for Sonnet 5, Opus 4.7 and later, and Fable. For any other model, Haiku included, Claude Code accepts `--permission-mode auto` and then silently starts the session in its ordinary prompting mode, which asks before every file write and command (the worker's init event reports `default`). `cao validate` warns about such a task, and the run log reports the mode a worker actually started in. On a model that does have auto mode, how often it asks depends on what the worker does: coarse shell commands (`rm -rf`, `git checkout --`, `sed -i`), work outside the repository or malformed tool input trip the classifier more often. For an unattended run, or any Haiku task, choose `bypassPermissions` in a sandbox, or `dontAsk` with an `allowedTools` list, or `acceptEdits` to at least stop the prompts for file edits; `permissionPrompts: deny` keeps the mode but fails fast instead of waiting for a human.
 
-With `configMode: inherit` the worker inherits your Claude Code settings (`~/.claude/settings.json`, the repository's `.claude/settings.json` and `settings.local.json`): `ask` rules and `PreToolUse` / `PermissionRequest` hooks there are evaluated before the permission mode and can prompt under any mode. `isolated` passes `--safe-mode`, disabling ambient customizations while preserving the normal authentication path. CAO never adds `--bare` implicitly.
+With `configMode: inherit` the worker inherits your Claude Code settings (`~/.claude/settings.json`, the repository's `.claude/settings.json` and `settings.local.json`): `ask` rules and `PreToolUse` / `PermissionRequest` hooks there are evaluated before the permission mode and can prompt under any mode. `isolated` passes `--safe-mode`, disabling ambient customizations while preserving the normal authentication path. `cao` never adds `--bare` implicitly.
 
 **Permission prompts and questions.** With `permissionPrompts: ask` (the default whenever a dashboard is attached) a worker's permission prompts and `AskUserQuestion` calls are routed to the dashboard over Claude Code's stdio control protocol: the task shows as **Needs you**, you answer with a key, the worker continues. Without a dashboard (`--no-tui`, CI, non-TTY) the worker runs with `--permission-prompts none` and everything that would prompt is denied, exactly as with `permissionPrompts: deny`. A denied worker is told to finish with `status: needs_input`, which pauses the run for `cao resume --input`. `execution.interactionTimeout` bounds how long a worker waits for you; `hooks.onInputRequired` lets you get notified.
 
@@ -381,7 +381,7 @@ Hooks are shell commands run from the repository root with `CAO_RUN_ID`, `CAO_TA
 | `success` | validated result with status success | – |
 | `failed` | worker reported failure, or exit without a valid result (`invalid_result`, after the session was asked for it, see below), non-zero exit (`crash`), `timeout` | yes |
 | `api_error` | the agent exited because of a transient API/network problem (HTTP 5xx and 429, overload, and connection, stream or network failures) | yes, by resuming the session |
-| `config_error` | the agent CLI refused what CAO sent it: an argument, the output schema, a JSON-RPC parameter, or a version/capability the workflow needs | no - and it does not spend `retry.attempts` |
+| `config_error` | the agent CLI refused what `cao` sent it: an argument, the output schema, a JSON-RPC parameter, or a version/capability the workflow needs | no - and it does not spend `retry.attempts` |
 | `blocked` | worker reported it cannot proceed | no |
 | `needs_input` | worker asked a question: run pauses; answer with `cao resume --task <id> --input "..."` | after input |
 | `skipped` | worker reported nothing to do; dependents still run | – |
@@ -427,7 +427,7 @@ Set `resultNudges: 0` to fail the attempt at once instead. Before the validator 
 
 ## Persisted state
 
-After a task succeeds CAO updates the source workflow atomically, preserving comments and unrelated YAML content:
+After a task succeeds `cao` updates the source workflow atomically, preserving comments and unrelated YAML content:
 
 ```yaml
 - id: implement-101

@@ -48,11 +48,11 @@ On PowerShell: `$env:CAO_CLAUDE_COMMAND = "node test/fixtures/fake-claude.mjs"`.
 the same for `node test/fixtures/fake-codex.mjs`.
 
 **The fakes are a contract, not a mirror.** Both validate their own command line the way the real binary
-does and exit non-zero with the vendor's wording when CAO sends something invalid - an unknown flag, a
+does and exit non-zero with the vendor's wording when `cao` sends something invalid - an unknown flag, a
 global flag written after `codex exec`, `--approve-for-me` next to `--sandbox`, an output schema that is not
 OpenAI-strict. Each fake keeps one table of the flags it accepts (`FLAGS`, near the top of the file), so
 teaching it a new flag is one edit. If a test starts failing because a fake got stricter, the runner is what
-needs fixing: a permissive fake agrees with every bug CAO has, which is how two Codex flag bugs reached
+needs fixing: a permissive fake agrees with every bug `cao` has, which is how two Codex flag bugs reached
 users past a green suite.
 
 **A runner change without a matching fake change is incomplete.** A new flag, a new event, a new request or
@@ -102,9 +102,9 @@ modelling a CLI too old to echo a steered message back.
 | `schema-rejected`, `open-command` | the API refusing the output schema (a `config_error` on both transports), and a command the stream never completes (a `crash` naming it) |
 | `exec-approval`, `exec-user-input` | **exec only**: the CLI rejecting a command approval and a `request_user_input` the way the real binary does. Both are skipped on `exec resume`, modelling an answer that resolved the request |
 | `approval`, `approval-always`, `approval-decline`, `file-approval`, `question`, `question-multi` | **app-server only**: command, file-change and `requestUserInput` requests, and each decision the protocol allows. Responses are validated against codex-cli's own response schemas, so an answer of the wrong shape fails the turn |
-| `question-recovers`, `question-then-resume`, `unknown-request` | a worker that finishes without its answer, one that finishes when the session is resumed with it, and a request CAO must refuse with `-32601` |
+| `question-recovers`, `question-then-resume`, `unknown-request` | a worker that finishes without its answer, one that finishes when the session is resumed with it, and a request `cao` must refuse with `-32601` |
 | `failure`, `interrupted`, `mcp-failure`, `overload-once` | typed turn failures, an interrupted turn, a required MCP server that will not start, a `-32001` overload on `thread/start` |
-| `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope CAO did not ask for |
+| `strict-schema`, `malformed`, `wrong-model`, `missing-policy` | free-form result data, junk on stdout, and a server that reports a security envelope `cao` did not ask for |
 | `steer` | **app-server only**: holds a turn open for a `turn/steer`. `FAKE_CODEX_STEER` selects one of the server's refusals instead of success (`no-turn`, `review`, `compact`, `empty-input`, `schema`), covering every rejection the server can give; `FAKE_CODEX_STEER_WAIT_MS` bounds how long the turn waits |
 
 `FAKE_CODEX_RESUME_CONFLICT=1` makes a `thread/resume` answer "already has an active writer", modelling a
@@ -122,7 +122,7 @@ npm run smoke:pack             # pack, install, and smoke the packaged CLI again
 ```
 
 `npm run test:agents` is the check to run before touching a runner. It builds the argv for a matrix of
-workflow options through the production argument builders and asserts that every flag CAO can emit is one
+workflow options through the production argument builders and asserts that every flag `cao` can emit is one
 the installed binary advertises, on the right side of the subcommand, with a value the help text allows. It
 lives outside `npm test` (`vitest.agents.config.ts`) so the default suite stays offline, and it skips - with
 the reason printed - when `codex` or `claude` is missing or below `MINIMUM_AGENT_VERSIONS`.
@@ -228,3 +228,22 @@ here than style:
   package is how a second, silently diverging copy of the layout starts, and a test fails on one.
 
 Comments explain why, not what. `.editorconfig` carries the whitespace rules; there is no formatter to run.
+
+## How to write the names
+
+One convention, so the documents stop drifting apart on what this thing is called:
+
+| Thing | Write it | Not |
+|---|---|---|
+| The command, and the tool itself | `` `cao` ``, in a code span | bare `CAO`, `Cao` |
+| The project, on first mention in a document | Code Agent Orchestrator | — |
+| The desktop application, as a product | CAO Desktop | `cao Desktop`, "the CAO app" |
+| Its package, binary or checkout | `` `cao-desktop` ``, in a code span | CAO Desktop |
+
+**Never bare `CAO` in prose.** It was in four documents twenty-two times and read as a fourth name for a
+thing that already had three. `cao` is what the user types, so `cao` is what the documents say.
+
+One sentence describes this project, and three places show it: `package.json`'s `description`, the
+`cao --help` banner and the README tagline. npm shows the first and the terminal the second, so they have
+to agree with the page a reader lands on next. Change one, change all three - `test/unit/branding.test.ts`
+and the `cli-consistency` snapshot cover the last two.

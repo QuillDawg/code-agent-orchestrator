@@ -1,3 +1,8 @@
+# Documentation smoke test - Codex and Claude in one run.
+# Run this after the two single-agent smoke tests pass; it checks that results pass between the two
+# vendors as context:
+#   cao run examples/documentation-combined.yaml --no-tui
+#   git diff -- examples/documentation-smoke-target.md
 version: 1
 name: Documentation smoke test - Codex and Claude
 repository: .
@@ -34,7 +39,7 @@ tasks:
     timeout: 10m
     prompt: |
       Review examples/documentation-smoke-target.md without editing it. Check whether
-      it tells users where CAO stores run artifacts. Put the single most useful,
+      it tells users where cao stores run artifacts. Put the single most useful,
       concrete improvement in the structured result's warnings list.
 
   - id: claude-improve

@@ -1,3 +1,7 @@
+# Documentation smoke test - Codex.
+# The same bounded edit as documentation-claude.yaml, through the Codex CLI instead:
+#   cao run examples/documentation-codex.yaml --no-tui
+#   git diff -- examples/documentation-smoke-target.md
 version: 1
 name: Documentation smoke test - Codex
 repository: .
@@ -25,14 +29,10 @@ tasks:
     type: documentation
     timeout: 10m
     prompt: |
-      Review examples/documentation-smoke-target.md for a first-time CAO user.
+      Review examples/documentation-smoke-target.md for a first-time cao user.
       Make exactly one small improvement: add a "Validate before running" section
       containing `cao validate workflow.yaml` and `cao run workflow.yaml --dry-run`,
       with one concise sentence explaining each command.
 
       Touch only examples/documentation-smoke-target.md. Preserve its existing style,
       inspect the final diff, and report the changed file in the structured result.
-    state: completed
-    completion:
-      completedAt: 2026-09-10T14:31:21.362Z
-      runId: 2026-09-10-004

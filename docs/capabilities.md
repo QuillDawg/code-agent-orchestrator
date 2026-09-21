@@ -498,7 +498,7 @@ Not supported, deliberately:
 - **A human during a `codex exec` task.** The Codex CLI answers approvals and questions itself, with a
   rejection; no configuration changes that. Use `appServer` for a task that must be able to ask.
 - **`configMode: isolated` on `appServer`.** That protocol has no isolation switch which preserves saved
-  authentication, so the combination is a validation error rather than isolation CAO cannot provide.
+  authentication, so the combination is a validation error rather than isolation `cao` cannot provide.
 - **`codex.model`.** For `agent: codex` the top-level or task-level `model:` is the only way to set a model.
 - **Falling back between transports.** `exec` never becomes `appServer` under load or on error, or the
   reverse: whichever you asked for is what runs.
