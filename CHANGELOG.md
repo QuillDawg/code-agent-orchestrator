@@ -582,6 +582,11 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   partial-work state. The scheduler honours provider delays and does not retry permanent failures.
 - Claude supports explicit inherited or isolated configuration and treats reported MCP/plugin startup
   failures as failures even if the CLI process exits successfully.
+- **The tarball no longer carries this beta's own plan.** `files` negates `docs/cao-v2-beta-spec.md` and
+  `docs/cao-v2-beta-decisions.md` after the `docs/*.md` glob that swept them in, so a published package
+  holds only documents a reader of it can act on: the two describe stages, exit criteria, suggestions
+  nobody built and open questions, which is the one thing the rest of the documentation is careful not to
+  do. 26 files instead of 28, and `npm run smoke:pack` fails on either of them reappearing.
 - **`engines.node` is `>=22.12.0`; it was `>=22`.** commander 15 declares `>=22.12.0` of its own, so the
   old floor advertised a Node - anything from 22.0 to 22.11 - that the CLI's own argument parser says it
   does not run on. `.nvmrc` still names the 22 line, which resolves above the floor, and `cao doctor`

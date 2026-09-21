@@ -130,8 +130,10 @@ try {
       `unexpected entries: ${paths.filter((p) => !/^(dist|examples)\//.test(p) && !/^docs\/[^/]+\.md$/.test(p) && !['README.md', 'CHANGELOG.md', 'LICENSE', 'package.json'].includes(p)).join(', ')}`,
     ),
   );
-  check('no internal research notes and no .cao-files', () =>
-    expect(!paths.some((p) => p.startsWith('docs/research/') || p.startsWith('.cao-files/')), `leaked: ${paths.filter((p) => p.startsWith('docs/research/') || p.startsWith('.cao-files/')).join(', ')}`),
+  // `files` excludes these three by glob and by negation; only a real `npm pack` says whether npm agreed.
+  const internal = (p) => p.startsWith('docs/research/') || p.startsWith('.cao-files/') || /^docs\/cao-v2-beta-/.test(p);
+  check('no internal research notes, planning documents or .cao-files', () =>
+    expect(!paths.some(internal), `leaked: ${paths.filter(internal).join(', ')}`),
   );
   check('the bin the manifest names is in it', () => expect(paths.includes('dist/bin.js'), 'dist/bin.js is not packed'));
 

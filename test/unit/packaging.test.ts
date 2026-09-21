@@ -90,6 +90,19 @@ describe('package.json', () => {
     expect(pkg.files).toContain('docs/*.md');
   });
 
+  // The plan for this beta and the reasoning behind it are written for the people building it: a stage
+  // list with exit criteria, a table of suggestions nobody built, open questions. Everything else under
+  // docs/ tells a reader what `cao` does today, and these two would be the only pages in the tarball
+  // describing what it might do next — which is the one thing the documentation is not allowed to do.
+  it('negates the beta planning documents, which are not for a reader of the package', () => {
+    expect(pkg.files).toContain('!docs/cao-v2-beta-spec.md');
+    expect(pkg.files).toContain('!docs/cao-v2-beta-decisions.md');
+    // After the glob they exclude, or npm re-adds what the glob matched.
+    for (const negated of pkg.files.filter((f) => f.startsWith('!'))) {
+      expect(pkg.files.indexOf(negated)).toBeGreaterThan(pkg.files.indexOf('docs/*.md'));
+    }
+  });
+
   it('agrees with .nvmrc about the Node line and clears every production dependency floor', async () => {
     const nvmrc = (await read('.nvmrc')).trim();
     expect(nvmrc).toBe('22');
@@ -146,11 +159,13 @@ describe('tarball contents', () => {
     (await fs.readdir(path.join(root, dir), { withFileTypes: true })).filter((e) => e.isFile()).map((e) => `${dir}/${e.name}`).sort();
 
   it('publishes these reference documents and no others', async () => {
-    expect((await listing('docs')).filter((f) => f.endsWith('.md'))).toEqual([
+    const excluded = pkg.files.filter((f) => f.startsWith('!')).map((f) => f.slice(1));
+    const onDisk = (await listing('docs')).filter((f) => f.endsWith('.md'));
+    // On disk and still excluded: the negation is doing the work, not a document that quietly moved away.
+    for (const file of excluded) expect(onDisk).toContain(file);
+    expect(onDisk.filter((f) => !excluded.includes(f))).toEqual([
       'docs/agent-cli-integration.md',
       'docs/architecture.md',
-      'docs/cao-v2-beta-decisions.md',
-      'docs/cao-v2-beta-spec.md',
       'docs/capabilities.md',
       'docs/configuration.md',
       'docs/desktop.md',

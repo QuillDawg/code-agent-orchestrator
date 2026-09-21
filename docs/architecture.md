@@ -349,7 +349,10 @@ Everything the run controller and the inbox add to `workflow.json` is additive: 
   the supported library surface is exactly what `src/index.ts` re-exports.
 - The build carries no sourcemaps. They were the largest thing in the tarball and the bundle is not what
   anyone debugs; a contributor runs `npm run dev` (tsx straight over `src/`) instead.
-- `files` lists `docs/*.md`, not `docs`, so `docs/research/` (internal notes) stays out of the tarball.
+- `files` lists `docs/*.md`, not `docs`, so `docs/research/` (internal notes) stays out of the tarball,
+  and negates `docs/cao-v2-beta-spec.md` and `docs/cao-v2-beta-decisions.md`: they are this beta's plan
+  and the reasoning behind it, written for the people building it, and a published document has to be
+  one a reader can act on.
 - `publishConfig.tag` is `beta`, so `npm install -g code-agent-orchestrator` does not resolve to a pre-1.0
   release until a `latest` publish happens.
 - **Two packages, two release trains.** `packages/protocol/` publishes `code-agent-orchestrator-protocol`

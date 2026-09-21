@@ -52,6 +52,8 @@
     "CHANGELOG.md",
     "LICENSE",
     "docs/*.md",
+    "!docs/cao-v2-beta-spec.md",
+    "!docs/cao-v2-beta-decisions.md",
     "examples"
   ],
   "publishConfig": {
