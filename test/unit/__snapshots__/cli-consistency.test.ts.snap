@@ -28,8 +28,8 @@ Task controls:
   task                           Show a task, or steer it: show | stop | restart | edit | prompt
 
 Diagnostics:
-  doctor [options] [config]      Check this machine: Node, git, the agent CLIs, and what past runs
-                                 left behind
+  doctor [options] [config]      Check this machine: Node, git, the agent CLIs, the terminal,
+                                 storage and what past runs left behind
   diagnostics [options] [run]    Write one JSON file describing a run, to attach to a bug report
   clean [options] [run]          Remove the worktrees and branches a run created
   emit [options] [action]        Turn announcing runs to the desktop app on or off, and show what it

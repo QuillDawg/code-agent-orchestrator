@@ -22,6 +22,18 @@ export function codexHome(env: NodeJS.ProcessEnv = process.env): string {
 /** `sessions/<year>/<month>/<day>/rollout-<timestamp>-<id>.jsonl`: three levels of dated directories. */
 const MAX_DEPTH = 3;
 
+/**
+ * The compression suffixes a rolled-over rollout can carry. The CLI resumes a compressed rollout exactly as
+ * it resumes a plain one, so treating `rollout-...-<id>.jsonl.gz` as missing would refuse a thread that is
+ * there — the one direction `[D25]` calls worse than saying nothing.
+ */
+const COMPRESSED = ['', '.gz', '.zst', '.zstd', '.br'];
+
+function isRolloutOf(name: string, suffix: string): boolean {
+  if (!name.startsWith('rollout-')) return false;
+  return COMPRESSED.some((extra) => name.endsWith(`${suffix}${extra}`));
+}
+
 async function findRollout(dir: string, suffix: string, depth: number): Promise<boolean> {
   let entries: { name: string; file: boolean; directory: boolean }[];
   try {
@@ -30,7 +42,7 @@ async function findRollout(dir: string, suffix: string, depth: number): Promise<
     return false;
   }
   for (const entry of entries) {
-    if (entry.file && entry.name.startsWith('rollout-') && entry.name.endsWith(suffix)) return true;
+    if (entry.file && isRolloutOf(entry.name, suffix)) return true;
     // Newest first: a thread being followed up on is almost always today's, and the walk stops on the hit.
   }
   if (depth >= MAX_DEPTH) return false;

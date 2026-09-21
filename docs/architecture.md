@@ -255,9 +255,22 @@ unclosed code fence is closed, a heading is demoted under the task's own.
 
 `cli/commands/doctor.ts` answers the environment half of the same question. It reuses the detectors the
 runners use (`runners/*/detect.ts`) and the paths `FileRunStore` writes, grades each check
-(failing for Node, git, an unusable installed CLI, or a capability required by a supplied workflow), and
+(failing for Node, git, an unusable installed CLI, a capability required by a supplied workflow, an
+unwritable `.orchestrator/`, or a request a live orchestrator is about to refuse as too new), and
 prints the command that fixes what it found. `cao doctor [workflow]` scopes agent probes to that workflow.
 It reads only: it will name a `cao clean` invocation but never run one.
+
+Gathering and judging are separate: `gatherFacts` talks to the machine and `evaluate` is a pure function of
+what it found, so every grade is unit-testable without having to produce the state it grades. Everything
+`gatherFacts` touches that is not a file is behind `DoctorDeps` — the detectors, the liveness test, the
+terminal, the session probe and the login-mode reader — which is what keeps `npm test` free of this
+machine's terminal, `~/.claude` and `~/.codex`. The per-agent knowledge behind the `controls`, `quota` and
+`sessions` rows sits in `runners/controls.ts`, `runners/auth.ts` and `runners/sessions.ts`, the same
+runner-neutral seam as `runners/quota.ts` and `runners/diagnostics.ts`: the command renders a
+`ControlSupport`, an `AgentAuth` and a `SessionPresence` without naming a CLI. Whether a run is *abandoned*
+comes from `readOrchestrator` — the owner in `lock.json`, else a fresh-heartbeat `live.json` — never from the
+`running` label a crashed process left on disk. The inbox is read with `readControlHistory`, which changes
+nothing, so opening doctor on a live run cannot race the orchestrator for its own requests.
 
 ## Process management and Ctrl+C
 

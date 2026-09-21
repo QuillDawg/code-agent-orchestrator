@@ -528,7 +528,7 @@ export function buildProgram(): Command {
 
   program
     .command('doctor [config]')
-    .description('Check this machine: Node, git, the agent CLIs, and what past runs left behind')
+    .description('Check this machine: Node, git, the agent CLIs, the terminal, storage and what past runs left behind')
     .option('--repository <dir>', 'repository to check (default: launch directory / git root)')
     .option('--json', 'machine-readable output')
     .option('--probe', 'also start each agent mode for real (a small model call and up to a minute per mode)')

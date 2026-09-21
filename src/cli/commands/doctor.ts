@@ -13,17 +13,23 @@ import { execa } from 'execa';
 import { detectClaude, type ClaudeDetection } from '../../runners/claude/detect.js';
 import { detectCodex, type CodexDetection } from '../../runners/codex/detect.js';
 import { Git } from '../../workspace/git.js';
-import { ORCHESTRATOR_DIR, type WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { ORCHESTRATOR_DIR, PROTOCOL_VERSION, type ResolvedTask, type WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { createNativeRunPaths } from '../../persistence/paths.js';
-import type { RunLock } from '../../persistence/run-store.js';
+import { FileRunStore, type RunLock } from '../../persistence/run-store.js';
+import { readControlHistory, requestFileName } from '../../persistence/requests.js';
 import { pathExists, readJsonIfExists, isInside } from '../../util/fs.js';
 import { isProcessAlive } from '../../util/misc.js';
 import { mark } from '../../util/marks.js';
-import { glyph } from '../../util/glyphs.js';
+import { glyph, useUnicode } from '../../util/glyphs.js';
 import { packageInfo } from '../../util/package-info.js';
-import { DEFAULT_WORKFLOW_FILES, findStoreRoot } from '../util.js';
+import { formatAgeMs } from '../../util/duration.js';
+import { colorLevel } from '../color.js';
+import { DEFAULT_WORKFLOW_FILES, findStoreRoot, readOrchestrator, HEARTBEAT_STALE_MS } from '../util.js';
 import { resolveWorkflowPath } from '../util.js';
 import type { AgentCapability, AgentRuntimeDetection } from '../../runners/capabilities.js';
+import { controlSupport, type ControlSupport } from '../../runners/controls.js';
+import { readAgentAuth, type AgentAuth } from '../../runners/auth.js';
+import { detectSessionPresence, type SessionPresence, type SessionProbe } from '../../runners/sessions.js';
 import { ProcessManager } from '../../execution/process-manager.js';
 import { probeClaude } from '../../runners/claude/probe.js';
 import { probeCodex } from '../../runners/codex/probe.js';
@@ -58,6 +64,14 @@ export interface DoctorDeps {
    * of the *judging* must never spawn an agent CLI, and because a caller may want the cheap checks alone.
    */
   probeAgents: (agents: AgentFacts[], environment?: Record<string, string>) => Promise<AgentProbe[]>;
+  /** What this terminal can do (§3.7). Injectable so a test does not have to be run from one. */
+  readTerminal: () => TerminalFacts;
+  /** Whether a session a task reported can still be resumed; the same probe the prompt path uses (`[D25]`). */
+  sessionPresence: SessionProbe;
+  /** How each installed agent is signed in, for the `quota` check. */
+  readAgentAuth: (agents: readonly string[]) => Promise<AgentAuth[]>;
+  /** The moment every age in the facts is measured from. */
+  now: number;
 }
 
 /**
@@ -119,6 +133,94 @@ export interface OrphanBranchFacts {
   runId?: string;
 }
 
+/** What the terminal `cao` was launched from can draw, and whether it can be typed into (§3.7). */
+export interface TerminalFacts {
+  platform: string;
+  /** stdout is a terminal. Without one there is no workspace at all, only plain output. */
+  tty: boolean;
+  /** stdin can be put in raw mode, i.e. keys can be read one at a time. */
+  rawMode: boolean;
+  columns?: number;
+  rows?: number;
+  /** Whether glyphs will be drawn rather than the ASCII table (`useUnicode()`). */
+  unicode: boolean;
+  /** 0 none, 1 the sixteen ANSI colours, 2 256, 3 truecolor. */
+  colorLevel: 0 | 1 | 2 | 3;
+  /** What the terminal called itself. Absent on a console that announced nothing — a Windows console. */
+  program?: string;
+}
+
+/** Whether run state can be written, and what an earlier run left in `.orchestrator/tmp/` (§3.7). */
+export interface StorageFacts {
+  /** The `.orchestrator` directory of this repository, whether or not it exists yet. */
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  error?: string;
+  /** Bytes available to this user on that volume, when the platform could say. */
+  freeBytes?: number;
+  /** `.orchestrator/tmp/<run>` scratch directories older than a day, with their age. */
+  staleTemp: Array<{ path: string; ageMs: number }>;
+}
+
+export interface FutureRequestFacts {
+  runId: string;
+  /** The inbox file name, which is `<ULID>-<kind>.json`. */
+  file: string;
+  protocol: number;
+  /** An orchestrator owns this run right now, so the request is one it is about to refuse. */
+  live: boolean;
+}
+
+/** The versioned contract, as this repository's run directories were written with it (spec §4.5). */
+export interface ProtocolFacts {
+  /** What this build reads and writes. */
+  version: number;
+  /** The highest `protocol` any file in these runs carries; higher than `version` means a newer cao wrote it. */
+  writer?: number;
+  futureRequests: FutureRequestFacts[];
+  rejected: Array<{ runId: string; file: string; reason?: string }>;
+}
+
+/** One task's resumable session, and whether the agent still has it (`[D25]`, §3.7). */
+export interface SessionFactEntry {
+  taskId: string;
+  /** The agent's name, for the label only. */
+  agent: string;
+  sessionId: string;
+  presence: SessionPresence;
+}
+
+export interface SessionFacts {
+  /** The run these came from — the latest, because it is the one a follow-up would go to. */
+  runId?: string;
+  entries: SessionFactEntry[];
+}
+
+/** A run whose snapshot says `running` and whose owner is not (§3.7). */
+export interface AbandonedRunFacts {
+  runId: string;
+  pid: number;
+  heartbeatAt: string;
+  /** Which file named the owner; `lock` is the truth whenever it is there. */
+  source: 'lock' | 'live' | 'run';
+  /** `dead`: no such process. `silent`: the process is there but has not beaten in a minute. */
+  reason: 'dead' | 'silent';
+}
+
+export interface UnackedRequestFacts {
+  runId: string;
+  id: string;
+  kind: string;
+  requestedAt: string;
+  ageMs: number;
+}
+
+export interface RunStateFacts {
+  abandoned: AbandonedRunFacts[];
+  unacked: UnackedRequestFacts[];
+}
+
 export interface DoctorFacts {
   node: { version: string; required: string; satisfied?: boolean };
   git: { found: boolean; version?: string; worktrees: boolean; error?: string };
@@ -134,6 +236,15 @@ export interface DoctorFacts {
   exclude: { status: 'ignored' | 'missing' | 'unknown'; via?: 'exclude' | 'gitignore'; reason?: string };
   /** One entry per agent mode that was started; absent when nothing could be probed. */
   probes?: AgentProbe[];
+  terminal: TerminalFacts;
+  storage: StorageFacts;
+  protocol: ProtocolFacts;
+  sessions: SessionFacts;
+  /** What each installed CLI can carry of the workspace's controls; empty when none is installed. */
+  controls: ControlSupport[];
+  /** How each installed CLI is signed in; empty when none is installed. */
+  auth: AgentAuth[];
+  runState: RunStateFacts;
 }
 
 /** git learnt `worktree` in 2.5; everything below that can still run workflows in the shared tree. */
@@ -143,6 +254,19 @@ const EXCLUDE_PATTERN = `${ORCHESTRATOR_DIR}/`;
 
 /** The branch prefix `execution.worktree.branchPrefix` defaults to, and what `orchestrator/*` means here. */
 const DEFAULT_BRANCH_PREFIX = 'orchestrator/';
+
+/** The terminal the workspace is laid out for (§3.3). Below either number rows start being dropped. */
+const MIN_COLUMNS = 80;
+const MIN_ROWS = 24;
+
+/** Under this much free space a run that captures diffs, transcripts and raw output will run out (§3.7). */
+const MIN_FREE_BYTES = 200 * 1024 * 1024;
+
+/** A `.orchestrator/tmp/<run>` scratch directory older than this outlived the run that made it. */
+const TEMP_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** A request nobody has answered in this long is not being read by anybody (§2.3, §3.7). */
+const UNACKED_STALE_MS = 60_000;
 
 function compareVersions(have: number[], want: number[]): number {
   for (let i = 0; i < Math.max(have.length, want.length); i++) {
@@ -210,6 +334,84 @@ async function readRuns(runsDir: string): Promise<WorkflowRun[]> {
   return runs;
 }
 
+/**
+ * What this terminal can do, read once.
+ *
+ * `process.stdout.isTTY` and friends are the same values Ink sizes its frames from, so what this reports is
+ * what the workspace would find. Injected in `DoctorDeps` because a vitest worker has no terminal at all and
+ * would otherwise make every terminal assertion a test of the test runner.
+ */
+export function detectTerminal(
+  env: NodeJS.ProcessEnv = process.env,
+  stdout: { isTTY?: boolean; columns?: number; rows?: number } = process.stdout,
+  stdin: { isTTY?: boolean; setRawMode?: unknown } = process.stdin,
+  platform: string = process.platform,
+): TerminalFacts {
+  const tty = Boolean(stdout.isTTY);
+  // In the order the terminal itself would be recognised elsewhere (`useUnicode`), most specific first.
+  const program = env.WT_SESSION
+    ? 'Windows Terminal'
+    : env.TERM_PROGRAM || (env.ConEmuTask ? 'ConEmu' : undefined) || env.MSYSTEM || (env.WSLENV ? 'WSL' : undefined) || env.TERM || undefined;
+  return {
+    platform,
+    tty,
+    rawMode: Boolean(stdin.isTTY) && typeof stdin.setRawMode === 'function',
+    ...(typeof stdout.columns === 'number' ? { columns: stdout.columns } : {}),
+    ...(typeof stdout.rows === 'number' ? { rows: stdout.rows } : {}),
+    unicode: useUnicode(),
+    colorLevel: colorLevel(env, tty),
+    ...(program ? { program } : {}),
+  };
+}
+
+/**
+ * Whether run state can be written, how much room is left for it, and what an earlier run left in `tmp/`.
+ *
+ * Writability is answered by writing: `fs.access(W_OK)` answers from the mode bits, which on Windows says
+ * nothing about the ACL that actually refuses the write, and a read-only bind mount passes it too. The probe
+ * file is removed in the same breath and is the only thing this command ever creates — it repairs nothing,
+ * and in particular it does not create `.orchestrator/` itself, which is `cao run`'s to make.
+ */
+async function readStorage(repositoryRoot: string, now: number): Promise<StorageFacts> {
+  const dir = path.join(repositoryRoot, ORCHESTRATOR_DIR);
+  const exists = await pathExists(dir);
+  const target = exists ? dir : repositoryRoot;
+  const probe = path.join(target, `.cao-doctor-${process.pid}.tmp`);
+  let writable = false;
+  let error: string | undefined;
+  try {
+    await fs.writeFile(probe, '');
+    writable = true;
+  } catch (err) {
+    error = (err as Error).message;
+  } finally {
+    await fs.rm(probe, { force: true }).catch(() => undefined);
+  }
+  let freeBytes: number | undefined;
+  try {
+    const stat = await fs.statfs(target);
+    freeBytes = Number(stat.bavail) * Number(stat.bsize);
+  } catch {
+    // `statfs` is not on every platform Node runs on; not knowing is not a warning.
+  }
+  const staleTemp: StorageFacts['staleTemp'] = [];
+  const tmp = path.join(dir, 'tmp');
+  for (const entry of await fs.readdir(tmp).catch(() => [] as string[])) {
+    const child = path.join(tmp, entry);
+    const stat = await fs.stat(child).catch(() => null);
+    if (!stat) continue;
+    const ageMs = now - stat.mtimeMs;
+    if (ageMs > TEMP_STALE_MS) staleTemp.push({ path: child, ageMs });
+  }
+  return { path: dir, exists, writable, ...(error ? { error } : {}), ...(freeBytes !== undefined ? { freeBytes } : {}), staleTemp };
+}
+
+/** The `protocol` number on something parsed off disk, when it has one. */
+function protocolOf(value: unknown): number | undefined {
+  const protocol = (value as { protocol?: unknown } | null | undefined)?.protocol;
+  return typeof protocol === 'number' ? protocol : undefined;
+}
+
 /** Everything `evaluate` judges, read from this machine. */
 export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<DoctorDeps> = {}, scopedAgents?: RunnerDetection[], environment?: Record<string, string>): Promise<DoctorFacts> {
   const deps: DoctorDeps = {
@@ -221,6 +423,10 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
     gitCommand: 'git',
     cwd: process.cwd(),
     probeAgents: probeInstalledAgents,
+    readTerminal: () => detectTerminal(),
+    sessionPresence: detectSessionPresence(environment ? { ...process.env, ...environment } : process.env),
+    readAgentAuth: (agents) => readAgentAuth(agents, environment ? { ...process.env, ...environment } : process.env),
+    now: Date.now(),
     ...overrides,
   };
   const start = path.resolve(opts.repository ?? deps.cwd);
@@ -239,6 +445,13 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
     orphanWorktrees: [],
     orphanBranches: [],
     exclude: { status: 'unknown', reason: 'not a git repository' },
+    terminal: deps.readTerminal(),
+    storage: await readStorage(repositoryRoot, deps.now),
+    protocol: { version: PROTOCOL_VERSION, futureRequests: [], rejected: [] },
+    sessions: { entries: [] },
+    controls: [],
+    auth: [],
+    runState: { abandoned: [], unacked: [] },
   };
 
   const detected: RunnerDetection[] = scopedAgents ?? await Promise.all([
@@ -281,7 +494,75 @@ export async function gatherFacts(opts: DoctorOptions = {}, overrides: Partial<D
       else facts.staleLocks.push({ runId: run.runId, pid: lock.pid, heartbeatAt: lock.heartbeatAt, file: paths.lockFile(run.runId) });
     }
     facts.runs = { total: runs.length, active: [...active] };
+
+    // Who is actually at the wheel, and what the inbox is carrying. `readOrchestrator` is the one answer to
+    // "is a process executing this run" — lock first, `live.json` with a fresh heartbeat as the fallback —
+    // so `running` in the snapshot is only what makes a run worth asking about, never the answer itself.
+    const store = new FileRunStore(storeRoot);
+    for (const run of runs) {
+      const owner = await readOrchestrator(store, run.runId, deps.isProcessAlive).catch(() => null);
+      const pid = owner?.pid ?? run.orchestratorPid;
+      const heartbeatAt = owner?.heartbeatAt ?? run.updatedAt;
+      const dead = pid === undefined || !deps.isProcessAlive(pid);
+      const age = deps.now - Date.parse(heartbeatAt ?? '');
+      const silent = Number.isFinite(age) && age > HEARTBEAT_STALE_MS;
+      const abandoned = run.state === 'running' && (dead || silent);
+      if (abandoned) {
+        facts.runState.abandoned.push({
+          runId: run.runId,
+          pid: pid ?? 0,
+          heartbeatAt: heartbeatAt ?? 'never',
+          source: owner?.source ?? 'run',
+          reason: dead ? 'dead' : 'silent',
+        });
+      }
+
+      // Read-only: `readControlHistory` never moves a request the way the owner's reader does, so opening
+      // `cao doctor` on a live run cannot race the orchestrator for its own inbox.
+      const history = await readControlHistory(paths, run.runId).catch(() => null);
+      if (!history) continue;
+      const answered = new Set(history.acks.map((ack) => ack.id));
+      for (const request of history.pending) {
+        const written = protocolOf(request);
+        if (written !== undefined && written > PROTOCOL_VERSION) {
+          facts.protocol.futureRequests.push({ runId: run.runId, file: requestFileName(request), protocol: written, live: owner?.alive === true });
+        }
+        const waited = deps.now - Date.parse(request.requestedAt ?? '');
+        if (!answered.has(request.id) && Number.isFinite(waited) && waited > UNACKED_STALE_MS) {
+          facts.runState.unacked.push({ runId: run.runId, id: request.id, kind: request.kind, requestedAt: request.requestedAt, ageMs: waited });
+        }
+      }
+      for (const entry of history.rejected) {
+        facts.protocol.rejected.push({ runId: run.runId, file: path.basename(entry.file), ...(entry.reason ? { reason: entry.reason } : {}) });
+      }
+      for (const value of [...history.pending, ...history.acks, ...history.rejected.map((entry) => entry.request)]) {
+        const written = protocolOf(value);
+        if (written !== undefined && (facts.protocol.writer === undefined || written > facts.protocol.writer)) facts.protocol.writer = written;
+      }
+    }
+
+    // The sessions a follow-up would resume, which are the latest run's: `cao task prompt` with no run named
+    // goes there, and a session the agent has deleted makes it start over instead `[D25]`.
+    const latest = runs[runs.length - 1];
+    if (latest) {
+      facts.sessions.runId = latest.runId;
+      const resolved = new Map<string, ResolvedTask>((latest.workflow?.tasks ?? []).map((task) => [task.id, task]));
+      for (const [taskId, state] of Object.entries(latest.tasks ?? {})) {
+        const task = resolved.get(taskId);
+        if (!task) continue;
+        const carrier = [...(state.attempts ?? [])].reverse().find((attempt) => attempt.sessionId);
+        const sessionId = state.resumeSessionId ?? carrier?.sessionId;
+        if (!sessionId) continue;
+        const presence = await deps.sessionPresence(task, sessionId, carrier?.cwd ?? latest.repositoryRoot).catch((): SessionPresence => 'unknown');
+        facts.sessions.entries.push({ taskId, agent: task.agent, sessionId, presence });
+      }
+    }
   }
+
+  facts.controls = controlSupport(facts.agents);
+  facts.auth = facts.agents.some((agent) => agent.found)
+    ? await deps.readAgentAuth(facts.agents.filter((agent) => agent.found).map((agent) => agent.runner)).catch(() => [])
+    : [];
 
   if (!gitRoot || !facts.git.found) return facts;
   const git = new Git(repositoryRoot, deps.gitCommand);
@@ -494,7 +775,250 @@ export function evaluate(facts: DoctorFacts): DoctorCheck[] {
       : {}),
   });
 
+  // The §3.7 checks, appended so that every id a `--json` reader already knows keeps its place. None of them
+  // can stop a run on its own, so all but two grade at most `warn`: what they catch is a *silent* loss — a
+  // control that quietly does nothing, a session that quietly starts over, a screen that quietly loses rows.
+  checks.push(terminalCheck(facts.terminal));
+  checks.push(storageCheck(facts.storage));
+  checks.push(protocolCheck(facts.protocol));
+  checks.push(sessionsCheck(facts.sessions));
+  checks.push(controlsCheck(facts.controls));
+  checks.push(quotaCheck(facts.auth));
+  checks.push(runStateCheck(facts));
+
   return checks;
+}
+
+/** Whole megabytes; the threshold is 200 MB and nobody needs a third decimal of it. */
+function megabytes(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+/**
+ * Can this terminal draw the workspace, and can it be typed into?
+ *
+ * Every one of these is a warning and never a failure: `cao` runs headless perfectly well in all of them,
+ * and the point of the check is that the degradation is otherwise invisible — nobody reports "the marks are
+ * ASCII", they report that the output looks broken.
+ */
+function terminalCheck(terminal: TerminalFacts): DoctorCheck {
+  const problems: string[] = [];
+  const remedies: string[] = [];
+  if (!terminal.tty) {
+    problems.push('stdout is not a terminal, so the workspace cannot be drawn here');
+    remedies.push('run cao from a terminal; piped and CI runs keep the plain output they have now');
+  } else if (!terminal.rawMode) {
+    problems.push('raw mode is unavailable, so keys cannot be read and the workspace would open read-only');
+    remedies.push('run cao from a terminal that owns stdin');
+  }
+  if (terminal.tty && ((terminal.columns ?? MIN_COLUMNS) < MIN_COLUMNS || (terminal.rows ?? MIN_ROWS) < MIN_ROWS)) {
+    problems.push(`the window is ${terminal.columns ?? '?'}x${terminal.rows ?? '?'}; the workspace is laid out for at least ${MIN_COLUMNS}x${MIN_ROWS}`);
+    remedies.push('resize the window, or pass --no-alt-screen so the output scrolls in the normal buffer');
+  }
+  if (!terminal.unicode) {
+    problems.push('unicode is not assumed here, so tables and status marks draw in ASCII');
+    remedies.push('set CAO_UNICODE=1 if the glyphs do render, or CAO_ASCII=1 to keep the plain ones deliberately');
+  }
+  if (terminal.colorLevel === 0) {
+    problems.push('no colour, so every state has to be told apart by its mark alone');
+    remedies.push('unset NO_COLOR, or set FORCE_COLOR=1 when the output is piped somewhere that renders it');
+  }
+  if (terminal.platform === 'win32' && !terminal.program) {
+    problems.push('this Windows console did not announce itself, so glyphs and colour are guessed conservatively');
+    remedies.push('run in Windows Terminal');
+  }
+  const size = terminal.columns !== undefined && terminal.rows !== undefined ? `${terminal.columns}x${terminal.rows}` : 'unknown size';
+  return {
+    id: 'terminal',
+    label: 'terminal',
+    status: problems.length ? 'warn' : 'ok',
+    detail: `${terminal.program ?? (terminal.tty ? 'terminal' : 'not a terminal')}, ${size}, ${terminal.unicode ? 'unicode' : 'ASCII'}, colour level ${terminal.colorLevel}`,
+    ...(problems.length ? { items: problems, hint: remedies.join('; ') } : {}),
+  };
+}
+
+/** Somewhere to write the run, and room to write it in. The only new check that can fail on its own. */
+function storageCheck(storage: StorageFacts): DoctorCheck {
+  const where = storage.exists ? storage.path : path.dirname(storage.path);
+  if (!storage.writable) {
+    return {
+      id: 'storage',
+      label: 'storage',
+      status: 'fail',
+      detail: `${where} is not writable${storage.error ? `: ${storage.error}` : ''}`,
+      hint: `grant write access to ${where}; every run writes its state, logs and diffs there`,
+    };
+  }
+  const problems: string[] = [];
+  const remedies: string[] = [];
+  const items: string[] = [];
+  if (storage.freeBytes !== undefined && storage.freeBytes < MIN_FREE_BYTES) {
+    problems.push(`${megabytes(storage.freeBytes)} free, under the ${megabytes(MIN_FREE_BYTES)} a run of any size needs`);
+    remedies.push(`free space on the volume holding ${where}`);
+  }
+  if (storage.staleTemp.length) {
+    problems.push(`${storage.staleTemp.length} scratch director(ies) in ${path.join(storage.path, 'tmp')} older than a day`);
+    items.push(...storage.staleTemp.map((leftover) => `${leftover.path}  ${formatAgeMs(leftover.ageMs)} old`));
+    remedies.push(`delete ${storage.staleTemp[0]!.path}${storage.staleTemp.length > 1 ? ' and the others listed above' : ''}`);
+  }
+  return {
+    id: 'storage',
+    label: 'storage',
+    status: problems.length ? 'warn' : 'ok',
+    detail: problems.length
+      ? problems.join('; ')
+      : `${where} is writable${storage.freeBytes !== undefined ? `, ${megabytes(storage.freeBytes)} free` : ''}`,
+    ...(problems.length ? { ...(items.length ? { items } : {}), hint: remedies.join('; ') } : {}),
+  };
+}
+
+/**
+ * Whether these run directories were written by a `cao` this one can still read (§4.5).
+ *
+ * A future request in a run somebody is *executing* is the failing case, and it is the only one: the owner
+ * will refuse that request, and the operator who sent it is waiting for something that is never going to
+ * happen. Everywhere else a newer writer is a warning — the evidence is on disk and nothing is stuck on it.
+ */
+function protocolCheck(protocol: ProtocolFacts): DoctorCheck {
+  const upgrade = 'npm i -g code-agent-orchestrator@beta';
+  const live = protocol.futureRequests.filter((request) => request.live);
+  if (live.length) {
+    return {
+      id: 'protocol',
+      label: 'protocol',
+      status: 'fail',
+      detail: `${live.length} request(s) waiting in a live run were written for a protocol newer than ${protocol.version}`,
+      items: live.map((request) => `${request.runId}  ${request.file}  protocol ${request.protocol}`),
+      hint: `${upgrade} — the orchestrator holding that run will refuse these rather than act on them`,
+    };
+  }
+  const problems: string[] = [];
+  const items: string[] = [];
+  if (protocol.futureRequests.length) {
+    problems.push(`${protocol.futureRequests.length} request(s) written for a protocol newer than ${protocol.version}`);
+    items.push(...protocol.futureRequests.map((request) => `${request.runId}  ${request.file}  protocol ${request.protocol}`));
+  }
+  if (protocol.rejected.length) {
+    problems.push(`${protocol.rejected.length} request(s) in requests/rejected/`);
+    items.push(...protocol.rejected.map((request) => `${request.runId}  ${request.file}${request.reason ? `  ${request.reason}` : ''}`));
+  }
+  if (protocol.writer !== undefined && protocol.writer > protocol.version && !protocol.futureRequests.length) {
+    problems.push(`these runs were written with protocol ${protocol.writer}, and this cao understands ${protocol.version}`);
+  }
+  return {
+    id: 'protocol',
+    label: 'protocol',
+    status: problems.length ? 'warn' : 'ok',
+    detail: problems.length ? problems.join('; ') : `protocol ${protocol.version}, and nothing on disk was written for a newer one`,
+    ...(problems.length ? { ...(items.length ? { items } : {}), hint: upgrade } : {}),
+  };
+}
+
+/** Are the sessions a follow-up would continue still on disk? A missing one silently starts over `[D25]`. */
+function sessionsCheck(sessions: SessionFacts): DoctorCheck {
+  if (!sessions.entries.length) {
+    return {
+      id: 'sessions',
+      label: 'sessions',
+      status: 'skip',
+      detail: sessions.runId ? `run ${sessions.runId} reported no resumable session` : 'no run to resume',
+    };
+  }
+  const missing = sessions.entries.filter((entry) => entry.presence === 'missing');
+  return {
+    id: 'sessions',
+    label: 'sessions',
+    status: missing.length ? 'warn' : 'ok',
+    detail: missing.length
+      ? `${missing.length} of ${sessions.entries.length} session(s) of run ${sessions.runId} are no longer on disk`
+      : `${sessions.entries.length} session(s) of run ${sessions.runId} can still be resumed`,
+    ...(missing.length
+      ? {
+          items: missing.map((entry) => `${entry.taskId}  ${entry.agent}  ${entry.sessionId}`),
+          hint: 'a follow-up to these would start a fresh session rather than continue one; send it with --fresh-session to say so deliberately',
+        }
+      : {}),
+  };
+}
+
+/** Which of the workspace's controls the installed CLIs can actually carry (§3.7). */
+function controlsCheck(controls: ControlSupport[]): DoctorCheck {
+  if (!controls.length) return { id: 'controls', label: 'controls', status: 'skip', detail: 'no agent CLI to ask' };
+  const degraded = controls.filter((control) => control.supported === false);
+  const hints = [...new Set(degraded.map((control) => control.hint).filter((hint): hint is string => Boolean(hint)))];
+  return {
+    id: 'controls',
+    label: 'controls',
+    status: degraded.length ? 'warn' : 'ok',
+    detail: degraded.length
+      ? `${degraded.length} of ${controls.length} control(s) fall back to something older`
+      : controls.map((control) => `${control.agent} ${control.control}`).join(', '),
+    ...(degraded.length
+      ? { items: degraded.map((control) => `${control.agent} ${control.control}: ${control.detail}`), hint: hints.join('; ') }
+      : {}),
+  };
+}
+
+/** Whether the credential in force can read a quota at all (§3.6, `[D29]`). */
+function quotaCheck(auth: AgentAuth[]): DoctorCheck {
+  const known = auth.filter((entry) => entry.mode !== 'unknown');
+  if (!known.length) return { id: 'quota', label: 'quota', status: 'skip', detail: 'no provider reports a login mode this can read' };
+  const refused = known.filter((entry) => entry.quotaHint);
+  return {
+    id: 'quota',
+    label: 'quota',
+    status: refused.length ? 'warn' : 'ok',
+    detail: known.map((entry) => `${entry.agent} ${entry.mode}`).join(', '),
+    ...(refused.length
+      ? {
+          items: refused.map((entry) => `${entry.agent} is authenticated with an API key, and quota reads are refused for one`),
+          hint: refused[0]!.quotaHint!,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Runs that say they are executing and are not, and requests nobody is answering.
+ *
+ * "Abandoned" is decided from the owner's identity, its pid and its heartbeat — never from the `running`
+ * label, which is only what makes a run worth asking about. The snapshot is written before the process that
+ * wrote it can crash, and a crashed run reads as `running` for ever.
+ */
+function runStateCheck(facts: DoctorFacts): DoctorCheck {
+  if (!facts.storeRoot) {
+    return { id: 'run-state', label: 'run state', status: 'skip', detail: `no ${ORCHESTRATOR_DIR}/runs directory at or above ${facts.repositoryRoot}` };
+  }
+  const { abandoned, unacked } = facts.runState;
+  const problems: string[] = [];
+  const items: string[] = [];
+  if (abandoned.length) {
+    problems.push(`${abandoned.length} run(s) marked running are abandoned`);
+    items.push(
+      ...abandoned.map(
+        (run) => `${run.runId}  abandoned: pid ${run.pid} ${run.reason === 'dead' ? 'is gone' : `is alive but has not beaten since ${run.heartbeatAt}`}  (${run.source})`,
+      ),
+    );
+  }
+  if (unacked.length) {
+    problems.push(`${unacked.length} request(s) unanswered for over a minute`);
+    items.push(...unacked.map((request) => `${request.runId}  ${request.kind}  ${request.id}  waiting ${formatAgeMs(request.ageMs)}`));
+  }
+  const resumable = abandoned[0]?.runId;
+  return {
+    id: 'run-state',
+    label: 'run state',
+    status: problems.length ? 'warn' : 'ok',
+    detail: problems.length ? problems.join('; ') : `${facts.runs?.active.length ?? 0} run(s) executing, and nothing waiting on an answer`,
+    ...(problems.length
+      ? {
+          items,
+          hint: resumable
+            ? `cao resume ${resumable} to pick it up, or cao ui ${resumable} to look at it first`
+            : `cao ui ${unacked[0]!.runId} — nothing is executing that run, so nothing is reading its inbox`,
+        }
+      : {}),
+  };
 }
 
 /**

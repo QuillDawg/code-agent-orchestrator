@@ -73,17 +73,22 @@ export function formatLocal(iso: string): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+/** A span in one unit: `42s`, `7m`, `3h`, `2d`. The coarse form, for ages nobody counts in seconds. */
+export function formatAgeMs(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
 /** How long ago something happened, in one unit: `42s ago`, `7m ago`, `3h ago`, `2d ago`. */
 export function formatAge(iso: string, now = Date.now()): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
-  const seconds = Math.max(0, Math.floor((now - t) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  return `${formatAgeMs(now - t)} ago`;
 }
 
 /** Local date and time with the relative age beside it, as `cao status` and `cao task` both print it. */

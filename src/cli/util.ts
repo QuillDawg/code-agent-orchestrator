@@ -42,7 +42,7 @@ export async function openStore(explicitRoot?: string): Promise<FileRunStore> {
 }
 
 /** How long after its last heartbeat an orchestrator is still believed to be at the wheel. */
-const HEARTBEAT_STALE_MS = 60_000;
+export const HEARTBEAT_STALE_MS = 60_000;
 
 export interface Orchestrator {
   pid: number;
@@ -61,14 +61,17 @@ export interface Orchestrator {
  * wrong in: it invites a second `cao run` or `cao resume` into the same working tree. So when the lock is
  * gone, `live.json` answers instead — the orchestrator rewrites it on the same 20-second heartbeat, and it
  * carries the same pid. A pid can be recycled, so the live fallback also requires a fresh heartbeat.
+ *
+ * `alive` is the liveness test, injectable so `cao doctor` can decide "abandoned" from a pid it was handed
+ * rather than from whatever is running on the machine the test happens to be on (§3.7).
  */
-export async function readOrchestrator(store: FileRunStore, runId: string): Promise<Orchestrator | null> {
+export async function readOrchestrator(store: FileRunStore, runId: string, alive: (pid: number) => boolean = isProcessAlive): Promise<Orchestrator | null> {
   const lock = await store.readLock(runId);
-  if (lock) return { pid: lock.pid, heartbeatAt: lock.heartbeatAt, source: 'lock', alive: isProcessAlive(lock.pid) };
+  if (lock) return { pid: lock.pid, heartbeatAt: lock.heartbeatAt, source: 'lock', alive: alive(lock.pid) };
   const live = await store.readLive(runId);
   if (!live || live.state !== 'running') return null;
   const fresh = Date.now() - new Date(live.heartbeatAt).getTime() < HEARTBEAT_STALE_MS;
-  return { pid: live.orchestratorPid, heartbeatAt: live.heartbeatAt, source: 'live', alive: fresh && isProcessAlive(live.orchestratorPid) };
+  return { pid: live.orchestratorPid, heartbeatAt: live.heartbeatAt, source: 'live', alive: fresh && alive(live.orchestratorPid) };
 }
 
 /** The run of this repository that an orchestrator process is executing right now, if there is one. */

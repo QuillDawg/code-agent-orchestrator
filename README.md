@@ -159,7 +159,8 @@ cao doctor --probe
 ```
 
 `doctor` checks Node, git, each agent CLI's supported version, authentication and automation capabilities,
-stale lock files and leftover worktrees, and prints a fix hint under anything that needs one. Run it first
+this terminal, the storage the runs are written to, the sessions a follow-up would resume, stale lock files,
+abandoned runs and leftover worktrees, and prints a fix hint under anything that needs one. Run it first
 whenever something does not work. `--probe` adds the checks that **start each mode a run can use** — Codex
 `exec` and `app-server`, Claude ask-mode and deny-mode — so a green `cao doctor --probe` means more than
 "the binary exists"; without it nothing is started and nothing is spent.
@@ -909,7 +910,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao report [run]` | The run as a document to paste into a pull request. `--json`, `--out <file>` |
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
-| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, with a fix hint under each failing check. `--probe` also starts each agent mode a run can use; without it nothing is started and nothing is spent. `--repository <dir>`, `--json` |
+| `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, the terminal, the storage the runs are written to, the protocol the run directories were written with, the sessions a follow-up would resume, which controls the installed CLIs can carry, the login mode behind the quota chips, stale locks, abandoned runs and leftover worktrees, with a fix hint under each failing check. `--probe` also starts each agent mode a run can use; without it nothing is started and nothing is spent. `--repository <dir>`, `--json` |
 | `cao diagnostics [run]` | One JSON file describing a run, to attach to a bug report: doctor facts (no probes), the redacted workflow, the run events, `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its `stderr.log`, and the inbox. Transcripts, prompts and diffs only with `--include transcripts,prompts,diffs`. Everything passes through the run's redactor; nothing is uploaded. `--out <file>` (required), `--repository <dir>` |
 
 **Exit codes**

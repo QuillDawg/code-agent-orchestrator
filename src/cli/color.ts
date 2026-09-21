@@ -19,6 +19,27 @@ export function useColor(mode: ColorMode = 'auto'): boolean {
   return Boolean(process.stdout.isTTY);
 }
 
+/**
+ * How much colour this terminal can show: `0` none, `1` the sixteen ANSI colours, `2` 256, `3` truecolor.
+ *
+ * `useColor` answers "may I paint", which is the question every call site has. This answers "how much of
+ * what I paint will arrive", which is the question `cao doctor` asks: a level of `0` means every state has
+ * to be told apart by its mark alone, and that is worth saying out loud before someone reports that the
+ * failed task "looks the same as the others".
+ */
+export function colorLevel(env: NodeJS.ProcessEnv = process.env, isTTY: boolean = Boolean(process.stdout.isTTY)): 0 | 1 | 2 | 3 {
+  if (env.NO_COLOR || env.TERM === 'dumb') return 0;
+  const forced = env.FORCE_COLOR !== undefined && !FORCE_OFF.has(env.FORCE_COLOR.trim().toLowerCase());
+  if (!isTTY && !forced) return 0;
+  const colorterm = (env.COLORTERM ?? '').toLowerCase();
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 3;
+  // Windows Terminal and the modern conhost both do 24-bit and neither sets COLORTERM.
+  if (env.WT_SESSION) return 3;
+  const term = env.TERM ?? '';
+  if (term.includes('256color') || env.TERM_PROGRAM || env.ConEmuTask) return 2;
+  return 1;
+}
+
 export function ansi(text: string, code: number, mode?: ColorMode): string {
   return useColor(mode) ? `${ESC}[${code}m${text}${ESC}[0m` : text;
 }

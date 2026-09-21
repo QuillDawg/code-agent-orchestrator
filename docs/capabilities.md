@@ -848,8 +848,17 @@ Run state:  /home/me/projects/api/.orchestrator/runs
                      → cao clean 2026-09-03-002 --all
 ✓ branches           no orchestrator/* branches left over
 ✓ git ignore         .orchestrator/ is ignored (.git/info/exclude)
+✓ terminal           xterm-256color, 142x44, unicode, colour level 3
+✓ storage            /home/me/projects/api/.orchestrator is writable, 41203 MB free
+✓ protocol           protocol 1, and nothing on disk was written for a newer one
+✓ sessions           2 session(s) of run 2026-09-03-002 can still be resumed
+✓ controls           claude follow-up acknowledgment, codex steer a running turn, codex quota reads
+✓ quota              codex subscription
+! run state          1 run(s) marked running are abandoned
+                     · 2026-09-03-002  abandoned: pid 41208 is gone  (lock)
+                     → cao resume 2026-09-03-002 to pick it up, or cao ui 2026-09-03-002 to look at it first
 
-! All required checks passed, 3 warning(s).
+! All required checks passed, 4 warning(s).
 ```
 
 What it checks, and how it grades what it finds:
@@ -863,7 +872,26 @@ What it checks, and how it grades what it finds:
 | `worktrees` | — | a worktree of a finished run is still on disk |
 | `branches` | — | an `orchestrator/*` branch has no worktree holding it |
 | `git ignore` | — | `.orchestrator/` is not ignored, so run state shows up in `git status` |
+| `terminal` | — | this is not a terminal, keys cannot be read, the window is under 80×24, unicode or colour is unavailable, or a Windows console did not say which one it is |
+| `storage` | `.orchestrator/` cannot be written to | under 200 MB free on its volume, or `.orchestrator/tmp/` holds scratch directories more than a day old |
+| `protocol` | a request waiting in a run somebody is **executing** was written for a newer protocol than this build understands | a request was moved to `requests/rejected/`, or these run directories were written by a newer `cao` |
+| `sessions` | — | a session the latest run would resume is no longer on the agent's disk, so a follow-up would silently start a fresh one |
+| `controls` | — | an installed CLI cannot carry one of the workspace's controls: Claude without `--replay-user-messages`, Codex below `0.99.0` (`turn/steer`) or below `0.48.0` (quota reads) |
+| `quota` | — | the provider is authenticated with an API key, and quota reads are refused for one |
+| `run state` | — | a run marked `running` whose owner pid is gone or has not beaten in 60 s — reported as **abandoned** — or a request nobody has answered in a minute |
 | `<agent> <mode>` (only with `--probe`) | a mode a workflow can select would not start: the CLI refused the argv, the API refused the output schema, or the transport is not there | — |
+
+The last seven rows are about the things that fail *quietly*. A CLI that cannot steer still runs the task,
+it just stops and continues instead; a session the agent has deleted still takes the follow-up, it just
+starts over; a console that cannot draw unicode still prints, it just prints mojibake; a run whose
+orchestrator crashed still says `running` in every listing. None of them stops a run, so none of them
+except unwritable storage grades worse than a warning — and all of them are invisible until somebody
+notices the output is wrong.
+
+**Abandoned is decided from the owner, never from the label.** A run directory is written before the process
+that wrote it can crash, so `running` on disk means "nobody has said otherwise". What decides is `lock.json`
+and `live.json`: which pid claims the run, whether that pid is still alive, and whether it has beaten in the
+last 60 seconds. Doctor repairs nothing — it names the run and prints the `cao resume` that would pick it up.
 
 ### `--probe` starts the modes for real
 

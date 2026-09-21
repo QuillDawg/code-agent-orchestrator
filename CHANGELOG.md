@@ -10,6 +10,23 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **Seven new `cao doctor` checks**, each graded with its evidence and one line saying what to do about it,
+  and each carried in `--json` beside the facts behind it. `terminal` says whether this is a terminal at
+  all, whether keys can be read, whether the window is at least 80×24, whether unicode and colour will
+  arrive, and whether a Windows console said which one it is. `storage` fails when `.orchestrator/` cannot
+  be written to and warns under 200 MB free or on scratch directories in `.orchestrator/tmp/` older than a
+  day. `protocol` fails on a request waiting in a run somebody is *executing* that was written for a newer
+  protocol than this build understands, and warns on rejected requests and on run directories a newer `cao`
+  wrote. `sessions` says whether the sessions the latest run would resume are still on the agent's disk.
+  `controls` says which of the workspace's controls each installed CLI can actually carry — Claude's
+  `--replay-user-messages`, Codex's `turn/steer` and its quota reads — and names the upgrade for the ones
+  it cannot. `quota` says when the provider is authenticated with an API key, which cannot read a quota.
+  `run state` reports a run marked `running` whose owner pid is gone or has not beaten in a minute as
+  **abandoned**, with the `cao resume` that picks it up, and names requests nobody has answered in a minute.
+  Abandoned is decided from `lock.json`/`live.json` owner identity, pid liveness and heartbeat, never from
+  the stored label. Doctor still repairs nothing and still starts no agent without `--probe`; the existing
+  check ids and their order are unchanged, so a `--json` reader gains entries and loses none.
+
 - **The Logs tab.** Every file a run writes, read a page at a time: the orchestrator's `orchestrator.log`,
   the run's `events.jsonl`, and each attempt's `events.jsonl`, `stdout.log`, `stderr.log` and `prompt.md`.
   `v` steps through the four views — normalized events, stderr, raw output, prompts — `[` and `]` through

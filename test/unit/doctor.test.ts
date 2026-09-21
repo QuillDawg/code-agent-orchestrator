@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import { execa } from 'execa';
 import {
   satisfiesNode,
+  detectTerminal,
   evaluate,
   renderChecks,
   gatherFacts,
@@ -11,7 +12,13 @@ import {
   type DoctorCheck,
   type DoctorDeps,
   type DoctorFacts,
+  type TerminalFacts,
 } from '../../src/cli/commands/doctor.js';
+import { controlSupport } from '../../src/runners/controls.js';
+import { codexAuthMode } from '../../src/runners/codex/auth.js';
+import { codexSessionPresence } from '../../src/runners/codex/session-file.js';
+import { colorLevel } from '../../src/cli/color.js';
+import { controlRequest, writeControlRequest, writeAck, controlAck } from '../../src/persistence/requests.js';
 import { type WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { createNativeRunPaths } from '../../src/persistence/paths.js';
 import { buildWorkflow, captureCli, FAKE_CLAUDE, FAKE_CODEX, gitAvailable, makeRun, tmpDir, tmpGitRepo } from '../helpers/index.js';
@@ -39,6 +46,13 @@ const facts = (over: Partial<DoctorFacts> = {}): DoctorFacts => ({
   orphanWorktrees: [],
   orphanBranches: [],
   exclude: { status: 'ignored', via: 'exclude' },
+  terminal: { platform: 'linux', tty: true, rawMode: true, columns: 120, rows: 40, unicode: true, colorLevel: 3, program: 'xterm-256color' },
+  storage: { path: '/repo/.orchestrator', exists: true, writable: true, freeBytes: 40 * 1024 * 1024 * 1024, staleTemp: [] },
+  protocol: { version: 1, futureRequests: [], rejected: [] },
+  sessions: { runId: '2026-01-01-001', entries: [{ taskId: 'build', agent: 'claude', sessionId: 'abc', presence: 'present' }] },
+  controls: [{ agent: 'claude', control: 'follow-up acknowledgment', supported: true, detail: '--replay-user-messages is advertised' }],
+  auth: [{ agent: 'codex', mode: 'subscription' }],
+  runState: { abandoned: [], unacked: [] },
   ...over,
 });
 
@@ -52,10 +66,16 @@ const check = (checks: DoctorCheck[], id: string): DoctorCheck => {
  * Detection stubs: nothing in these tests may reach a real `claude`, `codex` or PATH lookup — including the
  * live probes, which would otherwise start whatever `claude`/`codex` happens to be on this machine's PATH.
  */
+const TERMINAL: TerminalFacts = { platform: 'linux', tty: true, rawMode: true, columns: 120, rows: 40, unicode: true, colorLevel: 3, program: 'xterm-256color' };
+
 const stubDetect = (opts: { claude?: boolean; codex?: boolean } = {}): Partial<DoctorDeps> => ({
   detectClaude: async () => (opts.claude === false ? { command: 'claude', found: false, error: 'spawn claude ENOENT' } : { command: 'claude', found: true, version: '9.9.9 (Fake Claude)' }),
   detectCodex: async () => (opts.codex === false ? { command: 'codex', found: false, error: 'spawn codex ENOENT' } : { command: 'codex', found: true, version: 'codex-cli 0.1.0' }),
   probeAgents: async () => [],
+  // Nothing in these tests may read the machine's terminal, home directory or Codex login.
+  readTerminal: () => TERMINAL,
+  readAgentAuth: async (agents) => agents.map((agent) => ({ agent, mode: 'unknown' as const })),
+  sessionPresence: async () => 'unknown',
 });
 
 describe('engines.node comparison', () => {
@@ -355,7 +375,13 @@ describe.skipIf(!HAS_GIT)('cao doctor', () => {
     const parsed = JSON.parse(stdout) as { ok: boolean; cao: string; checks: DoctorCheck[]; facts: DoctorFacts };
     expect(parsed.ok).toBe(true);
     // The probe rows are there without a probe having run: they say so, rather than being left out [D32].
-    expect(parsed.checks.map((c) => c.id)).toEqual(['node', 'git', 'agent:claude', 'agent:codex', 'probe:claude:live start', 'probe:codex:live start', 'locks', 'worktrees', 'branches', 'exclude']);
+    // Additive: every id a reader already knew is still there, in the same order, and the §3.7 checks follow.
+    expect(parsed.checks.map((c) => c.id)).toEqual([
+      'node', 'git', 'agent:claude', 'agent:codex', 'probe:claude:live start', 'probe:codex:live start', 'locks', 'worktrees', 'branches', 'exclude',
+      'terminal', 'storage', 'protocol', 'sessions', 'controls', 'quota', 'run-state',
+    ]);
+    expect(parsed.facts.terminal).toEqual(TERMINAL);
+    expect(parsed.facts.protocol).toMatchObject({ version: 1, futureRequests: [], rejected: [] });
     expect(parsed.facts.agents[0]).toMatchObject({ runner: 'claude', found: true });
     expect(parsed.cao).toMatch(/^\d+\.\d+\.\d+/);
   });
@@ -442,5 +468,412 @@ describe('agent probes', () => {
   it('reports a CLI that refuses the argv rather than blaming the session', async () => {
     const result = await probeClaudePromptMode('deny', { command: `${FAKE_CLAUDE} --definitely-not-a-flag`, processManager: new ProcessManager(), timeoutMs: 15_000 });
     expect(result).toMatchObject({ status: 'fail', detail: expect.stringContaining('--definitely-not-a-flag') });
+  });
+});
+
+/**
+ * The §3.7 checks. Every one of them grades something that is otherwise invisible - a control that quietly
+ * falls back, a session that quietly starts over, a screen that quietly loses rows - so each row of the
+ * table gets both of its grades here, judged from facts rather than from whatever this machine looks like.
+ */
+describe('doctor checks: the environment (S3)', () => {
+  const terminal = (over: Partial<TerminalFacts> = {}): DoctorFacts => facts({ terminal: { ...TERMINAL, ...over } });
+
+  it('passes a terminal that can draw the workspace', () => {
+    const check_ = check(evaluate(terminal()), 'terminal');
+    expect(check_.status).toBe('ok');
+    expect(check_.detail).toBe('xterm-256color, 120x40, unicode, colour level 3');
+    expect(check_.hint).toBeUndefined();
+  });
+
+  it('warns for each way a terminal cannot draw the workspace, and names the switch that helps', () => {
+    const piped = check(evaluate(terminal({ tty: false, rawMode: false, colorLevel: 0 })), 'terminal');
+    expect(piped.status).toBe('warn');
+    expect(piped.items?.[0]).toContain('stdout is not a terminal');
+    // Not a TTY subsumes raw mode: one line about the cause, not two about the symptom.
+    expect(piped.items?.some((i) => i.includes('raw mode'))).toBe(false);
+
+    const noKeys = check(evaluate(terminal({ rawMode: false })), 'terminal');
+    expect(noKeys.status).toBe('warn');
+    expect(noKeys.items?.[0]).toContain('raw mode is unavailable');
+
+    const small = check(evaluate(terminal({ columns: 72, rows: 18 })), 'terminal');
+    expect(small.items?.[0]).toContain('72x18');
+    expect(small.hint).toContain('--no-alt-screen');
+
+    const ascii = check(evaluate(terminal({ unicode: false })), 'terminal');
+    expect(ascii.detail).toContain('ASCII');
+    expect(ascii.hint).toContain('CAO_ASCII=1');
+
+    const mono = check(evaluate(terminal({ colorLevel: 0 })), 'terminal');
+    expect(mono.status).toBe('warn');
+    expect(mono.items?.[0]).toContain('no colour');
+
+    const console_ = check(evaluate(terminal({ platform: 'win32', program: undefined })), 'terminal');
+    expect(console_.status).toBe('warn');
+    expect(console_.hint).toContain('Windows Terminal');
+    // A Windows console that did announce itself is not a warning.
+    expect(check(evaluate(terminal({ platform: 'win32', program: 'Windows Terminal' })), 'terminal').status).toBe('ok');
+  });
+
+  it('fails a run directory it cannot write to and names the path', () => {
+    const ok = check(evaluate(facts()), 'storage');
+    expect(ok.status).toBe('ok');
+    expect(ok.detail).toContain('is writable');
+
+    const readOnly = check(evaluate(facts({ storage: { path: '/repo/.orchestrator', exists: true, writable: false, error: 'EACCES', staleTemp: [] } })), 'storage');
+    expect(readOnly.status).toBe('fail');
+    expect(readOnly.detail).toContain('/repo/.orchestrator');
+    expect(readOnly.hint).toContain('grant write access to /repo/.orchestrator');
+  });
+
+  it('warns about a nearly full volume and about scratch directories older than a day', () => {
+    const full = check(evaluate(facts({ storage: { path: '/repo/.orchestrator', exists: true, writable: true, freeBytes: 40 * 1024 * 1024, staleTemp: [] } })), 'storage');
+    expect(full.status).toBe('warn');
+    expect(full.detail).toContain('40 MB free');
+    expect(full.detail).toContain('200 MB');
+    expect(full.hint).toContain('free space on the volume holding /repo/.orchestrator');
+
+    const leftovers = check(
+      evaluate(
+        facts({
+          storage: {
+            path: '/repo/.orchestrator',
+            exists: true,
+            writable: true,
+            freeBytes: 40 * 1024 * 1024 * 1024,
+            staleTemp: [{ path: '/repo/.orchestrator/tmp/2026-01-01-001', ageMs: 50 * 60 * 60 * 1000 }],
+          },
+        }),
+      ),
+      'storage',
+    );
+    expect(leftovers.status).toBe('warn');
+    expect(leftovers.items?.[0]).toContain('/repo/.orchestrator/tmp/2026-01-01-001');
+    expect(leftovers.hint).toContain('delete /repo/.orchestrator/tmp/2026-01-01-001');
+  });
+
+  it('fails a future-protocol request the live orchestrator will refuse, and warns about one nobody holds', () => {
+    const clean = check(evaluate(facts()), 'protocol');
+    expect(clean.status).toBe('ok');
+
+    const live = check(
+      evaluate(facts({ protocol: { version: 1, writer: 2, futureRequests: [{ runId: '2026-01-01-001', file: '01J-stop.json', protocol: 2, live: true }], rejected: [] } })),
+      'protocol',
+    );
+    expect(live.status).toBe('fail');
+    expect(live.items?.[0]).toContain('protocol 2');
+    expect(live.hint).toContain('npm i -g code-agent-orchestrator@beta');
+
+    const dead = check(
+      evaluate(facts({ protocol: { version: 1, writer: 2, futureRequests: [{ runId: '2026-01-01-001', file: '01J-stop.json', protocol: 2, live: false }], rejected: [] } })),
+      'protocol',
+    );
+    expect(dead.status).toBe('warn');
+  });
+
+  it('warns about rejected requests and about a run written by a newer cao', () => {
+    const rejected = check(
+      evaluate(facts({ protocol: { version: 1, futureRequests: [], rejected: [{ runId: '2026-01-01-001', file: '01J-stop.json', reason: 'not valid JSON' }] } })),
+      'protocol',
+    );
+    expect(rejected.status).toBe('warn');
+    expect(rejected.items?.[0]).toContain('not valid JSON');
+    expect(rejected.hint).toBe('npm i -g code-agent-orchestrator@beta');
+
+    const newer = check(evaluate(facts({ protocol: { version: 1, writer: 3, futureRequests: [], rejected: [] } })), 'protocol');
+    expect(newer.status).toBe('warn');
+    expect(newer.detail).toContain('written with protocol 3');
+  });
+
+  it('warns when a session a follow-up would continue is no longer on disk', () => {
+    expect(check(evaluate(facts({ sessions: { entries: [] } })), 'sessions').status).toBe('skip');
+    expect(check(evaluate(facts()), 'sessions').status).toBe('ok');
+
+    const gone = facts({
+      sessions: {
+        runId: '2026-01-01-001',
+        entries: [
+          { taskId: 'build', agent: 'claude', sessionId: 'abc', presence: 'missing' },
+          { taskId: 'review', agent: 'codex', sessionId: 'def', presence: 'present' },
+        ],
+      },
+    });
+    const check_ = check(evaluate(gone), 'sessions');
+    expect(check_.status).toBe('warn');
+    expect(check_.detail).toContain('1 of 2');
+    expect(check_.items).toEqual(['build  claude  abc']);
+    expect(check_.hint).toContain('--fresh-session');
+
+    // "unknown" is never a verdict: a machine this cannot read is not evidence that the session is gone.
+    const unknown = facts({ sessions: { runId: '2026-01-01-001', entries: [{ taskId: 'build', agent: 'claude', sessionId: 'abc', presence: 'unknown' }] } });
+    expect(check(evaluate(unknown), 'sessions').status).toBe('ok');
+  });
+
+  it('warns about a control the installed CLI cannot carry, and names the upgrade', () => {
+    expect(check(evaluate(facts({ controls: [] })), 'controls').status).toBe('skip');
+
+    const supported = facts({
+      controls: [
+        { agent: 'claude', control: 'follow-up acknowledgment', supported: true, detail: '--replay-user-messages is advertised' },
+        { agent: 'codex', control: 'steer a running turn', supported: true, detail: 'turn/steer, from 0.99.0' },
+      ],
+    });
+    expect(check(evaluate(supported), 'controls').status).toBe('ok');
+
+    const degraded = facts({
+      controls: [
+        { agent: 'claude', control: 'follow-up acknowledgment', supported: false, detail: 'not advertised', hint: 'npm i -g @anthropic-ai/claude-code@latest' },
+        { agent: 'codex', control: 'quota reads', supported: true, detail: 'from 0.48.0' },
+      ],
+    });
+    const check_ = check(evaluate(degraded), 'controls');
+    expect(check_.status).toBe('warn');
+    expect(check_.detail).toBe('1 of 2 control(s) fall back to something older');
+    expect(check_.hint).toBe('npm i -g @anthropic-ai/claude-code@latest');
+  });
+
+  it('warns when the credential in force cannot read a quota, and says so with the login command', () => {
+    expect(check(evaluate(facts({ auth: [] })), 'quota').status).toBe('skip');
+    // Every mode unknown is still nothing to grade: it is "not readable", not "not working".
+    expect(check(evaluate(facts({ auth: [{ agent: 'claude', mode: 'unknown' }] })), 'quota').status).toBe('skip');
+
+    const seat = check(evaluate(facts({ auth: [{ agent: 'codex', mode: 'subscription' }] })), 'quota');
+    expect(seat.status).toBe('ok');
+    expect(seat.detail).toBe('codex subscription');
+
+    const key = check(evaluate(facts({ auth: [{ agent: 'codex', mode: 'apiKey', quotaHint: '`codex login` to sign in with ChatGPT for quotas; an API key cannot read them' }] })), 'quota');
+    expect(key.status).toBe('warn');
+    expect(key.items?.[0]).toContain('API key');
+    expect(key.hint).toContain('codex login');
+  });
+
+  it('calls a running run whose owner is gone abandoned, and offers the resume that picks it up', () => {
+    expect(check(evaluate(facts()), 'run-state').status).toBe('ok');
+
+    const dead = check(
+      evaluate(facts({ runState: { abandoned: [{ runId: '2026-01-01-001', pid: 4242, heartbeatAt: '2026-01-01T00:00:00.000Z', source: 'lock', reason: 'dead' }], unacked: [] } })),
+      'run-state',
+    );
+    expect(dead.status).toBe('warn');
+    expect(dead.items?.[0]).toContain('abandoned: pid 4242 is gone');
+    expect(dead.hint).toBe('cao resume 2026-01-01-001 to pick it up, or cao ui 2026-01-01-001 to look at it first');
+
+    const silent = check(
+      evaluate(facts({ runState: { abandoned: [{ runId: '2026-01-01-001', pid: 4242, heartbeatAt: '2026-01-01T00:00:00.000Z', source: 'live', reason: 'silent' }], unacked: [] } })),
+      'run-state',
+    );
+    expect(silent.items?.[0]).toContain('has not beaten since 2026-01-01T00:00:00.000Z');
+  });
+
+  it('warns about a request nobody has answered in a minute', () => {
+    const check_ = check(
+      evaluate(facts({ runState: { abandoned: [], unacked: [{ runId: '2026-01-01-001', id: '01J', kind: 'stop', requestedAt: '2026-01-01T00:00:00.000Z', ageMs: 300_000 }] } })),
+      'run-state',
+    );
+    expect(check_.status).toBe('warn');
+    expect(check_.detail).toContain('1 request(s) unanswered');
+    expect(check_.items?.[0]).toContain('stop');
+    expect(check_.hint).toContain('cao ui 2026-01-01-001');
+  });
+
+  it('skips the run-state check where there is no run directory', () => {
+    const bare = facts({ storeRoot: undefined, runs: undefined });
+    expect(check(evaluate(bare), 'run-state').status).toBe('skip');
+  });
+});
+
+/** The per-agent knowledge behind the `controls` and `quota` rows, which lives under `src/runners/`. */
+describe('control and quota support', () => {
+  it('reports the controls each CLI advertises, and the upgrade for the ones it does not', () => {
+    const rows = controlSupport([
+      { runner: 'claude', command: 'claude', found: true, version: '2.1.267', capabilities: ['streamJson'] },
+      { runner: 'codex', command: 'codex', found: true, version: '0.153.0', capabilities: ['exec', 'appServer', 'steer'] },
+    ]);
+    expect(rows.map((r) => `${r.agent} ${r.control} ${String(r.supported)}`)).toEqual([
+      'claude follow-up acknowledgment false',
+      'codex steer a running turn true',
+      'codex quota reads true',
+    ]);
+    expect(rows[0]!.hint).toBe('npm i -g @anthropic-ai/claude-code@latest');
+    expect(rows[0]!.detail).toContain('--replay-user-messages');
+  });
+
+  it('names the two Codex version floors separately', () => {
+    const rows = controlSupport([{ runner: 'codex', command: 'codex', found: true, version: '0.40.0', capabilities: ['exec'] }]);
+    expect(rows.map((r) => r.supported)).toEqual([false, false]);
+    expect(rows[0]!.detail).toContain('0.99.0');
+    expect(rows[1]!.detail).toContain('0.48.0');
+  });
+
+  it('says nothing about a CLI that is not installed: its own line already did', () => {
+    expect(controlSupport([{ runner: 'codex', command: 'codex', found: false }])).toEqual([]);
+  });
+
+  it('reads the Codex login mode from the files the CLI writes, never from a process', async () => {
+    const home = await tmpDir('cao-codex-home-');
+    expect(await codexAuthMode({ CODEX_HOME: home })).toBe('none');
+
+    await fs.writeFile(path.join(home, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: null, tokens: { id_token: 'x' } }));
+    expect(await codexAuthMode({ CODEX_HOME: home })).toBe('subscription');
+
+    await fs.writeFile(path.join(home, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'sk-test' }));
+    expect(await codexAuthMode({ CODEX_HOME: home })).toBe('apiKey');
+
+    // The environment wins, because it is what the next `codex` invocation will use.
+    await fs.writeFile(path.join(home, 'auth.json'), JSON.stringify({ tokens: { id_token: 'x' } }));
+    expect(await codexAuthMode({ CODEX_HOME: home, OPENAI_API_KEY: 'sk-env' })).toBe('apiKey');
+
+    await fs.writeFile(path.join(home, 'auth.json'), 'not json');
+    expect(await codexAuthMode({ CODEX_HOME: home })).toBe('unknown');
+  });
+
+  it('finds a Codex rollout that has been compressed since the thread ended', async () => {
+    const home = await tmpDir('cao-codex-rollout-');
+    const day = path.join(home, 'sessions', '2026', '01', '02');
+    await fs.mkdir(day, { recursive: true });
+    await fs.writeFile(path.join(day, 'rollout-2026-01-02T10-00-00-thread-1.jsonl.gz'), '');
+    expect(await codexSessionPresence('thread-1', home, { CODEX_HOME: home })).toBe('present');
+    expect(await codexSessionPresence('thread-2', home, { CODEX_HOME: home })).toBe('missing');
+  });
+});
+
+describe('terminal capability reading', () => {
+  it('grades colour from what the terminal announced', () => {
+    expect(colorLevel({ NO_COLOR: '1' }, true)).toBe(0);
+    expect(colorLevel({ TERM: 'dumb' }, true)).toBe(0);
+    expect(colorLevel({}, false)).toBe(0);
+    expect(colorLevel({ FORCE_COLOR: '1' }, false)).toBe(1);
+    expect(colorLevel({ COLORTERM: 'truecolor' }, true)).toBe(3);
+    expect(colorLevel({ WT_SESSION: 'abc' }, true)).toBe(3);
+    expect(colorLevel({ TERM: 'xterm-256color' }, true)).toBe(2);
+    expect(colorLevel({ TERM: 'xterm' }, true)).toBe(1);
+  });
+
+  it('reads the size, the raw-mode capability and the name the terminal gave itself', () => {
+    const found = detectTerminal(
+      { TERM_PROGRAM: 'vscode', COLORTERM: 'truecolor' },
+      { isTTY: true, columns: 100, rows: 30 },
+      { isTTY: true, setRawMode: () => undefined },
+      'darwin',
+    );
+    expect(found).toMatchObject({ platform: 'darwin', tty: true, rawMode: true, columns: 100, rows: 30, colorLevel: 3, program: 'vscode' });
+
+    const piped = detectTerminal({}, {}, {}, 'win32');
+    expect(piped).toMatchObject({ tty: false, rawMode: false, colorLevel: 0 });
+    expect(piped.program).toBeUndefined();
+    expect(piped.columns).toBeUndefined();
+  });
+});
+
+describe.skipIf(!HAS_GIT)('the environment checks against a real run directory', () => {
+  /**
+   * The integration half of the `run state` row: a run whose snapshot says `running` and whose owner pid is
+   * gone. Nothing about the stored label decides this - the pid does, which is why the liveness test is the
+   * injected one and not this machine's.
+   */
+  it('reports a run whose owner pid is dead as abandoned, with the resume that picks it up', async () => {
+    const repo = await tmpGitRepo('cao-doctor-abandoned-');
+    const paths = createNativeRunPaths(repo);
+    const run = await writeRun(repo, '2026-01-01-001', path.join(repo, '.orchestrator', 'worktrees', 'build'), 'orchestrator/build');
+    run.state = 'running';
+    run.orchestratorPid = 4242;
+    await fs.writeFile(paths.workflowFile(run.runId), JSON.stringify(run, null, 2));
+    await fs.writeFile(paths.lockFile(run.runId), JSON.stringify({ pid: 4242, startedAt: '2026-01-01T00:00:00.000Z', heartbeatAt: '2026-01-01T00:00:00.000Z' }));
+
+    const gathered = await gatherFacts({ repository: repo }, { ...stubDetect(), isProcessAlive: () => false });
+    expect(gathered.runState.abandoned).toEqual([
+      { runId: '2026-01-01-001', pid: 4242, heartbeatAt: '2026-01-01T00:00:00.000Z', source: 'lock', reason: 'dead' },
+    ]);
+    const check_ = check(evaluate(gathered), 'run-state');
+    expect(check_.status).toBe('warn');
+    expect(check_.items?.[0]).toContain('abandoned');
+    expect(check_.hint).toContain('cao resume 2026-01-01-001');
+
+    // A pid that is alive but has stopped beating is the other half of the rule, and is abandoned too.
+    const hung = await gatherFacts({ repository: repo }, { ...stubDetect(), isProcessAlive: () => true });
+    expect(hung.runState.abandoned).toEqual([
+      { runId: '2026-01-01-001', pid: 4242, heartbeatAt: '2026-01-01T00:00:00.000Z', source: 'lock', reason: 'silent' },
+    ]);
+
+    // Alive and beating: not abandoned, however long the snapshot has said `running`.
+    const now = Date.now();
+    await fs.writeFile(paths.lockFile(run.runId), JSON.stringify({ pid: 4242, startedAt: '2026-01-01T00:00:00.000Z', heartbeatAt: new Date(now).toISOString() }));
+    const held = await gatherFacts({ repository: repo }, { ...stubDetect(), isProcessAlive: () => true, now });
+    expect(held.runState.abandoned).toEqual([]);
+  });
+
+  it('reads the inbox without consuming it, and reports what is stuck in it', async () => {
+    const repo = await tmpGitRepo('cao-doctor-inbox-');
+    const paths = createNativeRunPaths(repo);
+    await writeRun(repo, '2026-01-01-001', path.join(repo, '.orchestrator', 'worktrees', 'build'), 'orchestrator/build');
+    await fs.mkdir(paths.requestsDir('2026-01-01-001'), { recursive: true });
+    await fs.mkdir(paths.requestAcksDir('2026-01-01-001'), { recursive: true });
+    await fs.mkdir(paths.requestRejectedDir('2026-01-01-001'), { recursive: true });
+
+    const waiting = controlRequest('stop', { requestedAt: '2026-01-01T00:00:00.000Z' });
+    const answered = controlRequest('stop', { requestedAt: '2026-01-01T00:00:00.000Z' });
+    await writeControlRequest(paths, '2026-01-01-001', waiting);
+    await writeControlRequest(paths, '2026-01-01-001', answered);
+    await writeAck(paths, '2026-01-01-001', controlAck(answered.id, 'applied'));
+    const future = { ...controlRequest('stop', { requestedAt: '2026-01-01T00:00:00.000Z' }), protocol: 9 };
+    await fs.writeFile(path.join(paths.requestsDir('2026-01-01-001'), `${future.id}-stop.json`), JSON.stringify(future));
+    await fs.writeFile(path.join(paths.requestRejectedDir('2026-01-01-001'), '01JREJECTED-stop.json'), JSON.stringify({ protocol: 1, id: '01JREJECTED', kind: 'stop' }));
+    await fs.writeFile(path.join(paths.requestRejectedDir('2026-01-01-001'), '01JREJECTED-stop.json.reason.txt'), 'the file is not valid JSON\n');
+
+    const gathered = await gatherFacts({ repository: repo }, { ...stubDetect(), isProcessAlive: () => false });
+    expect(gathered.protocol).toMatchObject({ version: 1, writer: 9 });
+    expect(gathered.protocol.futureRequests).toEqual([{ runId: '2026-01-01-001', file: `${future.id}-stop.json`, protocol: 9, live: false }]);
+    expect(gathered.protocol.rejected).toEqual([{ runId: '2026-01-01-001', file: '01JREJECTED-stop.json', reason: 'the file is not valid JSON' }]);
+    // The acked one is answered; the other two have been waiting since 2026 and nobody is reading them.
+    expect(gathered.runState.unacked.map((r) => r.id).sort()).toEqual([future.id, waiting.id].sort());
+
+    const protocolCheck_ = check(evaluate(gathered), 'protocol');
+    expect(protocolCheck_.status).toBe('warn'); // nothing owns the run, so nothing is about to refuse it
+    expect(protocolCheck_.hint).toBe('npm i -g code-agent-orchestrator@beta');
+
+    // Read-only by definition: doctor must not move a request the way the owner's reader does.
+    expect((await fs.readdir(paths.requestsDir('2026-01-01-001'))).filter((name) => name.endsWith('.json'))).toHaveLength(3);
+  });
+
+  it('reads the latest run session ids through the injected probe and warns about the ones that are gone', async () => {
+    const repo = await tmpGitRepo('cao-doctor-sessions-');
+    const paths = createNativeRunPaths(repo);
+    const run = await writeRun(repo, '2026-01-01-001', repo, 'orchestrator/build');
+    run.tasks.build!.attempts[0]!.sessionId = 'session-abc';
+    await fs.writeFile(paths.workflowFile(run.runId), JSON.stringify(run, null, 2));
+
+    const asked: string[] = [];
+    const gathered = await gatherFacts({ repository: repo }, {
+      ...stubDetect(),
+      sessionPresence: async (_task, sessionId) => {
+        asked.push(sessionId);
+        return 'missing';
+      },
+    });
+    expect(asked).toEqual(['session-abc']);
+    expect(gathered.sessions).toEqual({ runId: '2026-01-01-001', entries: [{ taskId: 'build', agent: 'claude', sessionId: 'session-abc', presence: 'missing' }] });
+    expect(check(evaluate(gathered), 'sessions').hint).toContain('--fresh-session');
+  });
+
+  it('finds the scratch directories a finished run left in .orchestrator/tmp', async () => {
+    const repo = await tmpGitRepo('cao-doctor-storage-');
+    const tmp = path.join(repo, '.orchestrator', 'tmp', '2026-01-01-001');
+    await fs.mkdir(tmp, { recursive: true });
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await fs.utimes(tmp, twoDaysAgo, twoDaysAgo);
+
+    const gathered = await gatherFacts({ repository: repo }, stubDetect());
+    expect(gathered.storage.exists).toBe(true);
+    expect(gathered.storage.writable).toBe(true);
+    expect(gathered.storage.staleTemp.map((t) => t.path)).toEqual([tmp]);
+    expect(check(evaluate(gathered), 'storage').status).toBe('warn');
+
+    // And it leaves nothing of its own behind: the probe file is removed in the same breath.
+    expect((await fs.readdir(path.join(repo, '.orchestrator'))).filter((n) => n.startsWith('.cao-doctor-'))).toEqual([]);
+
+    const fresh = new Date();
+    await fs.utimes(tmp, fresh, fresh);
+    expect((await gatherFacts({ repository: repo }, stubDetect())).storage.staleTemp).toEqual([]);
   });
 });
