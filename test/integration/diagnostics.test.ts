@@ -16,13 +16,16 @@ import { FileRunStore } from '../../src/persistence/run-store.js';
 import { Redactor } from '../../src/logging/redact.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { executeRun } from '../../src/cli/commands/run.js';
-import { diagnosticsCommand, parseIncludes, type DiagnosticsBundle } from '../../src/cli/commands/diagnostics.js';
+import { PROMPT_TEXT_OMITTED, diagnosticsCommand, parseIncludes, type DiagnosticsBundle } from '../../src/cli/commands/diagnostics.js';
+import type { TaskAttempt, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { writeControlRequest, controlRequest } from '../../src/persistence/requests.js';
 import { createNativeRunPaths } from '../../src/persistence/paths.js';
 import { captureCli, FAKE_CLAUDE, gitAvailable, tmpGitRepo } from '../helpers/index.js';
 import { UsageError } from '../../src/util/errors.js';
 
 const SECRET = 'sk-ant-thisisaverysecrettokenvalue0123456789';
+/** What an operator typed into the follow-up box. Their words, and nobody else's business by default. */
+const FOLLOW_UP = 'the customer name is Ada Lovelace, do not put it in the commit message';
 
 const WORKFLOW = `
 version: 1
@@ -74,7 +77,31 @@ async function runFixture(prefix: string): Promise<Fixture> {
   await fs.appendFile(path.join(attemptDir, 'stderr.log'), `warning: ANTHROPIC_API_KEY=${SECRET} was rejected` + String.fromCharCode(10));
   // A request nobody answered, so the bundle has an inbox to carry (§2.3).
   await writeControlRequest(store.paths, run.runId, controlRequest('stop', { taskId: 'implement-parser', source: 'cao-desktop 0.1.0' }));
+  // A follow-up somebody typed, recorded on the attempt (§2.6, `PromptDelivery`). Written into the stored
+  // `workflow.json` rather than sent through the controller, because what is under test is what the bundle
+  // does with one, not how it got there.
+  await patchAttempt(store, run.runId, (attempt) => {
+    attempt.prompts = [
+      {
+        id: 'p1',
+        at: new Date().toISOString(),
+        source: 'tui',
+        mode: 'steer',
+        transport: 'claude-stream',
+        state: 'delivered',
+        text: FOLLOW_UP,
+      },
+    ];
+  });
   return { repo, runId: run.runId, store };
+}
+
+/** Edit the first attempt of the stored `workflow.json` in place. */
+async function patchAttempt(store: FileRunStore, runId: string, edit: (attempt: TaskAttempt) => void): Promise<void> {
+  const file = store.paths.workflowFile(runId);
+  const run = JSON.parse(await fs.readFile(file, 'utf8')) as WorkflowRun;
+  edit(run.tasks['implement-parser']!.attempts[0]!);
+  await fs.writeFile(file, `${JSON.stringify(run, null, 2)}\n`);
 }
 
 async function bundleOf(fixture: Fixture, include?: string[]): Promise<{ bundle: DiagnosticsBundle; out: string; text: string; shown: Awaited<ReturnType<typeof captureCli>> }> {
@@ -142,11 +169,36 @@ describe.skipIf(!HAS_GIT)('cao diagnostics (§3.7, [D33])', () => {
     expect(withPrompts.bundle.prompts?.[0]?.text).toContain('Use the key');
     expect(withPrompts.bundle.transcripts).toBeUndefined();
 
+    // §3.7 says prompts are added "only with the flag", and a follow-up's text is a prompt wherever it is
+    // recorded: `attempt.prompts[].text` is left out of the default bundle too, and says that it was.
+    expect(plain.text).not.toContain(FOLLOW_UP);
+    expect(plain.bundle.attempts[0]!.attempt.prompts?.[0]?.text).toBe(PROMPT_TEXT_OMITTED);
+    // Everything else about the delivery stays: what was sent, how, and whether it arrived.
+    expect(plain.bundle.attempts[0]!.attempt.prompts?.[0]?.state).toBe('delivered');
+    expect(withPrompts.bundle.attempts[0]!.attempt.prompts?.[0]?.text).toBe(FOLLOW_UP);
+
     // One token per key, and all three together give all three.
     const all = await bundleOf(fixture, ['transcripts,prompts,diffs']);
     expect(all.bundle.transcripts).toBeDefined();
     expect(all.bundle.prompts).toBeDefined();
     expect(all.bundle.diffs).toBeDefined();
+  }, 60_000);
+
+  it('says so when the orchestrator log was too big to carry whole', async () => {
+    const file = fixture.store.paths.runLogFile(fixture.runId);
+    const original = await fs.readFile(file, 'utf8');
+    try {
+      expect((await bundleOf(fixture)).bundle.truncated).toEqual([]);
+      // Past the page ceiling: §3.7 asks for this field in full, and a reader has to be able to tell the
+      // one run where "in full" was not possible from the ones where it was.
+      const filler = `${'2026-09-21T09:00:00.000Z debug the orchestrator said something at length'.padEnd(1023)}\n`;
+      await fs.appendFile(file, filler.repeat(5 * 1024));
+      const { bundle } = await bundleOf(fixture);
+      expect(bundle.truncated).toEqual(['orchestratorLog']);
+      expect(bundle.orchestratorLog.length).toBeGreaterThan(0);
+    } finally {
+      await fs.writeFile(file, original);
+    }
   }, 60_000);
 
   it('redacts a secret from envFile wherever it reached, prompts and raw stderr included', async () => {
@@ -162,7 +214,7 @@ describe.skipIf(!HAS_GIT)('cao diagnostics (§3.7, [D33])', () => {
   it('carries nothing from outside the run directory but the doctor facts', async () => {
     const { bundle } = await bundleOf(fixture, ['transcripts', 'prompts', 'diffs']);
     const keys = Object.keys(bundle).sort();
-    expect(keys).toEqual(['acks', 'attempts', 'cao', 'createdAt', 'diffs', 'doctor', 'events', 'live', 'orchestratorLog', 'prompts', 'protocol', 'requests', 'transcripts', 'workflow']);
+    expect(keys).toEqual(['acks', 'attempts', 'cao', 'createdAt', 'diffs', 'doctor', 'events', 'live', 'orchestratorLog', 'prompts', 'protocol', 'requests', 'transcripts', 'truncated', 'workflow']);
     // The environment values of the run are never persisted and are not put back here either: the workflow
     // carries the key *names* it passes to a worker, and no value of any of them.
     expect(bundle.workflow.workflow.environmentKeys).toContain('ANTHROPIC_API_KEY');

@@ -937,10 +937,17 @@ run's `events.jsonl`, `live.json`, the orchestrator log, every `attempt.json` wi
 atomically; nothing is uploaded and no network call is made.
 
 Transcripts, prompts and diffs are **left out** unless you ask: `--include transcripts,prompts,diffs` adds
-one key per token. Everything in the file passes through the same redactor the run wrote with — rebuilt
-from the workflow's `envFile` — so a secret that reached a worker's raw `stderr.log` is `[REDACTED]` here.
-Nothing outside the run directory is included except the doctor facts, and no environment value is included
-at all. A run that does not exist is a usage error, exit 2.
+one key per token. "Prompts" means every prompt, including the text of the follow-ups recorded on each
+attempt: without the token those read `[omitted; add --include prompts]` and everything else about the
+delivery — when it was sent, how, and whether it arrived — stays. Everything in the file passes through the
+same redactor the run wrote with — rebuilt from the workflow's `envFile` — so a secret that reached a
+worker's raw `stderr.log` is `[REDACTED]` here. Nothing outside the run directory is included except the
+doctor facts, and no environment value is included at all. A run that does not exist is a usage error,
+exit 2.
+
+The orchestrator log and the run events are carried whole, up to a ceiling of 50 000 lines or 4 MB each;
+past it the bundle carries the end of the file and `truncated` names the field, so a reader can tell a log
+that was cut from one that simply starts where it starts.
 
 `--debug` on `cao run` and `cao resume` is the same switch as `CAO_DEBUG=1`: the logger runs at debug level
 into `orchestrator.log` (and onto stderr on the headless path), a failed command prints its stack trace, and

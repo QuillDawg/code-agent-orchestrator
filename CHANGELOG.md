@@ -48,7 +48,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
   the doctor facts gathered without probes, the redacted `workflow.json`, the run's `events.jsonl`,
   `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its `stderr.log`, and
   the requests and acknowledgments in the inbox. Transcripts, prompts and diffs are left out unless
-  `--include transcripts,prompts,diffs` asks for them, each under its own key. Everything passes through
+  `--include transcripts,prompts,diffs` asks for them, each under its own key; "prompts" covers the
+  follow-up text recorded on each attempt too, which reads `[omitted; add --include prompts]` without the
+  token. The orchestrator log and the run events are whole up to 50 000 lines or 4 MB each, and `truncated`
+  names either field that hit the ceiling, so a cut log reads as cut. Everything passes through
   the same redactor the run wrote with, rebuilt from the workflow's `envFile`, so a secret that reached a
   worker's raw `stderr.log` is `[REDACTED]` in the bundle. The file is written atomically and its path
   printed; nothing is uploaded and no network call is made. Exit 2 for a run that does not exist.

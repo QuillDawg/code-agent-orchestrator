@@ -36,13 +36,20 @@ export type DiagnosticsInclude = (typeof DIAGNOSTICS_INCLUDES)[number];
 export const STDERR_TAIL_LINES = 200;
 
 /**
- * The ceiling on the two whole-file fields.
+ * The ceiling on the two whole-file fields, in lines.
  *
  * §3.7 asks for `orchestratorLog` and `events` in full, and for every run either has ever produced this is
  * the full thing. It is a ceiling rather than a size because the alternative is a bug report that cannot be
  * written at all on the one run that needed it most — a `--debug` run that logged for six hours.
+ *
+ * It is not the only ceiling: the pager clamps any page at `MAX_PAGE_BYTES` (4 MB), which for ordinary log
+ * lines bites long before 50 000 lines do. Which of the two cut is not worth reporting; *that* something
+ * was cut is, and `truncated` says so.
  */
 export const BUNDLE_TAIL_LINES = 50_000;
+
+/** What stands in for a prompt's text when `--include prompts` did not ask for it. */
+export const PROMPT_TEXT_OMITTED = '[omitted; add --include prompts]';
 
 export interface DiagnosticsOptions {
   repository?: string;
@@ -72,6 +79,13 @@ export interface DiagnosticsBundle {
   attempts: BundleAttempt[];
   requests: ControlRequest[];
   acks: ControlAck[];
+  /**
+   * The fields above that did not fit and are the *end* of their file rather than the whole of it.
+   *
+   * Empty on every ordinary run. Without it a reader of a `--debug` run's bundle cannot tell a log that
+   * was cut from one that simply started where it starts.
+   */
+  truncated: Array<'orchestratorLog' | 'events'>;
   /** `--include transcripts`: each attempt's `events.jsonl`, one parsed entry per element. */
   transcripts?: Array<{ taskId: string; attempt: number; entries: unknown[] }>;
   /** `--include prompts`: each attempt's `prompt.md`. */
@@ -92,6 +106,25 @@ export function parseIncludes(values: string[] | undefined): DiagnosticsInclude[
     }
   }
   return out;
+}
+
+/**
+ * The run with every follow-up's text taken out of it, for a bundle that was not asked for prompts.
+ *
+ * `attempt.prompts[].text` is a prompt wherever §2.6 happens to record it, and §3.7 says prompts are added
+ * "only with the flag". It is redacted either way, but redaction is about secrets and this is about an
+ * operator's own words: whoever attaches a bug report without `--include prompts` should not be sending
+ * every follow-up they typed. The delivery itself stays — what was sent, how, and whether it arrived is
+ * exactly the diagnostic — and the text says that it was left out rather than quietly becoming empty.
+ */
+function withoutPromptText(run: WorkflowRun): WorkflowRun {
+  const copy = structuredClone(run);
+  for (const task of Object.values(copy.tasks)) {
+    for (const attempt of task?.attempts ?? []) {
+      for (const prompt of attempt.prompts ?? []) prompt.text = PROMPT_TEXT_OMITTED;
+    }
+  }
+  return copy;
 }
 
 /** Every attempt of the run, in task order then attempt order. */
@@ -136,8 +169,9 @@ async function redactorFor(run: WorkflowRun): Promise<Redactor> {
 }
 
 /** Build the bundle. Separated from the command so a test asserts on the object rather than on a file. */
-export async function buildDiagnosticsBundle(store: FileRunStore, run: WorkflowRun, includes: readonly DiagnosticsInclude[]): Promise<DiagnosticsBundle> {
-  const redactor = await redactorFor(run);
+export async function buildDiagnosticsBundle(store: FileRunStore, source: WorkflowRun, includes: readonly DiagnosticsInclude[]): Promise<DiagnosticsBundle> {
+  const redactor = await redactorFor(source);
+  const run = includes.includes('prompts') ? source : withoutPromptText(source);
   const paths = store.paths;
   const runId = run.runId;
 
@@ -185,6 +219,8 @@ export async function buildDiagnosticsBundle(store: FileRunStore, run: WorkflowR
     attempts,
     requests: inbox.pending,
     acks: inbox.acks,
+    // `atStart` is the pager saying it reached the beginning of the file; anything else is a tail.
+    truncated: ([['orchestratorLog', log], ['events', events]] as const).filter(([, page]) => !page.atStart).map(([field]) => field),
     ...(includes.includes('transcripts') ? { transcripts } : {}),
     ...(includes.includes('prompts') ? { prompts } : {}),
     ...(includes.includes('diffs') ? { diffs } : {}),
