@@ -398,7 +398,7 @@ they leave `retry.attempts` untouched. `onFailure` still decides what the rest o
 does for any other failure.
 
 The same applies before a run starts: each agent is asked once, per run, whether the installed CLI is new
-enough (`MINIMUM_AGENT_VERSIONS`) and advertises what the workflow selected (`codex.transport`,
+enough (`MINIMUM_AGENT_VERSIONS`: Claude Code **2.1.259**, Codex CLI **0.153.0**) and advertises what the workflow selected (`codex.transport`,
 `codex.approvals`, `codex.configMode`, `claude.configMode`). A task that cannot run fails at run start,
 naming the option, the workflow key, the version found and the version needed - not halfway through, once
 per task. `cao doctor` reports the same thing, and additionally starts each mode for real; see

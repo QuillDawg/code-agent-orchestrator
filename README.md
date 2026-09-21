@@ -133,7 +133,7 @@ shapes steps three through nine. `cao` fixes that structurally instead of hoping
 |---|---|
 | **Node.js 22.12+** | The CLI itself (commander 15 sets the floor; `cao doctor` checks it) |
 | **git** | Worktree isolation, diff capture, merge-back |
-| **Claude Code** and/or **Codex CLI**, installed and authenticated | The workers. `claude --version` / `codex --version` should work |
+| **Claude Code 2.1.259+** and/or **Codex CLI 0.153.0+**, installed and authenticated | The workers. These are hard floors: below them every task fails at run start as a `config_error`. `cao doctor` checks the version, the authentication and the automation capabilities of each |
 
 ### Install from npm
 

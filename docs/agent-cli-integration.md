@@ -318,7 +318,7 @@ Recognised by:
 ### Preflight: before the first token
 
 Before any worker is spawned, each runner is asked once per run whether the installed CLI can do what the
-workflow selected (`TaskRunner.preflight`). A version below `MINIMUM_AGENT_VERSIONS`, or a capability the
+workflow selected (`TaskRunner.preflight`). A version below `MINIMUM_AGENT_VERSIONS` - Claude Code **2.1.259**, Codex CLI **0.153.0** - or a capability the
 installed version does not advertise (`exec`, `appServer`, `autoReview`, `isolatedConfig`, `streamJson`,
 `structuredOutput`), fails every task that would have used it at run start - as a `config_error`, naming the
 option, the workflow key that asked for it, the version found and the version needed. A CLI that is missing
