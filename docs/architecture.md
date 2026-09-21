@@ -60,8 +60,11 @@ src/
   logging/                    logger.ts, redact.ts
   tui/                        app.tsx (the persistent workspace shell: header, sidebar, tabbed main panel, footer, all fed by the
                               zustand store in store.ts), launcher.tsx (`cao ui` with no run: pick a recent run or a workflow file
-                              to start), viewer.tsx (follow view, shared with `cao logs --follow`), theme.ts (the colour token
-                              table; `default`/`mono` today), render-options.ts (resolves the alternate-screen setting:
+                              to start), viewer.tsx (follow view, shared with `cao logs --follow`), theme.ts (the only file under
+                              `tui/` allowed to name a colour, which a test enforces: the `cyberpunk` (default) and `mono` token
+                              tables as hex, downsampled to 256 and 16 colours the way Ink downsamples its own `color` prop;
+                              `--theme` > `CAO_THEME` > `~/.cao/config.json`'s `theme` > `cyberpunk`, with `NO_COLOR`/`TERM=dumb`/a
+                              terminal that reports no colour forcing `mono` over all of them), render-options.ts (resolves the alternate-screen setting:
                               `--no-alt-screen` flag, `CAO_ALT_SCREEN` env, `~/.cao/config.json`'s `altScreen`, then the default),
                               window.ts (windowing shared by the sidebar, tables, the review list and the picker)
     workspace/                 chrome.tsx (header, sidebar, tab bar, footer), overview.tsx (the Overview tab: the ended-run and
@@ -85,7 +88,9 @@ src/
                               by `cao task` and the detail view; revisionRows renders the edit history under Attempts), transcript.ts + markdown.ts + format.ts (one renderer for every transcript
                               surface; the ANSI-and-glyph layer only — the structure it draws comes from planTranscript in the protocol
                               package), logs.tsx, follow.ts (file tailer), store.ts (the zustand store the workspace is fed from: the
-                              run snapshot, the focused tab and panel, per-list cursors, drafts, notices, overlays and the per-provider quota snapshots)
+                              run snapshot, the focused tab and panel, per-list cursors, drafts, notices, overlays, the per-provider
+                              quota snapshots, and the per-task `activity` map — when each task last produced output, which is what
+                              feeds the sidebar's two-frame activity pulse)
   util/                       text.ts (strips escapes and control characters from anything shown to a human; also the worker-facing
                               instruction the scheduler appends to deny messages, and the helpers that take it back off for an
                               operator), glyphs.ts + marks.ts (Unicode/ASCII fallback, CAO_ASCII/CAO_UNICODE), package-info.ts,
