@@ -222,6 +222,20 @@ describe('emit: capabilities are what the run wired up (§4.2.3)', () => {
     }
     expect((await fs.readFile(path.join(process.cwd(), 'docs', 'desktop.md'), 'utf8')).includes(quoted)).toBe(true);
   });
+
+  /**
+   * `~/.cao/presence/` is read by `cao emit status` and written by nothing, so the directory documentation
+   * has to say so where it draws the file — a reader who takes the tree literally goes looking for a file
+   * that is never there, and reads the permission gate built on it as something that already works.
+   */
+  it('and the ~/.cao tree says presence is read and not written, while that is true', async () => {
+    expect(wiredCapabilities({ requests: true, requestKinds: INBOX_REQUEST_KINDS })).not.toContain('presence');
+    const drawn = (await fs.readFile(path.join(process.cwd(), 'docs', 'capabilities.md'), 'utf8'))
+      .split(NL)
+      .find((line) => line.includes('presence/<pid>.json'));
+    expect(drawn, 'docs/capabilities.md no longer draws presence/<pid>.json').toBeDefined();
+    expect(drawn).toMatch(/nothing writes one/);
+  });
 });
 
 // ---------------------------------------------------------------------------- PROTOCOL_VERSION (§4, §4.5)

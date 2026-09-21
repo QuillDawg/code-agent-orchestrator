@@ -1134,10 +1134,12 @@ knowing which checkouts to look in:
 ~/.cao/
   config.json           # your per-user opt-in and preferences (cao emit enable/disable)
   runs/<key>.json        # one pointer + heartbeat per announced run, on this machine
-  presence/<pid>.json    # one file per surface (a desktop app) currently watching
+  presence/<pid>.json    # one file per surface currently watching - nothing writes one in this release
 ```
 
-Every field of a run's pointer file is itself read from the repository's own `.orchestrator/`
+`presence/` is read and never written: `cao emit status` reports who is present, and nothing in this
+release writes an entry, because no surface that would ships yet — so the directory is usually not
+there at all. [docs/desktop.md](desktop.md) has what it is for and what will read it. Every field of a run's pointer file is itself read from the repository's own `.orchestrator/`
 directory above — nothing here is a second copy of run state, and a `cao` with no desktop app
 watching never touches this directory at all. See [docs/desktop.md](desktop.md) for the full
 contract, what triggers the directory being refused, and `cao emit status` for diagnosing an empty
