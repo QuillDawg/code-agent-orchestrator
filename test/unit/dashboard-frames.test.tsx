@@ -213,9 +213,10 @@ describe('dashboard frames', () => {
       await capture(`changes-${size.name}`, size, '[Changes]', ['c']);
     });
 
-    it(`renders a placeholder tab unchanged at ${size.name}`, async () => {
-      // Tab to the tab bar, then right twice: Overview -> Session -> Logs.
-      await capture(`logs-tab-${size.name}`, size, 'arrives in stage 3', ['\t', `${ESC}[C`, `${ESC}[C`]);
+    it(`renders the Logs tab unchanged at ${size.name}`, async () => {
+      // Tab to the tab bar, then right twice: Overview -> Session -> Logs. The fixture run's directory does
+      // not exist, so every source is an empty page — which is what makes this frame the same every time.
+      await capture(`logs-tab-${size.name}`, size, 'source orchestrator.log', ['\t', `${ESC}[C`, `${ESC}[C`]);
     });
   }
 

@@ -38,10 +38,26 @@ export interface RunCommandOptions {
   altScreen?: boolean;
   /** `--theme <name>`; `CAO_THEME` and `NO_COLOR` are read when it is absent [D35]. */
   theme?: string;
+  /** `--debug`, the same thing as `CAO_DEBUG=1` [D34]. See `applyDebugFlag`. */
+  debug?: boolean;
+}
+
+/**
+ * `--debug` is `CAO_DEBUG=1` and nothing else [D34].
+ *
+ * Set into the environment rather than threaded through every caller, because that is what makes the two
+ * *identical* rather than merely similar: everything that already reads `CAO_DEBUG` - the stack traces on a
+ * failed command, and anything a later stage adds - sees exactly what it would have seen had the operator
+ * exported it. The flag is one-way: it never turns a `CAO_DEBUG` that is already set off.
+ */
+export function applyDebugFlag(debug: boolean | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (debug) env.CAO_DEBUG = '1';
+  return Boolean(env.CAO_DEBUG);
 }
 
 export async function runCommand(configPath: string | undefined, opts: RunCommandOptions): Promise<number> {
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
+  applyDebugFlag(opts.debug);
   const prepared = await prepareWorkflow(await resolveWorkflowPath(configPath), {
     repository: opts.repository,
     maxConcurrency: opts.maxConcurrency,
@@ -87,7 +103,7 @@ export async function runCommand(configPath: string | undefined, opts: RunComman
   if (!lock.ok) throw new UsageError(`Run ${run.runId} is owned by another orchestrator process (pid ${lock.lock.pid}, heartbeat ${lock.lock.heartbeatAt})`);
 
   out(renderHeader({ workflow, runId: run.runId, runners, layers, verbose: opts.verbose }));
-  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme, repository: opts.repository });
+  return executeRun({ run, environment: loaded.environment, secrets: loaded.secrets, verbose: opts.verbose, tui: opts.tui, activity: opts.activity, isResume: false, emit: opts.emit, emitFeed: opts.emitFeed, altScreen: opts.altScreen, theme: opts.theme, repository: opts.repository, debug: opts.debug });
 }
 
 export interface ExecuteOptions {
@@ -105,6 +121,8 @@ export interface ExecuteOptions {
   theme?: string;
   /** `--repository`, kept so the workspace can re-open the same store when it resumes the run (§2.4). */
   repository?: string;
+  /** `--debug` / `CAO_DEBUG=1`: debug into `orchestrator.log`, and the workspace opens on Diagnostics [D34]. */
+  debug?: boolean;
 }
 
 /**
@@ -127,6 +145,8 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
       theme: opts.theme,
       verbose: opts.verbose,
       activity: opts.activity,
+      // The workspace opens on Diagnostics when the operator has asked for debugging [D34].
+      ...(applyDebugFlag(opts.debug) ? { initialTab: 'diagnostics' as const } : {}),
     });
   }
   const result = await executeOnce(opts);
@@ -152,6 +172,9 @@ export async function executeOnce(opts: ExecuteOptions, session?: WorkspaceSessi
     else process.stdout.write(`${warnLine(note)}\n`);
   }
   const redactor = new Redactor(opts.secrets);
+  // `--debug` and `CAO_DEBUG=1` are the same switch [D34]: debug level into `orchestrator.log`, and - on the
+  // headless path, where nothing owns the screen - those lines on stderr too.
+  const debug = applyDebugFlag(opts.debug);
   // Through the layout accessor, not a hand-built string: the run directory is described in exactly one
   // place, and that place is the protocol package (spec §4.1, §6.4.1).
   const logFile = createNativeRunPaths(run.repositoryRoot).runLogFile(run.runId);
@@ -159,7 +182,7 @@ export async function executeOnce(opts: ExecuteOptions, session?: WorkspaceSessi
     void appendLine(logFile, line).catch(() => undefined);
   };
   const logger: Logger = new ConsoleLogger({
-    level: opts.verbose ? 'debug' : 'info',
+    level: opts.verbose || debug ? 'debug' : 'info',
     redactor,
     sink: (line) => {
       // Never write over an open dashboard frame; line mode gets the log on stderr as before.

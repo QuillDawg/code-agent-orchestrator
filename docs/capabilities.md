@@ -571,9 +571,26 @@ messages already sent to it with each one's state, and a composer at the bottom 
 task](#prompting-a-task). `E` on any unfinished task opens the [task editor](#editing-an-unfinished-task)
 as a form over the panel — one row per editable field, the validator's message inline under the row that
 caused it, the automatic context section read-only beneath the prompt, `Ctrl+O` to write the prompt in
-`$VISUAL`/`$EDITOR`, and a "restart now?" question before Save stops a running worker. **Logs** and
-**Diagnostics** are not filled in yet; each says which release fills it and what answers the same question
-today (`F` for the transcript, `cao logs`).
+`$VISUAL`/`$EDITOR`, and a "restart now?" question before Save stops a running worker.
+
+**Logs** is every file this run wrote, read a page at a time. The sources are the orchestrator's own
+`orchestrator.log`, the run's `events.jsonl`, and each attempt's `events.jsonl`, `stdout.log`, `stderr.log`
+and `prompt.md`; `v` steps through the four views (events, stderr, raw output, prompts), `[` and `]` through
+the files a view offers, and `t`, `k` and `m` filter by task, by severity (`debug`/`info`/`warn`/`error`)
+and by time range. `/` searches the file on screen and `n`/`N` step through the matches, as in the
+transcript viewer. Nothing is ever loaded whole: a page comes from the end of the file, older pages arrive
+as you scroll into them, and what is held is bounded by `execution.outputBufferLines`, so a 50 MB
+`stdout.log` opens in the time it takes to draw a frame. `g` goes to the oldest line held, `G` back to the
+newest, and `R` re-reads. Switching a view keeps you on the same attempt when the new view has a file for
+it.
+
+**Diagnostics** is how the run is executing, read-only and in one scrollable list: the CLI version,
+authentication state, advertised capabilities and transport of each agent; the effective configuration of
+every task with the active revision, who applied it and which attempt carried it; the retry history with
+its reasons; the `RunnerFailure` behind each failed attempt (retryable, provider code, HTTP status,
+retry-after, request and session ids, whether partial work was applied); the controls this window sent and
+the requests, acknowledgments and rejections in the run's inbox; and what each provider last said about its
+quota. `R` re-reads all of it. Nothing here changes anything — not the run, not the inbox.
 
 `Tab` and `Shift+Tab` cycle the task list, the tabs, the panel and the footer (where `R` re-reads the provider quotas); the arrows, `PgUp`/`PgDn` and `Home`/`End` move inside whichever has focus; `Enter` opens and `Esc` backs out. `Ctrl+P` opens a command palette over every action and every task id, matched loosely, so `ovrvw` finds Overview and a task is two keystrokes away in a run of two hundred. `/` narrows the focused list. `?` lists the keys of the focused panel, the chords that work everywhere and the transcript viewer's own — and it is the same table the footer draws from, so the two cannot disagree. `F` opens the transcript viewer that `cao logs --follow` shares, `U` the usage table, `C` the Changes tab, and `R` restarts the selected task — any task that finished without succeeding, so failed, blocked, cancelled and skipped alike, goes back to `pending` and is picked up again; the notice is the run controller's own answer, so a task that is still running is told to be cancelled first. `Q` asks what you meant while the run is still going: **stay**, **stop and quit** (a graceful stop, then leave with the run's exit code), or **continue in plain output** — the old minimise, where the orchestrator keeps going, line output takes over, and `D` (or anything that needs you) brings the workspace back. On a run that has ended `Q` leaves at once. `Ctrl+C` stops the run and leaves the workspace on screen to read the result; a second one inside the twenty-second hard deadline kills the workers and exits 130. Those two, `Ctrl+P`, and `Ctrl+J` for a newline in the answer field are the chords the workspace reads, and the transcript viewer adds `Ctrl+A` to scroll up a page; every other `Ctrl`+key is left to the terminal, so `Ctrl+L` or `Ctrl+R` out of habit does not change what is on screen.
 
@@ -882,6 +899,24 @@ Pass a workflow path (`cao doctor workflow.yaml --json`) to probe only its refer
 transports/configuration. Doctor also uses `workflow.yaml`, `workflow.yml`, or `cao.yaml` automatically when
 one exists in the launch directory; with no workflow, it checks both installed CLIs. It never changes
 anything: it will tell you to run `cao clean` but never runs it for you.
+
+### A bug report in one file
+
+`cao diagnostics [run] --out <file>` writes a single JSON document describing a run: the doctor facts
+(gathered without probes, so nothing is started and nothing is spent), the redacted `workflow.json`, the
+run's `events.jsonl`, `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its
+`stderr.log`, and the requests and acknowledgments in the inbox. The path is printed; the file is written
+atomically; nothing is uploaded and no network call is made.
+
+Transcripts, prompts and diffs are **left out** unless you ask: `--include transcripts,prompts,diffs` adds
+one key per token. Everything in the file passes through the same redactor the run wrote with — rebuilt
+from the workflow's `envFile` — so a secret that reached a worker's raw `stderr.log` is `[REDACTED]` here.
+Nothing outside the run directory is included except the doctor facts, and no environment value is included
+at all. A run that does not exist is a usage error, exit 2.
+
+`--debug` on `cao run` and `cao resume` is the same switch as `CAO_DEBUG=1`: the logger runs at debug level
+into `orchestrator.log` (and onto stderr on the headless path), a failed command prints its stack trace, and
+the workspace opens on the Diagnostics tab.
 
 ---
 

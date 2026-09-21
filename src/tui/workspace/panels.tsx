@@ -1,108 +1,38 @@
 /**
- * The panels the main area can show that are not the Overview: the tabs stage 2 and stage 3 fill, the
- * report, the command palette and the contextual help.
+ * The panels the main area can show that have nowhere larger to live: the report, the command palette, the
+ * contextual help, the quit prompt and the answer field.
  *
- * The placeholders are deliberately explicit about which stage fills them. A blank panel reads as a bug and
- * costs an operator the time it takes to find out it is not one; a sentence naming the stage costs nothing
- * and is true until the stage lands.
+ * The panels with a model behind them are files of their own — `overview.tsx`, `session.tsx`, `logs.tsx`,
+ * `diagnostics.tsx` — because each has a shape a test wants to assert on without drawing it.
  */
 import React from 'react';
 import { Box, Text } from 'ink';
 import { go as fuzzyGo } from 'fuzzysort';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
-import { formatClock } from '../../util/duration.js';
 import { renderMarkdown } from '../markdown.js';
 import { editKeys, endedKeys, globalKeys, promptKeys, QUIT_ANSWERS, viewerKeys, panelHelp, type KeyHelp, type KeyMode } from './keys.js';
 import type { EndedAction } from './ended.js';
 import { wrapPlain } from './detail.js';
 import { observerKeys, type ObserverAction } from './observer.js';
-import { TAB_LABEL, type ControlRecord, type FocusRegion, type WorkspaceTab } from '../store.js';
-import type { Theme, ThemeToken } from '../theme.js';
+import { TAB_LABEL, type FocusRegion, type WorkspaceTab } from '../store.js';
+import type { Theme } from '../theme.js';
 import { windowOf } from '../window.js';
 
-/** What each unfilled tab is for, and when it arrives. Kept here so `?`, the tab and the docs agree. */
-export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {
-  logs: [
-    'The Logs panel arrives in stage 3.',
-    "It will hold this run's own log: the orchestrator's events, the runner's stderr and the doctor probes.",
-    '',
-    'Until then: F opens the transcript viewer that cao logs --follow shares, and cao logs <task> prints it.',
-  ],
-  diagnostics: [
-    'The rest of the Diagnostics panel arrives in stage 3.',
-    'It will hold the agent versions, the probe results and the lock.',
-    '',
-    'Until then: cao doctor answers the same questions.',
-  ],
-};
-
-/** What each control outcome is called on screen, and how it is painted (§2.3). */
-const CONTROL_STATUS: Record<ControlRecord['status'], { label: string; token: ThemeToken }> = {
-  sent: { label: `sent${glyph('ellipsis')}`, token: 'muted' },
-  accepted: { label: 'accepted', token: 'info' },
-  applied: { label: 'applied', token: 'success' },
-  rejected: { label: 'rejected', token: 'danger' },
-  timeout: { label: 'no answer yet', token: 'warning' },
-};
-
-/** One row of the control history: when, what was asked, and what came back. */
-export function controlLine(record: ControlRecord): string {
-  const status = CONTROL_STATUS[record.status];
-  return `${formatClock(new Date(record.at).toISOString())}  ${record.label} ${glyph('arrow')} ${status.label}${record.reason ? `: ${record.reason}` : ''}`;
-}
-
-export interface DiagnosticsPanelProps {
-  controls: readonly ControlRecord[];
-  rows: number;
-  columns: number;
-  theme: Theme;
-}
-
 /**
- * The Diagnostics tab: the controls this window has sent, then what the panel will hold in stage 3.
- *
- * The history is here rather than only in the notice area because a notice lasts four seconds and the
- * question it answers — "did the stop I sent get through to the other terminal" — outlasts it (§2.3). The
- * newest row is at the bottom, so the panel reads as the log it is.
+ * What an unfilled tab is for. Empty from stage 3: Logs and Diagnostics are panels of their own
+ * (`logs.tsx`, `diagnostics.tsx`) and every tab of §3.2 is now filled. It stays because `Placeholder` is
+ * still the switch's `default`, and a tab added later with no panel behind it should say so rather than
+ * draw nothing.
  */
-export function DiagnosticsPanel({ controls, rows, columns, theme }: DiagnosticsPanelProps): React.JSX.Element {
-  const notes = wrapLines(PLACEHOLDER_TEXT.diagnostics ?? [], columns);
-  // The history first, the stage-3 note with whatever is left: a row of it is worth more than a row of a
-  // sentence that says the same thing on every frame.
-  const historyRows = Math.max(0, Math.min(controls.length + 1, rows - 2));
-  const shown = controls.slice(-Math.max(0, historyRows - 1));
-  const noteRows = Math.max(0, rows - 1 - historyRows - 1);
-  return (
-    <Box flexDirection="column" width={columns}>
-      <Text bold>{TAB_LABEL.diagnostics}</Text>
-      <Text wrap="truncate-end">{theme.paint('Controls sent from this window', 'title')}</Text>
-      {shown.length === 0 ? (
-        <Text wrap="truncate-end">{theme.paint('  none yet', 'muted')}</Text>
-      ) : (
-        shown.map((record) => (
-          <Text key={record.id} wrap="truncate-end">
-            {'  '}
-            {theme.paint(truncateVisible(controlLine(record), Math.max(10, columns - 2)), CONTROL_STATUS[record.status].token)}
-          </Text>
-        ))
-      )}
-      {noteRows > 0 && <Text> </Text>}
-      {notes.slice(0, noteRows).map((line, i) => (
-        <Text key={i} wrap="truncate-end">
-          {theme.paint(truncateVisible(line, columns), 'muted')}
-        </Text>
-      ))}
-    </Box>
-  );
-}
+export const PLACEHOLDER_TEXT: Partial<Record<WorkspaceTab, string[]>> = {};
 
 /**
  * Paragraphs to lines that fit `columns`.
  *
- * The placeholders and the Diagnostics note are prose, and prose that is truncated has lost the half of the
- * sentence that says what to do instead — "Until then: F follows the selected task, and cao task <id> shows
- * everything record…" was the whole answer the panel existed to give.
+ * A placeholder is prose, and prose that is truncated has lost the half of the sentence that says what to do
+ * instead — "Until then: F follows the selected task, and cao task <id> shows everything record…" was the
+ * whole answer the panel existed to give.
  */
 export function wrapLines(paragraphs: readonly string[], columns: number): string[] {
   return paragraphs.flatMap((line) => (line.trim() === '' ? [''] : wrapPlain(line, Math.max(20, columns))));

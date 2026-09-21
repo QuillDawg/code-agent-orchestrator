@@ -228,6 +228,12 @@ describe('the workspace while another process owns the run', () => {
         await wait(10);
       }
       await wait();
+      // The control history sits below the agent, configuration, retry and failure sections of §3.7, so
+      // getting to it is a scroll; End is the key the panel's own `?` names for it.
+      tree.write(KEYS.enter);
+      await wait();
+      tree.write(KEYS.end);
+      await wait();
       const frame = tree.lastText();
       expect(frame).toContain('Controls sent from this window');
       expect(frame).toContain('stop → no answer yet');

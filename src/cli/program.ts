@@ -16,6 +16,7 @@ import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
 import { stopCommand } from './commands/stop.js';
 import { doctorCommand } from './commands/doctor.js';
+import { diagnosticsCommand, DIAGNOSTICS_INCLUDES } from './commands/diagnostics.js';
 import { emitCommand, EMIT_ACTIONS } from './commands/emit.js';
 import { DEFAULT_ACK_WAIT_SECONDS } from '../persistence/requests.js';
 import { DEFAULT_WORKFLOW_FILES, terminalWidth } from './util.js';
@@ -206,6 +207,13 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
     ],
     exits: '0 every required check passed  1 a check failed  2 usage error',
   },
+  diagnostics: {
+    examples: [
+      'cao diagnostics --out cao-bug.json      # the latest run, without transcripts or diffs',
+      'cao diagnostics 002 --out bug.json --include transcripts,prompts',
+    ],
+    exits: '0 written  2 no such run, or usage error',
+  },
   emit: {
     examples: [
       'cao emit status                         # the setting, where it came from, and who is listening',
@@ -295,6 +303,7 @@ export function buildProgram(): Command {
     .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
     .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
+    .option('--debug', 'debug logging into orchestrator.log, stack traces, and the Diagnostics tab (CAO_DEBUG=1)')
     .option('-v, --verbose', 'verbose output')
     .action((workflow: string | undefined, opts) => exitWith(() => runCommand(workflow, opts)));
 
@@ -319,6 +328,7 @@ export function buildProgram(): Command {
     .option('--no-alt-screen', 'draw the workspace in the normal buffer instead of the alternate screen')
     .option('--theme <name>', `workspace theme: ${THEME_NAMES.join('|')} (NO_COLOR forces mono)`, themeName)
     .option('--activity', 'print agent activity lines in line-output mode')
+    .option('--debug', 'debug logging into orchestrator.log, stack traces, and the Diagnostics tab (CAO_DEBUG=1)')
     .option('-v, --verbose', 'verbose output')
     .action((run: string | undefined, opts) => exitWith(() => resumeCommand(run, opts)));
 
@@ -526,6 +536,25 @@ export function buildProgram(): Command {
     .action((config: string | undefined, opts) => exitWith(() => doctorCommand({ ...opts, config })));
 
   program
+    .command('diagnostics')
+    .description('Write one JSON file describing a run, to attach to a bug report')
+    .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
+    .requiredOption('-o, --out <file>', 'where to write the bundle')
+    .option('--include <what>', `also include ${DIAGNOSTICS_INCLUDES.join(', ')} (comma-separated, repeatable)`, collect)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .addHelpText(
+      'after',
+      [
+        '',
+        'The bundle holds the doctor facts, the redacted workflow, the run events, live.json, the',
+        'orchestrator log, every attempt.json and the last 200 lines of each stderr.log, plus the requests',
+        'and acknowledgments. Transcripts, prompts and diffs are left out unless --include asks for them.',
+        'Everything goes through the same redactor the run wrote with. Nothing is uploaded.',
+      ].join('\n'),
+    )
+    .action((run: string | undefined, opts) => exitWith(() => diagnosticsCommand(run, opts)));
+
+  program
     .command('clean')
     .description('Remove the worktrees and branches a run created')
     .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
@@ -563,7 +592,7 @@ export function buildProgram(): Command {
       '  CAO_CODEX_COMMAND    Codex CLI to launch instead of `codex`',
       '  CAO_EMIT             announce runs to a desktop app on this machine (1/0); see cao emit status',
       '  CAO_HOME             override ~/.cao, the directory cao announces runs into (docs/desktop.md)',
-      '  CAO_DEBUG            print stack traces when a command fails',
+      '  CAO_DEBUG            debug logging, stack traces, and the Diagnostics tab (also --debug)',
       '  CAO_ASCII            draw tables and status marks in ASCII (CAO_UNICODE=1 forces glyphs back on)',
       '  CAO_ALT_SCREEN       0 draws the workspace in the normal buffer (also --no-alt-screen)',
       `  CAO_THEME            workspace theme: ${THEME_NAMES.join('|')} (also --theme)`,

@@ -10,6 +10,35 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Added
 
+- **The Logs tab.** Every file a run writes, read a page at a time: the orchestrator's `orchestrator.log`,
+  the run's `events.jsonl`, and each attempt's `events.jsonl`, `stdout.log`, `stderr.log` and `prompt.md`.
+  `v` steps through the four views — normalized events, stderr, raw output, prompts — `[` and `]` through
+  the files a view offers, `t`, `k` and `m` filter by task, severity and time range, and `/` with `n`/`N`
+  searches the file on screen exactly as the transcript viewer does. Nothing is ever read whole: a page
+  comes from the end of the file, older pages arrive as you scroll into them, and what is held is bounded
+  by `execution.outputBufferLines` — so a 50 MB `stdout.log` opens in the time it takes to draw a frame.
+  `g` goes to the oldest line held, `G` back to the newest, `R` re-reads. Switching a view keeps you on the
+  same attempt when the new view has a file for it. Every line goes through `sanitizeText` first.
+- **The Diagnostics tab.** How the run is executing, read-only and in one scrollable list: each agent's CLI
+  version, authentication state, advertised capabilities and transport; every task's effective
+  configuration with its active revision, who applied it and which attempt carried it; the retry history
+  with its reasons; the `RunnerFailure` behind each failed attempt — retryable, provider code, HTTP status,
+  retry-after, request and session ids, whether partial work was applied; the controls this window sent
+  alongside the requests, acknowledgments and rejections in the run's inbox; and what each provider last
+  said about its quota. `R` re-reads it. The agent versions are read when the tab is opened and not before,
+  so a workspace that never opens it starts no CLI. Nothing here changes anything, the inbox included.
+- **`cao diagnostics [run] --out <file>`.** One JSON document describing a run, to attach to a bug report:
+  the doctor facts gathered without probes, the redacted `workflow.json`, the run's `events.jsonl`,
+  `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its `stderr.log`, and
+  the requests and acknowledgments in the inbox. Transcripts, prompts and diffs are left out unless
+  `--include transcripts,prompts,diffs` asks for them, each under its own key. Everything passes through
+  the same redactor the run wrote with, rebuilt from the workflow's `envFile`, so a secret that reached a
+  worker's raw `stderr.log` is `[REDACTED]` in the bundle. The file is written atomically and its path
+  printed; nothing is uploaded and no network call is made. Exit 2 for a run that does not exist.
+- **`--debug` on `cao run` and `cao resume`.** The same switch as `CAO_DEBUG=1`, which it sets: the logger
+  runs at debug level into `orchestrator.log`, a failed command prints its stack trace, and the workspace
+  opens on the Diagnostics tab.
+
 - **The dashboard is a workspace.** The interactive screen `cao run` and `cao resume` open is now a shell
   rather than a stack of screens: a header (repository, run id, workflow, run state, elapsed, concurrency
   and an owner badge), a sidebar with the task list, a tabbed main panel — **Overview · Session · Logs ·
@@ -286,6 +315,14 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ### Changed
 
+- **`CAO_DEBUG=1` now also turns the logger up to debug.** It used to affect only the stack trace printed
+  when a command fails; it now does what `--debug` does, which is what makes the two the same switch:
+  debug-level lines into `orchestrator.log`, the same lines on stderr on the headless path, and the
+  workspace opening on Diagnostics. A run with `CAO_DEBUG` unset is unchanged in every respect.
+- **The Logs and Diagnostics tabs are no longer placeholders.** They used to carry a sentence naming the
+  release that would fill them and what to use meanwhile; they are now the panels described above. `?` and
+  the footer name their keys, which are their own: inside the Logs panel `R` re-reads the page rather than
+  restarting the selected task.
 - **`Tab` now has a fourth stop: the footer.** It used to cycle the task list, the tab bar and the panel;
   it now cycles those three and the footer, where `R` reads the provider quotas again. Nothing else about
   those three changed, and `R` still restarts the selected task everywhere it did before — the footer is a

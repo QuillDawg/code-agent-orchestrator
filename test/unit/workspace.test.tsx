@@ -142,10 +142,10 @@ describe('the workspace at each terminal size', () => {
       const expected: Record<WorkspaceTab, string> = {
         overview: 'Status:',
         session: 'Enter opens the composer',
-        logs: 'arrives in stage 3',
+        logs: 'view events',
         changes: 'no diff captured',
         report: 'Run report',
-        diagnostics: 'arrives in stage 3',
+        diagnostics: 'Effective configuration',
       };
       const tree = mount(runWith(['implement-parser', 'implement-renderer', 'review']), size);
       try {

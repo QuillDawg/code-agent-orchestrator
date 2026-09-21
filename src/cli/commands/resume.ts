@@ -1,4 +1,4 @@
-import { executeRun } from './run.js';
+import { applyDebugFlag, executeRun } from './run.js';
 import { renderHeader } from '../render/plain.js';
 import { startRuntime } from '../app.js';
 import { warnLine } from '../../util/marks.js';
@@ -31,6 +31,8 @@ export interface ResumeOptions {
   altScreen?: boolean;
   /** `--theme <name>`; `CAO_THEME` and `NO_COLOR` are read when it is absent [D35]. */
   theme?: string;
+  /** `--debug`, the same thing as `CAO_DEBUG=1` [D34]. */
+  debug?: boolean;
 }
 
 /**
@@ -43,6 +45,7 @@ export interface ResumeOptions {
  */
 export async function resumeCommand(runRef: string | undefined, opts: ResumeOptions): Promise<number> {
   const out = (s: string): boolean => process.stdout.write(`${s}\n`);
+  applyDebugFlag(opts.debug);
   const started = await startRuntime(runRef, { ...opts, onNote: (n) => out(warnLine(n)) });
   if (started.kind === 'nothing-to-do') {
     out(started.message);
@@ -65,5 +68,6 @@ export async function resumeCommand(runRef: string | undefined, opts: ResumeOpti
     altScreen: opts.altScreen,
     theme: opts.theme,
     repository: opts.repository,
+    debug: opts.debug,
   });
 }

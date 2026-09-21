@@ -32,6 +32,10 @@ import {
   type TranscriptEntry,
 } from 'code-agent-orchestrator-protocol';
 import type { QuotaMonitor } from '../runners/quota.js';
+import type { AgentReport } from '../runners/diagnostics.js';
+import { createNativeRunPaths } from '../persistence/paths.js';
+import { readControlHistory, type ControlHistory } from '../persistence/requests.js';
+import { readTailPage } from '../persistence/log-pager.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { RunController } from '../workflow/control/controller.js';
 import { controlEnvelope } from '../workflow/control/commands.js';
@@ -82,7 +86,9 @@ import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, w
 import { workspaceLayout } from './workspace/layout.js';
 import { alwaysHintCells, footerHints, QUIT_ANSWERS, type KeyMode } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
-import { AnswerField, DiagnosticsPanel, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { AnswerField, filterPalette, HelpPanel, Palette, Placeholder, QuitPrompt, ReportPanel, type PaletteEntry } from './workspace/panels.js';
+import { DiagnosticsPanel, parseRetryEvents, type RetryRecord } from './workspace/diagnostics.js';
+import { LogsPanel, useLogs } from './workspace/logs.js';
 import { EDIT_CURSOR, EDIT_ROWS, EditForm, editDraftKey, initialDrafts, SAVE_ROW, validateDraft } from './workspace/edit.js';
 import { editPromptExternally } from './workspace/prompt-editor.js';
 import { SessionPanel, composerDraftKey } from './workspace/session.js';
@@ -161,6 +167,22 @@ export interface DashboardOptions {
    * fills it in for the real workspace.
    */
   quota?: QuotaFactory;
+  /**
+   * The run's preflight facts, for the Diagnostics panel (§3.7): which CLI is behind each agent, which
+   * version it is and which transport its tasks take.
+   *
+   * A function, and called only when the tab is opened, for the same reason `quota` is a factory: reading it
+   * runs `claude --version` and `codex --version`, and a workspace that never opens Diagnostics should spawn
+   * neither. Absent, the panel says the facts were not recorded.
+   */
+  preflight?: () => Promise<AgentReport[]>;
+  /**
+   * The tab to open on, once, when this tree first mounts. `--debug` asks for Diagnostics [D34].
+   *
+   * Once: the store outlives an execution (§2.4), so a resume from inside the workspace must not drag the
+   * operator back to the tab the command line asked for twenty minutes ago.
+   */
+  initialTab?: WorkspaceTab;
 }
 
 /** What `DashboardOptions.quota` is: given somewhere to publish snapshots, it returns the running readers. */
@@ -298,12 +320,22 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   const editCursor = useStore(store, selectListCursor(EDIT_CURSOR));
   const controls = useStore(store, selectControls);
   const quotas = useStore(store, selectQuotas);
+  const logsSearch = useStore(store, selectDraft('logs-search'));
+  const diagnosticsCursor = useStore(store, selectListCursor('diagnostics'));
 
   const [, setTick] = useState(0);
   const [pending, setPending] = useState<PendingItem | null>(props.shared.queue[0] ?? null);
   const [usageSort, setUsageSort] = useState<'order' | 'cost'>('order');
   const [pastAttempt, setPastAttempt] = useState<{ taskId: string; attempt: number; entries: TranscriptEntry[] } | null>(null);
   const [report, setReport] = useState<string | null | undefined>(undefined);
+  /**
+   * What the Diagnostics panel reads off disk (§3.7): the preflight facts, the `task.retrying` events of the
+   * run log, and the request inbox. All three are read when the tab is opened and never before — the panel
+   * is read-only, so re-reading it costs nothing that has to be undone.
+   */
+  const [diagnostics, setDiagnostics] = useState<{ agents?: AgentReport[]; retries?: RetryRecord[]; inbox?: ControlHistory }>({});
+  /** Bumped by `R` in the Diagnostics panel; the reader below runs again for it. */
+  const [diagnosticsRead, setDiagnosticsRead] = useState(0);
   /**
    * The composer, when one is open (§3.5, `[D14]`).
    *
@@ -370,6 +402,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
    * §3.6 attaches them to: a minimised workspace has no footer to fill, and an unmounted one must leave no
    * `codex app-server` behind. The cleanup is the kill.
    */
+  // `--debug` opens on Diagnostics [D34]. Applied on mount and never again; see `initialTab`.
+  const initialTab = props.initialTab;
+  const openedOn = useRef(false);
+  useEffect(() => {
+    if (openedOn.current || !initialTab) return;
+    openedOn.current = true;
+    store.getState().setTab(initialTab);
+  }, [initialTab, store]);
+
   const quotaMonitor = useRef<QuotaMonitor | null>(null);
   const startQuota = props.quota;
   useEffect(() => {
@@ -391,6 +432,27 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     monitor.refresh();
     store.getState().setNotice(`Reading the provider quotas again${glyph('ellipsis')}`);
   };
+
+  // ------------------------------------------------------------------ layout
+  // Computed here rather than beside the frame it sizes: the Logs pager below needs to know how many rows
+  // its window has before it can decide when the page above is worth fetching.
+  const headerRows = headerRowsFor(run);
+  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) });
+
+  // ------------------------------------------------------------------ the Logs tab (§3.7)
+  const paths = useMemo(() => createNativeRunPaths(run.repositoryRoot), [run.repositoryRoot]);
+  const logs = useLogs({
+    run,
+    paths,
+    width: layout.mainWidth,
+    // The panel spends a row on its title, one on the filter line and one on the status line.
+    height: Math.max(1, layout.mainRows - 3 - (logsSearch ? 1 : 0)),
+    color: theme.color,
+    search: logsSearch,
+    // Nothing is read while the tab is shut, which is what keeps a workspace that never opens it from
+    // touching the run directory at all.
+    active: tab === 'logs',
+  });
 
   // ------------------------------------------------------------------ effects
   useEffect(() => {
@@ -455,6 +517,41 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       cancelled = true;
     };
   }, [tab, controller, props.finished]);
+
+  /**
+   * What the Diagnostics tab reads (§3.7). Re-read whenever it is opened and whenever the execution ends,
+   * because all three answers move while a run is going and none of them is on the event bus.
+   */
+  const preflight = props.preflight;
+  useEffect(() => {
+    if (tab !== 'diagnostics') return undefined;
+    let cancelled = false;
+    const runId = run.runId;
+    void Promise.resolve(preflight?.() ?? undefined)
+      .then((agents) => {
+        if (!cancelled) setDiagnostics((current) => ({ ...current, agents: agents ?? [] }));
+      })
+      .catch(() => {
+        if (!cancelled) setDiagnostics((current) => ({ ...current, agents: [] }));
+      });
+    // The tail of the run log, not the whole of it: the retry history an operator is looking for is the
+    // recent one, and `events.jsonl` grows with the run.
+    void readTailPage(paths.eventsFile(runId), 2000)
+      .then((page) => {
+        if (!cancelled) setDiagnostics((current) => ({ ...current, retries: parseRetryEvents(page.lines) }));
+      })
+      .catch(() => {
+        if (!cancelled) setDiagnostics((current) => ({ ...current, retries: [] }));
+      });
+    void readControlHistory(paths, runId)
+      .then((inbox) => {
+        if (!cancelled) setDiagnostics((current) => ({ ...current, inbox }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, paths, run.runId, preflight, props.finished, diagnosticsRead]);
 
   // ------------------------------------------------------------------ who is driving (§2.1, [D37])
   // Read before the actions below, because every one of them asks it first: an observer has no lock to
@@ -1115,10 +1212,13 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         else if (key.escape || input === '?' || input.toLowerCase() === 'q') closeOverlay();
         return;
       }
-      const field = overlay.kind === 'palette' ? 'palette' : 'search';
-      const query = field === 'palette' ? paletteQuery : search;
+      // Which list `/` is searching this time. The Logs panel has a query of its own because the task-list
+      // filter and "find this in 50 MB of stdout" are not the same question, and one draft cannot be both.
+      const field = overlay.kind === 'palette' ? 'palette' : focus === 'main' && tab === 'logs' ? 'logs-search' : 'search';
+      const query = field === 'palette' ? paletteQuery : field === 'logs-search' ? logsSearch : search;
       if (key.escape) {
-        if (field === 'search') {
+        if (field === 'logs-search') state.setDraft('logs-search', '');
+        else if (field === 'search') {
           state.setDraft('search', '');
           state.setCursor(0);
         }
@@ -1132,14 +1232,14 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       } else if (key.backspace || key.delete) {
         state.setDraft(field, query.slice(0, -1));
         if (field === 'search') state.setCursor(0);
-        else state.setListCursor('palette', 0, paletteEntries.length);
+        else if (field === 'palette') state.setListCursor('palette', 0, paletteEntries.length);
       } else if (field === 'palette' && (key.upArrow || key.downArrow)) {
         state.moveListCursor('palette', key.upArrow ? -1 : 1, paletteMatches.length);
       } else if (input && !key.ctrl && !key.meta && !key.tab) {
         // [D15]: inside a text field a printable key is text, whatever it would mean outside it.
         state.setDraft(field, query + input);
         if (field === 'search') state.setCursor(0);
-        else state.setListCursor('palette', 0, paletteEntries.length);
+        else if (field === 'palette') state.setListCursor('palette', 0, paletteEntries.length);
       }
     },
     { isActive: inWorkspace },
@@ -1175,6 +1275,59 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       // footer is a focus stop rather than a fourth meaning for a chord.
       if (focus === 'footer') {
         if (lower === 'r') refreshQuotas();
+        else if (input === '?') state.setOverlay({ kind: 'help' });
+        else if (key.escape) focusPanel('tasks');
+        else if (lower === 'q') requestQuit();
+        return;
+      }
+
+      // The Logs panel answers nearly every printable key itself (§3.7): it has four views, five filters and
+      // a search, and a key that meant "restart the selected task" in the middle of that would be a
+      // surprise. Placed before the observer and ended-state actions for exactly that reason.
+      if (focus === 'main' && tab === 'logs') {
+        if (key.upArrow) logs.scroll(-1);
+        else if (key.downArrow) logs.scroll(1);
+        else if (key.pageUp) logs.scroll(-Math.max(1, layout.mainRows - 4));
+        else if (key.pageDown) logs.scroll(Math.max(1, layout.mainRows - 4));
+        else if (key.leftArrow) state.moveTab(-1);
+        else if (key.rightArrow) state.moveTab(1);
+        else if (input === 'g') logs.toOldest();
+        else if (input === 'G') logs.toNewest();
+        else if (input === '/') {
+          state.setDraft('logs-search', '');
+          state.setOverlay({ kind: 'search' });
+        } else if (input === 'n') logs.stepMatch(1);
+        else if (input === 'N') logs.stepMatch(-1);
+        else if (lower === 'v') logs.cycleView(input === 'V' ? -1 : 1);
+        else if (input === ']') logs.cycleSource(1);
+        else if (input === '[') logs.cycleSource(-1);
+        else if (lower === 't') logs.cycleTask(input === 'T' ? -1 : 1);
+        else if (lower === 'k') logs.cycleSeverity(input === 'K' ? -1 : 1);
+        else if (lower === 'm') logs.cycleRange(input === 'M' ? -1 : 1);
+        else if (lower === 'r') logs.reload();
+        else if (input === '?') state.setOverlay({ kind: 'help' });
+        else if (key.escape) {
+          if (logsSearch) state.setDraft('logs-search', '');
+          else focusPanel('tasks');
+        } else if (lower === 'q') requestQuit();
+        return;
+      }
+
+      // The Diagnostics panel is one long list and scrolls like one; `R` re-reads what it read on open.
+      if (focus === 'main' && tab === 'diagnostics') {
+        const length = 10_000;
+        if (key.upArrow) state.moveListCursor('diagnostics', -1, length);
+        else if (key.downArrow) state.moveListCursor('diagnostics', 1, length);
+        else if (key.pageUp) state.moveListCursor('diagnostics', -10, length);
+        else if (key.pageDown) state.moveListCursor('diagnostics', 10, length);
+        else if (key.home) state.setListCursor('diagnostics', 0, length);
+        else if (key.end) state.setListCursor('diagnostics', length, length);
+        else if (key.leftArrow) state.moveTab(-1);
+        else if (key.rightArrow) state.moveTab(1);
+        else if (lower === 'r') {
+          setDiagnostics({});
+          setDiagnosticsRead((n) => n + 1);
+        }
         else if (input === '?') state.setOverlay({ kind: 'help' });
         else if (key.escape) focusPanel('tasks');
         else if (lower === 'q') requestQuit();
@@ -1265,8 +1418,6 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         })
         .join('   ')
     : undefined;
-  const headerRows = headerRowsFor(run);
-  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) });
   const spinner = spinnerFrames();
   const runningGlyph = motion ? spinner[frame.current % spinner.length]! : stateGlyph('running');
   const header = <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} badge={props.badge} attention={attention} />;
@@ -1432,8 +1583,42 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             theme={theme}
           />
         );
+      case 'logs':
+        return (
+          <LogsPanel
+            sources={logs.sources}
+            source={logs.source}
+            view={logs.view}
+            filters={logs.filters}
+            lines={logs.lines}
+            offset={logs.offset}
+            atStart={logs.atStart}
+            loading={logs.loading}
+            search={overlay.kind === 'search' || logsSearch ? logsSearch : undefined}
+            match={logs.match}
+            rows={layout.mainRows}
+            columns={layout.mainWidth}
+            theme={theme}
+            focused={focus === 'main'}
+          />
+        );
       case 'diagnostics':
-        return <DiagnosticsPanel controls={controls} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
+        return (
+          <DiagnosticsPanel
+            run={run}
+            controls={controls}
+            quotas={quotas}
+            agents={diagnostics.agents}
+            retries={diagnostics.retries}
+            inbox={diagnostics.inbox}
+            now={now}
+            rows={layout.mainRows}
+            columns={layout.mainWidth}
+            theme={theme}
+            cursor={diagnosticsCursor}
+            focused={focus === 'main'}
+          />
+        );
       default:
         return <Placeholder tab={tab} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />;
     }

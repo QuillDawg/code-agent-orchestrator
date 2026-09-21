@@ -583,9 +583,13 @@ of silence the cell gains `… 2m idle`, so a thinking worker is distinguishable
 selected task's full detail. `E` on any unfinished task opens the editor described under
 [Editing an unfinished task](#editing-an-unfinished-task). **Session** shows the selected task's identity
 (agent, model as reported, session id, attempt, revision), its transcript, anything it is waiting on, every
-message you have sent it, and the composer described under [Prompting a task](#prompting-a-task). Logs and
-Diagnostics are placeholders in this beta; each says what to use instead (`F` for the transcript,
-`cao logs`) until they arrive.
+message you have sent it, and the composer described under [Prompting a task](#prompting-a-task). **Logs**
+is every file the run wrote — `orchestrator.log`, the run's events, and each attempt's events, `stdout.log`,
+`stderr.log` and `prompt.md` — read a page at a time from the end, with `v` for the view, `[`/`]` for the
+file, `t`/`k`/`m` for the task, severity and time filters and `/` `n` `N` to search; nothing is loaded whole,
+so a 50 MB `stdout.log` opens at once. **Diagnostics** is how the run is executing, read-only: agent
+versions and transports, the effective configuration of each task with its active revision, the retry
+history, the provider failure metadata, the controls sent and answered, and the quota snapshots.
 
 When a worker needs you, a prompt appears in the workspace (it reopens itself if minimised, and the terminal
 bell rings): `Y` allow, `A` allow for the rest of the task, `N` deny, `R` deny with a reason. Questions list
@@ -888,9 +892,9 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 
 | Command | What it does |
 |---|---|
-| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--activity`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
+| `cao run [workflow]` | Create and execute a run. Refuses to start while another orchestrator owns a run in the same repository. `--dry-run`, `--task <id>`, `--from <id>`, `--max-concurrency N`, `--permission-mode M`, `--repository <dir>`, `--claude-command <cmd>`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--activity`, `--debug`, `--verbose`, `--emit`/`--no-emit`, `--emit-feed` |
 | `cao validate [workflow]` | Schema and semantic validation plus the execution plan, with the resolved agent, model and effort per task. `--repository <dir>`, `--json` |
-| `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, plus the `cao run` overrides |
+| `cao resume [run]` | Continue an interrupted, failed or paused run. `--no-retry-failed`, `--approve <task>`, `--reject <task>`, `--task <id> --input "<text>"`, `--from <id>`, `--debug`, plus the `cao run` overrides |
 | `cao ui [run]` | Open the terminal workspace on a run, or choose from the recent runs of this repository. With no terminal it prints the list and exits 0. `--limit N`, `--json`, `--no-tui`, `--no-alt-screen`, `--theme <name>`, `--repository <dir>`, `--verbose` |
 | `cao emit [action]` | `enable`/`disable`/`status` (default) — turn announcing a run to a desktop app on or off for this user, or show the whole precedence chain. `--emit`/`--no-emit` (with `status`, resolve the chain as if a run had the flag), `--json` |
 | `cao status [run]` | Progress table, run directory and orchestrator pid. `--json` |
@@ -906,6 +910,7 @@ Task-oriented feature tour, one working example per feature: [docs/capabilities.
 | `cao stop [run]` | Interrupt a run from another terminal, as Ctrl+C would; twice to kill workers immediately. `--wait <seconds>` |
 | `cao clean [run]` | Remove what a run left on disk. `--worktrees` (default), `--branches`, `--all` |
 | `cao doctor [workflow]` | Check Node, git, required agent versions/auth/capabilities, stale locks and leftover worktrees, with a fix hint under each failing check. `--probe` also starts each agent mode a run can use; without it nothing is started and nothing is spent. `--repository <dir>`, `--json` |
+| `cao diagnostics [run]` | One JSON file describing a run, to attach to a bug report: doctor facts (no probes), the redacted workflow, the run events, `live.json`, the orchestrator log, every `attempt.json` with the last 200 lines of its `stderr.log`, and the inbox. Transcripts, prompts and diffs only with `--include transcripts,prompts,diffs`. Everything passes through the run's redactor; nothing is uploaded. `--out <file>` (required), `--repository <dir>` |
 
 **Exit codes**
 
@@ -935,7 +940,7 @@ Read by `cao` itself. Everything else in your environment passes through to the 
 | `CAO_CODEX_COMMAND` | The Codex CLI to launch instead of `codex`, same rules |
 | `CAO_EMIT` | `1`/`0` to announce this shell's runs to a desktop app on this machine (`~/.cao`), same precedence as `--emit`/`--no-emit` and `cao emit enable`. See [docs/desktop.md](docs/desktop.md) |
 | `CAO_HOME` | Use a different directory instead of `~/.cao` for the files above |
-| `CAO_DEBUG` | Print the stack trace when a command fails |
+| `CAO_DEBUG` | Debug-level logging into `orchestrator.log` (and onto stderr without a workspace), the stack trace when a command fails, and the Diagnostics tab when the workspace opens. `--debug` on `cao run` and `cao resume` sets it |
 | `CAO_ASCII` | Draw tables, status marks and the workspace's own glyphs in ASCII. Guessed on a Windows terminal without a UTF-8 code page; `CAO_UNICODE=1` forces glyphs back on |
 | `CAO_ALT_SCREEN` | `0` draws the workspace in the normal buffer instead of the alternate screen, like `--no-alt-screen` |
 | `CAO_THEME` | `default` or `mono` for the workspace; `--theme` overrides it and `NO_COLOR` forces `mono` |
@@ -954,8 +959,11 @@ See [docs/configuration.md](docs/configuration.md#hooks).
 <summary><strong>Something does not work. Where do I start?</strong></summary>
 
 `cao doctor`. It checks Node, git, each agent CLI, stale `lock.json` files, leftover worktrees and whether
-`.orchestrator/` is git-ignored, starts every agent mode a run can use, and prints the fix under each
-failing line. Attach `cao doctor --json` to a bug report.
+`.orchestrator/` is git-ignored, and prints the fix under each failing line; `--probe` also starts every
+agent mode a run can use. Attach `cao doctor --json` to a bug report — or, when the question is about one
+run, `cao diagnostics <run> --out bug.json`, which packs that run's doctor facts, workflow, events,
+orchestrator log, attempts and stderr tails into a single redacted file. Re-run with `--debug` first if the
+log needs more in it.
 
 </details>
 

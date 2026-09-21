@@ -317,22 +317,21 @@ describe('the keys the footer and ? agree on', () => {
 });
 
 describe('the panels a later stage fills', () => {
-  it('says which stage fills each of them', () => {
-    // Session is filled in now (§3.5), so it has no placeholder at all: an empty panel is a bug, and a
-    // placeholder for a panel that has content is a sentence nobody will ever read.
-    expect(PLACEHOLDER_TEXT.session).toBeUndefined();
-    expect(PLACEHOLDER_TEXT.logs?.[0]).toContain('stage 3');
-    expect(PLACEHOLDER_TEXT.diagnostics?.[0]).toContain('stage 3');
-    // And what answers the same question today, so the panel is never merely empty.
-    for (const lines of Object.values(PLACEHOLDER_TEXT)) expect(lines.join(' ')).toContain('Until then');
+  it('has none left: every tab of the shell is filled in', () => {
+    // Logs and Diagnostics were the last two (§3.7) and are panels of their own from stage 3. A placeholder
+    // for a panel that has content is a sentence nobody will ever read, so there are none.
+    expect(Object.keys(PLACEHOLDER_TEXT)).toHaveLength(0);
+    for (const tab of WORKSPACE_TABS) expect(PLACEHOLDER_TEXT[tab], tab).toBeUndefined();
   });
 
-  it('wraps that prose to the panel instead of cutting the half that says what to do instead', () => {
+  it('wraps a placeholder to the panel instead of cutting the half that says what to do instead', () => {
+    // The wrapping is still what a tab added later would be drawn with, so it is still checked.
+    const prose = ['The Turbo panel arrives in stage 9.', '', 'Until then: cao turbo --status prints it.'];
     for (const columns of [60, 84, 120]) {
-      const lines = wrapLines(PLACEHOLDER_TEXT.logs!, columns);
+      const lines = wrapLines(prose, columns);
       for (const line of lines) expect([...line].length, `${columns}: ${line}`).toBeLessThanOrEqual(Math.max(20, columns));
       // Nothing is lost in the wrapping: the sentence naming today's answer survives whole.
-      expect(lines.join(' ')).toContain('cao logs <task> prints it.');
+      expect(lines.join(' ')).toContain('cao turbo --status prints it.');
     }
   });
 

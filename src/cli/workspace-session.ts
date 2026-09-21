@@ -27,14 +27,16 @@ import type { FileRunStore } from '../persistence/run-store.js';
 import type { RunController } from '../workflow/control/controller.js';
 import type { SchedulerResult } from '../workflow/scheduler.js';
 import { resumeRequestLabel, type ResumeRequest } from '../workflow/resume-request.js';
-import { RunLockedError, startRuntime, type StartRuntimeOptions } from './app.js';
+import { detectRunnersForWorkflow, RunLockedError, startRuntime, type StartRuntimeOptions } from './app.js';
 import { attachPlainRenderer } from './render/plain.js';
 import { glyph } from '../util/glyphs.js';
 import { BELL } from '../util/misc.js';
 import { errorMessage } from '../util/errors.js';
 import type { WorkspaceRole } from '../tui/workspace/chrome.js';
+import type { WorkspaceTab } from '../tui/store.js';
 import type { DashboardController, DashboardOptions, QuotaFactory, WorkspaceView } from '../tui/app.js';
 import { startQuotaMonitors } from '../runners/quota.js';
+import { agentReports, type AgentReport } from '../runners/diagnostics.js';
 import { ownershipBadge, ownershipBanner } from './ownership.js';
 import type { RunObserver } from '../workflow/control/observer.js';
 import type { Interaction, InteractionAnswer, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
@@ -124,6 +126,13 @@ export interface WorkspaceSessionOptions {
    * `codex app-server` and makes no call of any kind.
    */
   quota?: QuotaFactory;
+  /**
+   * Injected by tests: the preflight facts the Diagnostics panel shows (§3.7). Left out, the real detection
+   * runs — but only when that tab is opened, so a test that never opens it spawns no CLI either way.
+   */
+  preflight?: () => Promise<AgentReport[]>;
+  /** Which tab the workspace opens on. `--debug` asks for Diagnostics [D34]; otherwise the shell decides. */
+  initialTab?: WorkspaceTab;
 }
 
 interface Session extends WorkspaceSession {
@@ -254,6 +263,10 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     // The provider quota readers (§3.6, `[D31]`). A factory: nothing starts until the Ink tree mounts, and
     // nothing at all in a headless run, which never gets this far.
     quota: opts.quota ?? ((handlers) => startQuotaMonitors({ ...handlers, cwd: run.repositoryRoot })),
+    // The preflight facts (§3.7). Called when the Diagnostics tab is opened and not before: `--version` on
+    // two CLIs is cheap, but it is still two processes, and a workspace that never asks should start none.
+    preflight: opts.preflight ?? (async () => agentReports(await detectRunnersForWorkflow(run.workflow), run.workflow)),
+    ...(opts.initialTab ? { initialTab: opts.initialTab } : {}),
   });
 
   const ensureDashboard = (run: WorkflowRun, bus: EventBus, controller: RunController, view: WorkspaceView): DashboardController => {

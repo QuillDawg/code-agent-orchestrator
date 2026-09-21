@@ -248,3 +248,54 @@ export async function sendControlRequest(
     await sleep(Math.min(poll, Math.max(1, deadline - Date.now())));
   }
 }
+
+// ---------------------------------------------------------------------------- reading it read-only
+
+/** Every request and answer this run's inbox holds, for the Diagnostics panel and `cao diagnostics` (§3.7). */
+export interface ControlHistory {
+  /** Requests still waiting in `requests/`, in ULID order. */
+  pending: ControlRequest[];
+  /** Answers in `requests/acks/`, in ULID order. */
+  acks: ControlAck[];
+  /** What was moved to `requests/rejected/`, with the sidecar reason beside it. */
+  rejected: Array<{ file: string; request: unknown; reason?: string }>;
+}
+
+/**
+ * The inbox as it is, changing nothing.
+ *
+ * Deliberately not `readPendingRequests`: that one is the *owner's* reader and moves a request it cannot act
+ * on into `rejected/` as it goes. Diagnostics is read-only by definition (§3.7), and a panel that rejected
+ * a request merely by being opened would be a second inbox consumer racing the real one.
+ */
+export async function readControlHistory(paths: RunPaths, runId: string): Promise<ControlHistory> {
+  const readAll = async <T>(dir: string, keep: (value: unknown, file: string) => T | null): Promise<T[]> => {
+    const names = await fs.readdir(dir).catch(() => [] as string[]);
+    const out: T[] = [];
+    for (const name of names.sort()) {
+      if (!name.endsWith('.json') || isSyncConflictName(name)) continue;
+      const file = path.join(dir, name);
+      const text = await fs.readFile(file, 'utf8').catch(() => null);
+      if (text === null) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      const value = keep(parsed, file);
+      if (value !== null) out.push(value);
+    }
+    return out;
+  };
+
+  const pending = await readAll(paths.requestsDir(runId), (value) => (isPlainObject(value) && typeof value.kind === 'string' ? (value as unknown as ControlRequest) : null));
+  const acks = await readAll(paths.requestAcksDir(runId), (value) => (isPlainObject(value) && typeof value.status === 'string' ? (value as unknown as ControlAck) : null));
+  const rejectedDir = paths.requestRejectedDir(runId);
+  const rejected = await readAll(rejectedDir, (value, file): ControlHistory['rejected'][number] => ({ file, request: value }));
+  for (const entry of rejected) {
+    const reason = await fs.readFile(`${entry.file}.reason.txt`, 'utf8').catch(() => null);
+    if (reason !== null) entry.reason = reason.trim();
+  }
+  return { pending, acks, rejected };
+}

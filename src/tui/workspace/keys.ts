@@ -169,7 +169,28 @@ const reportKeys = (): KeyHelp[] => [
   { keys: '/', what: 'search the report', short: 'search' },
 ];
 
-const placeholderKeys = (): KeyHelp[] => [{ keys: LR(), what: 'another tab; this one is not filled in yet', short: 'tab' }];
+/**
+ * The Logs panel (§3.7). Nearly every printable key is this panel's own, because it is four views of six
+ * kinds of file with five filters over them, and there is no room for a key here to also mean what it
+ * means in the task list.
+ */
+const logsKeys = (): KeyHelp[] => [
+  { keys: `${UD()} PgUp/PgDn`, what: 'scroll; older pages are read from disk as you reach them', short: 'scroll' },
+  { keys: 'g / G', what: 'the oldest line held / back to the newest', short: 'ends' },
+  { keys: 'v', what: 'the next view: events, stderr, raw output, prompts (V goes back)', short: 'view' },
+  { keys: '[ / ]', what: 'the previous / next file this view offers', short: 'file' },
+  { keys: 't / k / m', what: 'filter by task / severity / time range (uppercase steps back)', short: 'filter' },
+  { keys: '/ n N', what: 'search this file and step through the matches', short: 'search' },
+  { keys: 'R', what: 'read the newest page again', short: 'reload' },
+  { keys: LR(), what: 'another tab', short: 'tab' },
+];
+
+/** The Diagnostics panel (§3.7). It shows rather than does, so it scrolls and it re-reads. */
+const diagnosticsKeys = (): KeyHelp[] => [
+  { keys: `${UD()} PgUp/PgDn`, what: 'scroll; Home/End jump to the ends', short: 'scroll' },
+  { keys: 'R', what: 'read the agent versions, the retry history and the inbox again', short: 'reload' },
+  { keys: LR(), what: 'another tab', short: 'tab' },
+];
 
 /** The Session tab: the transcript, what has been sent, and the composer (§3.5). */
 const sessionKeys = (): KeyHelp[] => [
@@ -206,10 +227,10 @@ const mainKeys = (tab: WorkspaceTab): KeyHelp[] =>
   ({
     overview: overviewKeys,
     session: sessionKeys,
-    logs: placeholderKeys,
+    logs: logsKeys,
     changes: changesKeys,
     report: reportKeys,
-    diagnostics: placeholderKeys,
+    diagnostics: diagnosticsKeys,
   })[tab]();
 
 /**

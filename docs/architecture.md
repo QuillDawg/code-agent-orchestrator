@@ -68,8 +68,12 @@ src/
                               observer lead lines, the task table, the selected task's detail block), detail.ts (a task's detail
                               block, and the ended-run and observer lead lines above it), ended.ts (the ended-run actions —
                               resume run, re-run task, resume from task, answer and resume, approve/reject), observer.ts (the
-                              observer's stop/kill/restart controls, sent as requests), panels.tsx (Session, Logs, Changes,
-                              Report and Diagnostics tabs, the command palette, the quit prompt), edit.tsx (the task editor `E`
+                              observer's stop/kill/restart controls, sent as requests), panels.tsx (the Report tab, the
+                              command palette, the contextual help, the quit prompt and the answer field), session.tsx (the
+                              Session tab), logs.tsx (the Logs tab: the run's files as sources, the four views, the filters and
+                              the page-at-a-time pager over persistence/log-pager.ts), diagnostics.tsx (the Diagnostics tab:
+                              agents and transports, effective configuration, retries, RunnerFailure, controls and quotas as
+                              one scrollable list), edit.tsx (the task editor `E`
                               opens: the rows, the round-tripping drafts, the inline validation and the read-only context
                               section; the decisions themselves come from workflow/control/edit.ts), prompt-editor.ts (the
                               prompt in $VISUAL/$EDITOR through terminal.ts's suspendTerminal, which hands the terminal over
