@@ -9,9 +9,11 @@
 ## Checklist
 
 - [ ] `npm run typecheck`, `npm run lint` and `npm test` are green
+- [ ] `npm run test:agents` — if you touched a runner, its arguments or its detection
+- [ ] `npm run smoke:pack` — if you touched `package.json`'s `files`/`bin`/`exports`, or anything under `scripts/`
 - [ ] Tests added or extended for the change (vitest, against the fake CLIs in `test/fixtures/` — no real API calls)
 - [ ] Docs updated where the user-facing surface changed (`README.md`, `docs/capabilities.md`, `docs/configuration.md`)
-- [ ] A line added under `## Unreleased` in `CHANGELOG.md`
+- [ ] A line added under `## Unreleased` in `CHANGELOG.md`, unless this is a documentation-only change
 - [ ] Commit messages are conventional (`feat:`, `fix:`, `docs:`, `chore:`)
 
 ## Breaking changes

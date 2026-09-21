@@ -9,7 +9,7 @@ Security problems do **not** go in the issue tracker. See [SECURITY.md](SECURITY
 
 ```bash
 git clone https://github.com/QuillDawg/code-agent-orchestrator.git
-cd CodeAgentOrchestrator
+cd code-agent-orchestrator
 npm install
 npm run build
 npm link            # optional: puts your checkout's `cao` on PATH
@@ -176,9 +176,12 @@ npm run test:agents # if you touched a runner, its arguments or its detection
 npm run smoke:pack  # if you touched package.json's files/bin/exports, or anything under scripts/
 ```
 
-CI runs exactly these plus `npm run build`, on Node 22 and 24, on Linux and Windows. Windows is not optional:
-paths, process trees and line endings all differ there, and this project spawns processes and reads git
-output on both.
+CI runs the first three plus `npm run build`, on Node 22 and 24, on Linux and Windows, and then a second
+job that packs the tarball and drives the installed `cao` against the fake agents (`npm run smoke:pack`),
+asserts the resolved `ink` is at or above 7.0.6, and runs `npm audit --omit=dev --audit-level=high`. It does
+not run `npm run test:agents`: that one needs the real agent CLIs, which CI never has, so it is on you.
+Windows is not optional: paths, process trees and line endings all differ there, and this project spawns
+processes and reads git output on both.
 
 Also:
 

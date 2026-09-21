@@ -22,7 +22,8 @@ Please include:
 - the smallest workflow YAML or command that reproduces it, ideally against
   `test/fixtures/fake-claude.mjs` rather than a real model, so it can be reproduced for free;
 - `cao doctor --json` output and the version (`cao --version`);
-- the run directory listing if a run is involved.
+- if a run is involved, `cao diagnostics <run-id> --out report.json` — one redacted file holding that run's
+  doctor facts, workflow, events, orchestrator log and attempt records.
 
 **Redact before you attach anything.** A run directory holds prompts, transcripts and diffs of real work.
 
@@ -114,5 +115,7 @@ Full detail — the registry, presence, and exactly what is and is not implement
 
 Everything `cao` records — prompts, transcripts, results, diffs, costs — stays under `.orchestrator/` in your
 repository, and `cao` adds that directory to `.git/info/exclude` on first use so it is not committed by
-accident. Nothing is uploaded. `cao doctor` and `cao report --json` are the two outputs meant for sharing;
-both can still contain paths, branch names and agent prose, so read them before you paste them into a ticket.
+accident. Nothing is uploaded. `cao doctor`, `cao report --json` and `cao diagnostics --out` are the outputs meant for
+sharing — the last of them is the single redacted bundle to attach to a report, and it leaves out
+transcripts, prompts and diffs unless you ask for them with `--include`. All three can still contain paths,
+branch names and agent prose, so read them before you paste them into a ticket.

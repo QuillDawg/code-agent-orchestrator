@@ -6,7 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Most failures are environment or YAML, and both are visible in the two listings below.
+        Most failures are environment or YAML, and both are visible in the two outputs below.
+        `cao diagnostics <run-id> --out bug.json` gathers everything about one run into a single
+        redacted file; attaching it usually answers every question here at once.
         `cao` makes no network calls of its own, so nothing here is sent anywhere but this issue —
         please still redact anything private in prompts, paths or agent output.
 
@@ -32,14 +34,17 @@ body:
       required: true
 
   - type: textarea
-    id: run-directory
+    id: diagnostics
     attributes:
-      label: Run directory listing
+      label: "`cao diagnostics <run-id> --out bug.json`"
       description: >-
-        `ls -R .orchestrator/runs/<run-id>` (PowerShell: `Get-ChildItem -Recurse .orchestrator/runs/<run-id>`).
-        `cao list` prints the run ids. The file names and sizes alone say which attempts ran and what
-        they persisted — attach `run.json`, `report.md` or an attempt's `events.jsonl` if you can share them.
-      render: shell
+        Attach `bug.json`, or paste it here. `cao list` prints the run ids. The bundle carries that
+        run's doctor facts, the redacted workflow, the run events, `live.json`, the orchestrator log
+        and every attempt record with the tail of its `stderr.log` — everything below, in one file.
+        Transcripts, prompts and diffs are left out unless you add `--include transcripts,prompts,diffs`.
+        If you cannot run it, `cao doctor --json` plus the run's `workflow.json` and `report.md`
+        (under `.orchestrator/runs/<run-id>/`) is the next best thing.
+      render: json
     validations:
       required: true
 
@@ -47,7 +52,7 @@ body:
     id: version
     attributes:
       label: "`cao --version`"
-      placeholder: 0.1.0-beta.1
+      placeholder: 2.0.0-beta.1
     validations:
       required: true
 
@@ -56,7 +61,7 @@ body:
     attributes:
       label: OS, Node and agent CLI versions
       description: "`node --version`, `git --version`, and `claude --version` and/or `codex --version`."
-      placeholder: Windows 11, node v22.12.0, git 2.47.1, claude 2.0.14
+      placeholder: Windows 11, node v22.12.0, git 2.47.1, claude 2.1.278, codex 0.154.0
     validations:
       required: true
 

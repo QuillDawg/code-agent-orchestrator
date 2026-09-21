@@ -100,9 +100,9 @@ bundling `planTranscript` at one version while the installed `cao` writes `event
 renderers disagree about structure while their tests claim they cannot. The tests are only right about the
 pair they ran against.
 
-So: **a caret range in `dependencies`, always.** `code-agent-orchestrator` depends on `^0.1.0`; so does the
-app. Inside this repository the npm workspace resolves that range to `packages/protocol` and `npm install`
-builds it, so nothing extra is needed to work on the CLI.
+So: **a caret range in `dependencies`, always.** `code-agent-orchestrator` depends on `^0.2.0`; the app
+should depend on the same range. Inside this repository the npm workspace resolves that range to
+`packages/protocol` and `npm install` builds it, so nothing extra is needed to work on the CLI.
 
 From a checkout of `cao-desktop`, take the workspace itself — **never a copy of the files.** Either:
 
@@ -117,11 +117,12 @@ or publish a prerelease (`npm publish --tag next` from this directory) and depen
 declaration of every shared type. Copying `src/` into the app produces two, and the day they differ is the
 day the two renderers start disagreeing without anything failing.
 
-CI runs against a **range**, not a pair: the `planTranscript` fixture suite against the oldest supported and
-the newest published package, and the end-to-end suite against the oldest supported and the newest `cao`.
-The fixtures are recorded attempt logs in `test/fixtures/transcripts/`, written by
-`scripts/record-transcripts.ts` in the repository above; a surface reads that corpus rather than copying it,
-so the two renderers cannot be shown different input.
+CI runs against one pair — the package in `packages/protocol` and the `cao` in the same commit — so it
+proves the two agree here, not that they agree with whatever the app has installed. What closes the rest of
+the gap is the corpus: the fixtures are recorded attempt logs in `test/fixtures/transcripts/`, written by
+`scripts/record-transcripts.ts` in the repository above, and `planTranscript` is checked against them at
+every split point. A surface reads that corpus rather than copying it, so the two renderers cannot be shown
+different input.
 
 ## Contributing
 
