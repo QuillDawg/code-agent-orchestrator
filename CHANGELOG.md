@@ -42,6 +42,11 @@ picked up again, and the run says what it has spent. The first release of the 2.
   reason. The workspace now applies the edit offline itself, through the same code path as the command.
 - The Changes tab’s footer showed only `Ctrl+P palette   ? help   Q quit` while the panel drew a second key
   line of its own. There is one footer now, and it carries the panel’s keys.
+- `Ctrl+C` wrote `crash` on the attempt it stopped, wherever killing a process is quick — Linux and
+  macOS. The stop command and the workers' teardown were started together, and applying the stop is what
+  marks an attempt in flight as cancelled, so whichever landed first decided how deliberately stopped
+  work was recorded. The teardown waits for the stop to be applied now; the hard deadline is armed as it
+  always was, so a controller that never answers still cannot hold the workers open.
 - Dialogs drew box-drawing characters under `CAO_ASCII=1`.
 
 ### Changed

@@ -15,7 +15,8 @@ import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
 import { createRunController, type RunController } from '../../src/workflow/control/controller.js';
 import { createNativeRunPaths } from '../../src/persistence/paths.js';
-import { clearPendingRequests, watchStopRequests, type StopRequest } from '../../src/execution/signals.js';
+import { clearPendingRequests, createInterruptController, watchStopRequests, type StopRequest } from '../../src/execution/signals.js';
+import type { ProcessManager } from '../../src/execution/process-manager.js';
 import {
   controlRequest,
   readAck,
@@ -426,4 +427,52 @@ describe('the legacy stop.json escalation', () => {
       dispose();
     }
   }, 20_000);
+});
+
+describe('Ctrl+C: the stop is applied before the workers are torn down (§2.4)', () => {
+  /**
+   * The ordering, not the timing. `interrupt()` used to submit the stop and kill the workers in the same
+   * breath, and whichever won decided how the attempt was written down: applying the stop is what marks an
+   * attempt in flight as `cancelled`, so a worker killed first exits non-zero with nothing to explain it
+   * and the runner records a `crash`. On Windows the kill spawns `taskkill` and always lost, which is why
+   * only Linux ever saw it - and why this case asks the question with a controller that answers when it is
+   * told to, rather than with a race.
+   */
+  it('waits for the stop command to be applied before shutting workers down', async () => {
+    let applyStop = (): void => {};
+    const applied = new Promise<void>((resolve) => {
+      applyStop = resolve;
+    });
+    const shutdowns: string[] = [];
+    const processManager = {
+      shutdown: (mode: string) => {
+        shutdowns.push(mode);
+        return Promise.resolve();
+      },
+      killAllSync: () => {},
+    } as unknown as ProcessManager;
+    const submitted: string[] = [];
+    const controller = {
+      submit: async (command: { kind: string }): Promise<ControlAck> => {
+        submitted.push(command.kind);
+        await applied;
+        return { protocol: PROTOCOL_VERSION, id: 'x', status: 'applied', at: '2026-01-01T00:00:00.000Z' };
+      },
+      setKillHandler: () => {},
+    } as unknown as RunController;
+
+    const interrupt = createInterruptController({ controller, processManager, logger: silentLogger });
+    interrupt.interrupt('Ctrl+C');
+
+    // The run has been asked to stop, and nothing has been killed on the strength of it yet.
+    expect(submitted).toEqual(['stop']);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(shutdowns).toEqual([]);
+    expect(interrupt.interrupted).toBe(true);
+
+    applyStop();
+    await waitFor(() => shutdowns.length > 0, 2_000);
+    expect(shutdowns).toEqual(['graceful']);
+  });
 });

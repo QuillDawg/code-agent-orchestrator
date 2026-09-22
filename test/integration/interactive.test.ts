@@ -139,10 +139,18 @@ describe('interactive worker round-trips (fake Claude, stream-json input)', () =
     const repo = await tmpGitRepo('cao-int-cancel-');
     let aborted = false;
     const { run } = await execute(repo, ONE, { FAKE_CLAUDE_MODE: 'permission-cancel' }, (_i, signal) =>
-      new Promise((resolve) => signal.addEventListener('abort', () => {
-        aborted = true;
-        resolve({ kind: 'deny', message: 'withdrawn' });
-      })),
+      new Promise((resolve) => {
+        const withdrawn = (): void => {
+          aborted = true;
+          resolve({ kind: 'deny', message: 'withdrawn' });
+        };
+        // `addEventListener` alone answers a withdrawal that arrives *after* this handler is called and
+        // nothing at all when it arrives first: an abort that has already happened fires no event, so the
+        // promise would never settle and the case would fail on the speed of the machine rather than on
+        // anything cao did. A handler given an aborted signal is a normal handler, not a missed one.
+        if (signal.aborted) withdrawn();
+        else signal.addEventListener('abort', withdrawn);
+      }),
     );
     expect(aborted).toBe(true);
     expect(run.tasks['a']!.state).toBe('success');

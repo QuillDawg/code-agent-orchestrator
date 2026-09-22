@@ -69,12 +69,23 @@ export function createInterruptController(opts: InterruptControllerOptions): Int
     process.exit(130);
   };
 
-  const beginShutdown = (source = 'signal'): void => {
+  const beginShutdown = (source = 'signal', stopped?: Promise<unknown>): void => {
     interrupts += 1;
     if (interrupts === 1) {
       logger.warn(`${source}: stopping workers (interrupt again to force)`);
       opts.onInterrupt?.();
-      void processManager.shutdown('graceful');
+      // After the stop has been applied, never beside it. Applying it is what marks the attempts in flight
+      // as cancelled; a worker killed before that is a process that exited non-zero with nothing to explain
+      // it, and the runner writes the attempt down as a crash. The two used to race and the platform decided
+      // the winner: a SIGTERM lands in microseconds where the controller's queue takes a turn of the loop,
+      // so on Linux a Ctrl+C recorded `crash` on work an operator had stopped on purpose, while Windows -
+      // where killing a process tree spawns `taskkill` - recorded `cancelled` and looked correct.
+      //
+      // The hard deadline is armed below rather than inside the `.then()`, so a controller that never
+      // answers cannot hold the teardown open: the workers are killed either way, 20 s later at worst.
+      void Promise.resolve(stopped)
+        .catch(() => undefined)
+        .then(() => processManager.shutdown('graceful'));
       hardTimer = setTimeout(() => {
         logger.error('workers did not exit in time; forcing');
         forceExit();
@@ -88,8 +99,12 @@ export function createInterruptController(opts: InterruptControllerOptions): Int
 
   const interrupt = (source = 'signal'): void => {
     // Only the first one asks the run to stop; the second is the escalation and has nothing to tell it.
-    if (interrupts === 0) void controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli')).catch(() => undefined);
-    beginShutdown(source);
+    // `submit` resolves once the command has been *applied*, which is what the shutdown below waits for.
+    const stopped =
+      interrupts === 0
+        ? controller.submit({ kind: 'stop', mode: 'cancel' }, controlEnvelope('cli')).catch(() => undefined)
+        : undefined;
+    beginShutdown(source, stopped);
   };
 
   const install = (): (() => void) => {
