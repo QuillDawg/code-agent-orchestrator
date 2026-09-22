@@ -20,17 +20,7 @@ import { ownershipOf } from '../ownership.js';
 import { controlEnvelope } from '../../workflow/control/commands.js';
 import { localController } from '../../workflow/control/local.js';
 import { controlRequest, sendControlRequest, DEFAULT_ACK_WAIT_SECONDS } from '../../persistence/requests.js';
-import { buildGraph } from '../../workflow/validator.js';
-import {
-  applyEdit,
-  decideEdit,
-  dependentRejection,
-  detectAgentReadiness,
-  editFieldList,
-  editRejection,
-  resetWorkspaceNote,
-  restartPlanFor,
-} from '../../workflow/control/edit.js';
+import { applyEditOffline } from '../../workflow/control/edit.js';
 import { UsageError } from '../../util/errors.js';
 import { sanitizeText } from '../color.js';
 import { mark, warnLine } from '../../util/marks.js';
@@ -120,40 +110,13 @@ export async function taskEditCommand(refs: string[], opts: TaskEditOptions): Pr
     if (restart) {
       throw new UsageError(`Nothing is executing run ${runId}, so there is no worker to restart. Apply the edit without --restart, then "cao resume ${runId} --task ${taskId}" runs it.`);
     }
-    const state = run.tasks[taskId]!;
-    const task = run.workflow.tasks.find((t) => t.id === taskId)!;
-    const refusal = editRejection(task, state, false) ?? dependentRejection(run, taskId, buildGraph(run.workflow).descendants(taskId));
-    if (refusal) {
-      out(`${mark('error')} rejected ${sanitizeText(refusal)}`);
+    const result = await applyEditOffline(run, taskId, changes, store, { source: 'cli', pid: process.pid, now: nowIso });
+    if (result.status === 'rejected') {
+      out(`${mark('error')} rejected ${sanitizeText(result.reason)}`);
       return 2;
     }
-    const decided = await decideEdit(run.workflow, task, changes, {
-      knownRunners: ['claude', 'codex'],
-      gitAvailable: Boolean(run.workflow.gitRoot),
-      readiness: detectAgentReadiness(),
-    });
-    if (!decided.ok) {
-      out(`${mark('error')} rejected ${sanitizeText(decided.reason)}`);
-      return 2;
-    }
-    const plan = decided.plan;
-    if (plan.fields.length === 0) {
-      out(`${mark('ok')} "${taskId}" already has those values, so nothing was changed.`);
-      return 0;
-    }
-    const note = [...plan.warnings, ...(resetWorkspaceNote(plan.task, restartPlanFor(state) !== 'notStarted') ? [resetWorkspaceNote(plan.task, true)!] : [])];
-    const revision = applyEdit(task, state, plan, { source: 'cli', pid: process.pid, at: nowIso(), note: note.length ? note.join(' ') : undefined });
-    // The same summary event a live run records (§2.6), so the run log tells the whole story whether the
-    // edit was applied by an orchestrator or by this command with nobody at the wheel. Fields, never values.
-    run.eventSeq += 1;
-    await store
-      .appendEvent({ seq: run.eventSeq, ts: nowIso(), runId, type: 'task.edited', taskId, revision: revision.number, fields: plan.fields })
-      .catch(() => undefined);
-    // The revision has to be on disk before the operator is told it landed; `saveRun` writes atomically, so
-    // a crash here leaves either the run as it was or the run with the whole edit in it.
-    await store.saveRun(run);
-    out(`${mark('ok')} edited "${taskId}" as revision ${revision.number}: ${editFieldList(plan.fields)}.`);
-    for (const line of note) out(warnLine(sanitizeText(line)));
+    out(`${mark('ok')} ${sanitizeText(result.reason)}`);
+    for (const line of result.notes ?? []) out(warnLine(sanitizeText(line)));
     out(`Nothing is executing run ${runId}. Run "cao resume ${runId}" to carry on with the edit, or "cao resume ${runId} --task ${taskId}" to run just this task.`);
     return 0;
   }

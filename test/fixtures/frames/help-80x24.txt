@@ -1,12 +1,14 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
+[██████░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
    [Overview]│  Session │  Logs │  Changes │  Report │  Diagnostics
 ▸ Task #/# ✓ implement-parser  Completed  claude|opus-#
+────────────────────────────────────────────────────────────────────────────────
 Tasks — the panel with the keys
   ↑↓                 move through the tasks
   Enter              open the selected task in the panel
   F / L              follow the task's live transcript
   R                  restart a failed, blocked, cancelled or skipped task
+  Z                  suspend a running task, keeping its session; Z resumes
   E                  edit an unfinished task (prompt, agent, model, limits)
   /                  search the task list
 
@@ -16,9 +18,7 @@ Anywhere
   ?                  the keys of whatever has focus
   Q                  quit: stay, stop and quit, or carry on in plain output
   Ctrl+C             stop the run and stay here; again within ##s forces it
+  P                  pause the run; running tasks finish, P again continues
 
-The task editor (E)
-  ↑↓                 move between the fields; Enter on the last one goes to Save
-  Ctrl+O             write the prompt in $VISUAL / $EDITOR
 ▼ ## more   ↑↓ scroll   Esc close
   Esc close   ↑↓ move   Enter choose

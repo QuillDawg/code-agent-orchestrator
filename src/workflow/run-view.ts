@@ -120,6 +120,9 @@ export function pausedNeeds(run: WorkflowRun): PausedNeed[] {
       needs.push({ taskId: task.id, kind: 'approval', question: firstLine(task.prompt), command: `cao resume ${run.runId} --approve ${task.id}   (or --reject ${task.id})` });
     } else if (st.state === 'needs_input') {
       needs.push({ taskId: task.id, kind: 'input', question: taskQuestion(st), command: `cao resume ${run.runId} --task ${task.id} --input "<your answer>"` });
+    } else if (st.state === 'suspended') {
+      // No question to quote: the operator is the one who stopped it, and what they need is the way back.
+      needs.push({ taskId: task.id, kind: 'input', question: 'suspended by the operator; its session was kept', command: `cao resume ${run.runId}` });
     }
   }
   return needs;

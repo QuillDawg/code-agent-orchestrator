@@ -242,7 +242,9 @@ export class GitWorkspaceManager implements WorkspaceManager {
     if (outcome !== 'success') {
       // No checkpoint commit on this path, so diff against a snapshot of whatever the worker left behind.
       const diff = exists ? await this.captureWorktreeDiff(run.runId, task, workspace) : undefined;
-      if (this.workflow.execution.worktree.cleanup === 'always') await this.safeCleanup(workspace, warnings);
+      // A suspended task is going to walk back into this worktree when it is continued, so it is not torn
+      // down even under `cleanup: always`. The stop-and-continue path has always had the same hazard.
+      if (this.workflow.execution.worktree.cleanup === 'always' && outcome !== 'suspended') await this.safeCleanup(workspace, warnings);
       return { workspace, git: attachDiff(git, diff), warnings, diff };
     }
 

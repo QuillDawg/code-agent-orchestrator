@@ -300,3 +300,20 @@ export function questionLines(question: string | undefined, maxLines = 4, width 
   if (wrapped.length > maxLines) shown.push(`| ... clipped; the whole question is in cao task <id>`);
   return shown;
 }
+
+/**
+ * Why the workspace will not open here, or undefined when it will.
+ *
+ * `isInteractive` answers yes or no; this answers "and say so". A run that falls through to plain output
+ * loses the footer, every key and the only way to pause, and used to do it silently — so a terminal that
+ * does not report a TTY on *stdin*, which is easy to arrive at through a wrapper, a pipe or an npm script,
+ * looked like a workspace that had simply stopped working.
+ */
+export function nonInteractiveReason(): string | undefined {
+  if (process.env.CI) return 'CI is set';
+  if (process.env.TERM === 'dumb') return 'TERM is "dumb"';
+  if (!process.stdout.isTTY && !process.stdin.isTTY) return 'neither stdin nor stdout is a terminal';
+  if (!process.stdin.isTTY) return 'stdin is not a terminal';
+  if (!process.stdout.isTTY) return 'stdout is not a terminal';
+  return undefined;
+}

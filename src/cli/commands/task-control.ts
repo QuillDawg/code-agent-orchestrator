@@ -24,11 +24,12 @@ import { ownershipOf } from '../ownership.js';
 import { controlEnvelope, type ControlCommand } from '../../workflow/control/commands.js';
 import { localController } from '../../workflow/control/local.js';
 import { controlRequest, sendControlRequest, DEFAULT_ACK_WAIT_SECONDS } from '../../persistence/requests.js';
+import type { ControlRequestKind } from 'code-agent-orchestrator-protocol';
 import { UsageError } from '../../util/errors.js';
 import { sanitizeText } from '../color.js';
 import { mark, warnLine } from '../../util/marks.js';
 
-export type TaskControlKind = 'stop' | 'restart';
+export type TaskControlKind = 'stop' | 'restart' | 'suspend' | 'resume';
 
 export interface TaskControlOptions {
   repository?: string;
@@ -36,10 +37,18 @@ export interface TaskControlOptions {
   wait?: number;
 }
 
-/** What each control is called in the output, and what it asks the controller for. */
-const CONTROLS: Record<TaskControlKind, { verb: string; command: (taskId: string) => ControlCommand }> = {
-  stop: { verb: 'stop', command: (taskId) => ({ kind: 'cancelTask', taskId }) },
-  restart: { verb: 'restart', command: (taskId) => ({ kind: 'restart', taskId }) },
+/**
+ * What each control is called in the output, what it asks the controller for, and how it goes on the wire.
+ *
+ * `wire` differs from the command name for the two new ones, because a request that names a task means
+ * the task and one that does not means the run: `pause` plus a task id *is* a suspend, the same way
+ * `stop` plus a task id has always been a cancel. Two wire kinds carry all four operations.
+ */
+const CONTROLS: Record<TaskControlKind, { verb: string; wire: ControlRequestKind; command: (taskId: string) => ControlCommand }> = {
+  stop: { verb: 'stop', wire: 'stop', command: (taskId) => ({ kind: 'cancelTask', taskId }) },
+  restart: { verb: 'restart', wire: 'restart', command: (taskId) => ({ kind: 'restart', taskId }) },
+  suspend: { verb: 'suspend', wire: 'pause', command: (taskId) => ({ kind: 'suspendTask', taskId }) },
+  resume: { verb: 'continue', wire: 'resume', command: (taskId) => ({ kind: 'resumeTask', taskId }) },
 };
 
 export async function taskControlCommand(kind: TaskControlKind, refs: string[], opts: TaskControlOptions): Promise<number> {
@@ -55,7 +64,7 @@ export async function taskControlCommand(kind: TaskControlKind, refs: string[], 
   const here = ownership.kind === 'self' ? localController(runId) : undefined;
   if (ownership.kind !== 'owned' && !here) {
     throw new UsageError(
-      `No orchestrator owns run ${runId}; use "cao resume ${runId}" to start it again${kind === 'restart' ? `, with --task ${taskId} to re-run just this task` : ''}.`,
+      `No orchestrator owns run ${runId}; use "cao resume ${runId}" to start it again${kind === 'restart' || kind === 'resume' ? `, with --task ${taskId} to re-run just this task` : ''}.`,
     );
   }
 
@@ -68,7 +77,7 @@ export async function taskControlCommand(kind: TaskControlKind, refs: string[], 
   const pid = ownership.pid;
   const wait = opts.wait ?? DEFAULT_ACK_WAIT_SECONDS;
   // `stop` naming a task means "cancel this attempt" on the wire; the run-level stop is `cao stop` (§2.3).
-  const sent = await sendControlRequest(store.paths, runId, controlRequest(kind, { taskId }), { wait });
+  const sent = await sendControlRequest(store.paths, runId, controlRequest(control.wire, { taskId }), { wait });
   out(`${control.verb} ${taskId} (run ${runId}) sent to pid ${pid}.`);
   if (!sent.ack) {
     out(warnLine(`No answer in ${wait}s. The request is still in requests/ and is applied when pid ${pid} reads it; "cao task ${taskId}" shows the result.`));

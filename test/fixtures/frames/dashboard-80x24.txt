@@ -1,23 +1,23 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
+[██████░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
    [Overview]│  Session │  Logs │  Changes │  Report │  Diagnostics
 ▸ Task #/# ✓ implement-parser  Completed  claude|opus-#
+────────────────────────────────────────────────────────────────────────────────
 ✗ implement-renderer failed  after # attempt
   exit code #
   ↑↓ to implement-renderer, then R re-run   F open logs   C open diff
 
+── Tasks #-# of # ──────────────────────────────────────────────────────────────
 ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
   ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit…
   ○ review-and-merge    Waiting                claude  │ waiting for: implement…
-
-implement-parser
+── implement-parser ────────────────────────────────────────────────────────────
 Status:       ✓ Completed
 Attempt:      # / #
 Agent:        claude  Model: claude-opus-#  Effort: CLI default
 Started:      ##:##:##   Elapsed: ##m ##s
 PID:          ####   Session: sess-abc###
   … cao task implement-parser for the rest
-  ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.…
 
 Latest activity
   ##:## $ npm test

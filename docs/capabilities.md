@@ -376,6 +376,38 @@ elapsed wait is not a refusal, and says so, because the request is still in `req
 the owner next reads it. With nobody executing the run there is nothing to ask, and both say so and name
 `cao resume`.
 
+### Pausing, and suspending one task
+
+Two different instructions, and the difference is worth being precise about.
+
+**`cao pause [run]`**, or `P` in the workspace, holds the *scheduling*. Whatever is already running finishes
+its turn; nothing new is started; the run does not end. No report is written, no lock is released, and the
+workspace stays fully interactive — you can read transcripts, open the diff, edit a task or restart one
+while it is held, and an edit applied during a hold simply takes effect when the run goes again. The header
+reads `⏸ Paused` and the running counter drains to `0/N` as the last workers land. `cao pause --off`, or `P`
+again, schedules again. It is deliberately not `cao resume`, which means "start an *ended* run again": one
+word with two jobs is not something to have on the surface where being wrong costs an hour of agent time.
+
+A hold lives in the orchestrator process, not in the run file. Stop a held run and it is an interruption
+like any other; nothing is left half-held on disk for the next command to puzzle over.
+
+**`cao task suspend <task>`**, or `Z`, stops one worker and **keeps its session**, so the task can be
+continued rather than restarted. `cao task resume <task>`, or `Z` again, starts the next attempt from that
+session; `cao task restart <task>`, or `R`, starts it over from the beginning instead. The task sits in a
+state of its own, `Suspended` — not `cancelled`, which is terminal and would block every task depending on
+it and make the run report `failed` at the end. Its worktree is left alone even under
+`worktree.cleanup: always`, because the continued session walks straight back into it, and a resume of the
+whole run picks it up with the session still attached.
+
+There is one refusal worth knowing: a suspend is **rejected** when the agent has not reported a session that
+can be continued, rather than quietly downgraded to a cancel. The whole difference between the two commands
+is the session, and an operator who asked for one and silently got the other would find out an hour later.
+
+On Windows there is no `SIGSTOP`, and none is wanted: what is suspended is the *turn*, not the process. The
+worker is ended the way a cancel ends it, and the session it reported is what makes the next attempt a
+continuation. That is the only portable meaning of the word here, and it is the useful one — the agent stops
+spending tokens and the conversation survives.
+
 ### Editing an unfinished task
 
 `cao task edit <task>` takes the same three routes and adds a fourth. It changes an unfinished task's
@@ -672,6 +704,8 @@ page cannot disagree:
 | `Ctrl+P` | Command palette over every action and every task id |  |
 | `/` | Search the focused list or transcript |  |
 | `?` | The keys of whatever has focus |  |
+| `P` | Pause the run: nothing new starts, running tasks finish | again to continue; only while the run is executing |
+| `Z` | Suspend the selected task, keeping its session | again to continue it where it stopped |
 | `Q` | Quit request | not inside a composer |
 | `Ctrl+C` | Graceful stop; the workspace stays open |  |
 | `Ctrl+O` | In a composer: open it in $VISUAL / $EDITOR | mirrors `O` in the Changes view |
@@ -777,14 +811,18 @@ a character once it has it, which is why conhost and mintty stay best-effort.
 One chip per provider, carrying what that provider says about its own rate-limited windows. `cao` computes nothing here and invents no category: the windows are the ones the provider reported, under labels taken from their own durations (`5h`, `7d`, else `Nm`), with the reset time in the reader's own time zone and the plan type beside them. A reset later today is a clock time; one on another day carries its weekday; one five or more days out is a date — the weekly window resets at the same time of day it is being read at, so a bare clock time would read as imminent.
 
 ```
-codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago      claude · unavailable · see /usage in Claude Code
+codex · Pro · 5h 42% · resets 14:05 · 7d 61% · ok · 2m ago   claude · est · 5h 10.9M · 7d 148M · ok · 2m ago   spend $1.84+
 ```
 
 **Codex** is read through one `codex app-server` the workspace keeps open for the whole session — never one per attempt. It sends `initialize` and `initialized`, then `account/read` for the auth mode and plan and `account/rateLimits/read` for the windows, on entry, on every five-minute tick and on demand. Both are account-scoped backend reads: no thread is opened, no turn starts, nothing is billed. While a task is running, the `account/rateLimits/updated` notifications that task's own app-server receives are folded into the same reading, so a busy run refreshes faster than the timer; the notification is sparse, so it is merged into the last read rather than replacing it. The chip has six states: `loading` before the first answer, `ok` with the age of the reading, `stale` when a refresh failed — the last good numbers are kept and aged rather than blanked — `authRequired` (`codex · sign in with ChatGPT for quotas`, because the server refuses quota reads for an API-key login), `unavailable` when the CLI is missing, and `error` when a read failed and there has never been a good one to keep. A quota process that crashes is started again at most once every five minutes.
 
-**Claude** is `claude · unavailable · see /usage in Claude Code`. No programmatic read of the Pro/Max usage bars is documented, `/usage` is terminal-only, and the API rate-limit response headers describe something else; reading the undocumented OAuth usage endpoint would be a network call of `cao`'s own, which this beta does not make, not even behind a flag.
+**Claude** is estimated, and the chip says `est` before its numbers. No programmatic read of the Pro/Max bars is documented, `/usage` is terminal-only, and reading the undocumented OAuth usage endpoint would be a network call of `cao`'s own — which this beta still does not make. What it does instead is add up the transcripts Claude Code has already written under `CLAUDE_CONFIG_DIR` (`~/.claude` by default), including the ones subagents write, as rolling five-hour and seven-day windows taken from each record's own timestamp.
 
-`Tab` moves the focus onto the footer, where `R` reads the quotas again; *Refresh the provider quotas* in `Ctrl+P` does the same from anywhere. The readers start when the workspace mounts and are stopped, with their process killed and their timer dropped, when it unmounts — the timer is `unref`'d, so it never holds the process open. **A headless run starts neither**: `--no-tui`, a non-TTY stdout, `CI` and `cao` commands that never open the workspace spawn no quota process and create no timer. Per-task tokens and cost are a different question and stay in the usage table (`U`); the footer never mixes them with quotas.
+Two things about that reading are worth knowing, because they are the difference between a number and a plausible-looking one. Claude Code writes **one row per content block** and gives every row the same complete `usage` object, so the reader deduplicates by `message.id` across the whole scan — summing rows reports roughly double, and nothing on screen would look wrong. And it reports **absolute tokens, never a percentage**: no local file records the plan's limit, only the tier's name, so there is nothing honest to divide by. For the same reason the chip shows no reset time — the real windows are anchored to your first message and to an account-specific weekday, and neither anchor is written down anywhere local. With no transcripts to add up the chip falls back to `claude · unavailable · see /usage in Claude Code`.
+
+Two scoping facts follow from it being an *account* estimate: it counts `cao`'s own runs, on purpose, so the spend cell and the Claude chip overlap; and it cannot see a task configured `claude.configMode: isolated`, which writes to a different config directory. Reads are cheap by construction — only files touched since the window opened are opened at all, they are streamed rather than read whole, and the five-hour window is published before the weekly scan is attempted.
+
+`Tab` moves the focus onto the footer, where `R` reads the quotas again; *Refresh the provider quotas* in `Ctrl+P` does the same from anywhere. The readers start when the workspace mounts and are stopped, with their process killed and their timer dropped, when it unmounts — the timer is `unref`'d, so it never holds the process open. **A headless run starts neither**: `--no-tui`, a non-TTY stdout, `CI` and `cao` commands that never open the workspace spawn no quota process and create no timer. **Per-task** tokens and cost stay in the usage table (`U`). The run's *aggregate* is a cell of its own on the same line — `spend $1.84+`, with the `+` while any attempt has tokens but has not yet reported a cost — beside the quota chips and never inside one. It is measured rather than asked for, so it appears with no readers attached at all; it is offered above 100 columns, and the panel's keys are given up after it, not before, because the footer's first job is to say what the keys are. The header no longer carries the same numbers: that line has no drop priority and simply chops, so they were always the first thing lost on it.
 
 The last cell of a row is what the worker is doing: its last *action* — the tool, the command or the line of prose it is on, never the tool output that came back and would otherwise mask it. Nothing for 30 seconds and the cell gains `… 2m idle`, which is how you tell a thinking worker from a hung tool or a stalled API call. A task waiting out a retry says which one it is spending: `api retry 2/5 in 12s` while a transient API error backs off (`retry.transientAttempts`), `retry 1/2 in 30s` for an ordinary one (`retry.attempts`). `?` shows every key, including the viewer's.
 
@@ -980,9 +1018,9 @@ stderr and exit `2`, so `cao | less` showed nothing and a shell, or a script rea
 last command, took "here is what I can do" for a failure.
 
 The commands are grouped rather than listed flat, because a reader arriving with a question has one of
-four: **Run** (`run`, `resume`, `ui`, `stop`, `validate`), **Inspect** (`status`, `list`, `logs`, `peek`,
-`diff`, `report`), **Task controls** (`task`, with `show`, `stop`, `restart`, `edit` and `prompt` under
-it) and **Diagnostics** (`doctor`, `diagnostics`, `clean`, `emit`). Below the groups the same page prints
+four: **Run** (`run`, `resume`, `ui`, `pause`, `stop`, `validate`), **Inspect** (`status`, `list`, `logs`,
+`peek`, `diff`, `report`), **Task controls** (`task`, with `show`, `stop`, `suspend`, `resume`, `restart`,
+`edit` and `prompt` under it) and **Diagnostics** (`doctor`, `diagnostics`, `clean`, `emit`). Below the groups the same page prints
 the exit codes this CLI produces and every `CAO_*` environment variable it reads, so the two questions
 asked most often about a run that ended are answered without opening a document.
 

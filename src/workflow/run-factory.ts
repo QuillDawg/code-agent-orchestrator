@@ -85,7 +85,7 @@ function applyFollowUp(run: WorkflowRun, followUp: NonNullable<ResumeOptions['fo
     text: followUp.text,
     sessionId: followUp.freshSession ? undefined : (followUp.sessionId ?? resumableSessionId(task, st)),
   });
-  if (TERMINAL_TASK_STATES.has(st.state) || st.state === 'needs_input') {
+  if (TERMINAL_TASK_STATES.has(st.state) || st.state === 'needs_input' || st.state === 'suspended') {
     st.state = 'pending';
     st.reason = undefined;
     st.message = undefined;
@@ -171,6 +171,16 @@ export async function reconcileForResume(run: WorkflowRun, opts: ResumeOptions =
           st.state = 'pending';
           notes.push(`"${st.id}" still requires approval (use --approve ${st.id} or --reject ${st.id})`);
         }
+        break;
+      case 'suspended':
+        // A resume picks a suspended task straight back up, keeping the session the suspend kept: that is
+        // the difference between suspending a task and cancelling one, and it has to survive the process.
+        st.state = 'pending';
+        st.reason = undefined;
+        st.message = undefined;
+        st.retryWindowStart = (st.attempts[st.attempts.length - 1]?.number ?? 0) + 1;
+        rerun.push(st.id);
+        notes.push(`"${st.id}" was suspended; it continues from the session it kept`);
         break;
       case 'needs_input':
         if (opts.input && opts.input.taskId === st.id) {

@@ -103,7 +103,8 @@ src/
                               fed from: the run snapshot, the focused tab and panel, per-list cursors, drafts, notices, overlays,
                               the per-provider quota snapshots, and the per-task `activity` map — when each task last produced
                               output, which is what feeds the sidebar's two-frame activity pulse)
-    workspace/                 chrome.tsx (header, sidebar, tab bar, footer), overview.tsx (the Overview tab: the ended-run and
+    workspace/                 chrome.tsx (header, sidebar, tab bar, footer, Rule/VRule and the pure ruleLine),
+                               overview.tsx (the Overview tab: the ended-run and
                               observer lead lines, the task table, the selected task's detail block), detail.ts (a task's detail
                               block, and the ended-run and observer lead lines above it), ended.ts (the ended-run actions —
                               resume run, re-run task, resume from task, answer and resume, approve/reject — reading the

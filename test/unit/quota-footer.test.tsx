@@ -122,11 +122,37 @@ describe('the usage footer (§3.6)', () => {
     expect(readers.calls.stopped).toBe(1);
   });
 
-  it('starts nothing at all when the workspace was given no readers', async () => {
+  it('claims no quota at all when the workspace was given no readers', async () => {
     const tree = mount(SIZE);
     try {
       await wait();
-      // No chip, no placeholder, no claim about a quota nothing measured.
+      // No chip, no placeholder, no claim about a quota nothing measured. Deliberately about *quotas*: the
+      // run's own spend is not a reading and is not gated on one, which the next case is about.
+      expect(tree.lastText()).not.toContain('codex ·');
+      expect(tree.lastText()).not.toContain('claude ·');
+      fits(tree, SIZE);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it('draws the run own spend with no readers at all, because it is the run own number', async () => {
+    // The spend cell is measured by `cao` from the attempts in front of it, not asked of a provider, so it
+    // must render in a workspace that was given no quota factory. Without this test the case above reads as
+    // "the footer shows nothing without readers" and the next person deletes the feature.
+    const spent = {
+      ...run,
+      tasks: {
+        'implement-parser': {
+          ...run.tasks['implement-parser'],
+          attempts: [{ ...run.tasks['implement-parser']!.attempts[0], usage: { inputTokens: 24_000, outputTokens: 6800, costUsd: 0.84 } }],
+        },
+      },
+    };
+    const tree = mount(SIZE, { run: spent });
+    try {
+      await wait();
+      expect(tree.lastText()).toContain('spend $0.84');
       expect(tree.lastText()).not.toContain('codex ·');
       fits(tree, SIZE);
     } finally {

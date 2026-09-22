@@ -63,6 +63,15 @@ export interface ReviewViewProps {
    */
   onQuit?: () => void;
   isActive?: boolean;
+  /**
+   * Report this view’s keys instead of drawing them (§3.2).
+   *
+   * The Changes tab is the one panel that owns its own keys — `app.tsx` switches its `useInput` off for
+   * this tab — so the workspace footer had nothing to say and this view drew a second key line of its own,
+   * through a second truncation function. With this given the workspace footer is the only one, and the row
+   * this view was spending on the line goes back to the patch.
+   */
+  onKeys?: (cells: string[]) => void;
 }
 
 /** A task's group in the list, after the captured records have replaced the live ones. */
@@ -273,6 +282,19 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
     { isActive },
   );
 
+  // Both levels of keys, decided before the branch so one effect can report either (hooks run in order).
+  const keyCells =
+    mode === 'pane' && selected
+      ? [`${glyph('up')}${glyph('down')} PgUp/PgDn scroll`, 'g/G top/bottom', hunks.length > 1 ? 'n/p hunk' : '', files.length > 1 ? `${glyph('left')}${glyph('right')} file` : '', 'O editor', 'Esc list']
+      : [`${glyph('up')}${glyph('down')} PgUp/PgDn select`, 'g/G first/last', 'Enter hunks', 'O editor', props.onQuit ? 'Esc back' : 'Esc/Q back'];
+  const reportKeys = props.onKeys;
+  // Joined for the dependency so the effect fires when the cells change rather than on every render: the
+  // array is rebuilt each time and would never compare equal.
+  const keyLine = keyCells.filter(Boolean).join(String.fromCharCode(31));
+  useEffect(() => {
+    reportKeys?.(keyLine.split(String.fromCharCode(31)));
+  }, [reportKeys, keyLine]);
+
   if (mode === 'pane' && selected) {
     const { group, file } = selected;
     const visible = paneLines.slice(paneOffset, paneOffset + bodyHeight);
@@ -309,9 +331,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
         ))}
         <Box flexGrow={1} />
         {notice && <Text wrap="truncate-end">{theme.paint(notice, 'warn')}</Text>}
-        <Text dimColor wrap="truncate-end">
-          {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn scroll`, 'g/G top/bottom', hunks.length > 1 ? 'n/p hunk' : '', files.length > 1 ? `${glyph('left')}${glyph('right')} file` : '', 'O editor', 'Esc list'], width)}
-        </Text>
+        {!reportKeys && <Text dimColor wrap="truncate-end">{footerLine(keyCells, width)}</Text>}
       </Box>
     );
   }
@@ -351,9 +371,7 @@ export function ReviewView(props: ReviewViewProps): React.JSX.Element {
       )}
       <Box flexGrow={1} />
       {notice && <Text wrap="truncate-end">{theme.paint(notice, 'warn')}</Text>}
-      <Text dimColor wrap="truncate-end">
-        {footerLine([`${glyph('up')}${glyph('down')} PgUp/PgDn select`, 'g/G first/last', 'Enter hunks', 'O editor', props.onQuit ? 'Esc back' : 'Esc/Q back'], width)}
-      </Text>
+      {!reportKeys && <Text dimColor wrap="truncate-end">{footerLine(keyCells, width)}</Text>}
     </Box>
   );
 }

@@ -8,7 +8,7 @@ import { renderHeader, attachPlainRenderer, renderSummary } from '../render/plai
 import { createInterruptController, clearPendingRequests, clearStopRequest, watchStopRequests, INBOX_REQUEST_KINDS } from '../../execution/signals.js';
 import { ConsoleLogger, type Logger } from '../../logging/logger.js';
 import { Redactor } from '../../logging/redact.js';
-import { findActiveRun, isInteractive, parseList, questionLines, resolveWorkflowPath } from '../util.js';
+import { findActiveRun, isInteractive, nonInteractiveReason, parseList, questionLines, resolveWorkflowPath } from '../util.js';
 import { planEmit } from '../emit.js';
 import { pausedNeeds } from '../../workflow/run-view.js';
 import { ConfigError, OrchestratorError, UsageError } from '../../util/errors.js';
@@ -153,6 +153,15 @@ export async function executeRun(opts: ExecuteOptions): Promise<number> {
       // The workspace opens on Diagnostics when the operator has asked for debugging [D34].
       ...(debug ? { initialTab: 'diagnostics' as const } : {}),
     });
+  }
+  // Plain output from here, and the operator is told why: no footer, no keys, no way to pause from this
+  // terminal. Only when the workspace was wanted - `--no-tui` asked for exactly this and needs no excuse.
+  const why = (opts.tui ?? true) ? nonInteractiveReason() : undefined;
+  if (why) {
+    process.stderr.write(
+      warnLine(`The workspace did not open because ${why}, so this run prints plain output and answers no keys. ` +
+        `Use "cao stop ${opts.run.runId}" or "cao task ..." from another terminal to control it.`) + String.fromCharCode(10),
+    );
   }
   const result = await executeOnce(opts);
   writeRunTail(opts.run, result);

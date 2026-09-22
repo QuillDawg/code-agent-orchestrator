@@ -30,7 +30,7 @@ import { resumeRequestLabel, type ResumeRequest } from '../workflow/resume-reque
 import { detectRunnersForWorkflow, RunLockedError, startRuntime, type StartRuntimeOptions } from './app.js';
 import { attachPlainRenderer } from './render/plain.js';
 import { glyph } from '../util/glyphs.js';
-import { BELL } from '../util/misc.js';
+import { BELL, nowIso } from '../util/misc.js';
 import { errorMessage } from '../util/errors.js';
 import type { WorkspaceRole } from '../tui/workspace/chrome.js';
 import type { WorkspaceTab } from '../tui/store.js';
@@ -40,6 +40,8 @@ import { agentReports, type AgentReport } from '../runners/diagnostics.js';
 import { ownershipBadge, ownershipBanner } from './ownership.js';
 import type { RunObserver } from '../workflow/control/observer.js';
 import type { Interaction, InteractionAnswer, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
+import { PROTOCOL_VERSION } from 'code-agent-orchestrator-protocol';
+import { applyEditOffline } from '../workflow/control/edit.js';
 import type { ExecuteOptions } from './commands/run.js';
 
 /** One execution, as the session sees it: what to draw from, and what a Ctrl+C has to reach. */
@@ -258,6 +260,18 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     onInterrupt: interrupt,
     onQuit: () => settle({ kind: 'quit' }),
     onResume: (request) => settle({ kind: 'resume', request }),
+    // Editing a task on a run nobody is executing (§3.4). The store is here, so the callback is too; the
+    // form does its own validation first and this applies the same gates again before anything is written.
+    offlineEdit: async (taskId, changes) => {
+      const target = currentRun;
+      if (!target) return { protocol: PROTOCOL_VERSION, id: 'offline-edit', status: 'rejected', reason: 'There is no run open to edit.', at: nowIso() };
+      const { openStore } = await import('./util.js');
+      const store = await openStore(opts.first?.repository ?? opts.repository);
+      const result = await applyEditOffline(target, taskId, changes, store, { source: 'tui', pid: process.pid, now: nowIso });
+      const notes = result.notes?.length ? ` ${result.notes.join(' ')}` : '';
+      const tail = result.status === 'applied' ? ` "cao resume ${target.runId}" carries on with it.` : '';
+      return { protocol: PROTOCOL_VERSION, id: 'offline-edit', status: result.status, reason: `${result.reason}${notes}${tail}`, at: nowIso() };
+    },
     altScreen: opts.altScreen,
     theme: opts.theme,
     // The provider quota readers (§3.6, `[D31]`). A factory: nothing starts until the Ink tree mounts, and
@@ -269,7 +283,17 @@ export function createWorkspaceSession(opts: WorkspaceSessionOptions & { createD
     ...(opts.initialTab ? { initialTab: opts.initialTab } : {}),
   });
 
+  /**
+   * The run the workspace is currently showing.
+   *
+   * `dashboardOptions` is built once, on the first `ensureDashboard`, but a resume from inside the workspace
+   * hands the same tree a *new* `WorkflowRun` through `attach` (§2.4). A callback that closed over the run it
+   * was created with would edit the run the operator opened twenty minutes ago, so it is kept here instead
+   * and refreshed on every attach.
+   */
+  let currentRun: WorkflowRun | undefined;
   const ensureDashboard = (run: WorkflowRun, bus: EventBus, controller: RunController, view: WorkspaceView): DashboardController => {
+    currentRun = run;
     if (dashboard) {
       dashboard.attach({ run, bus, controller });
       dashboard.setOwnership(view);

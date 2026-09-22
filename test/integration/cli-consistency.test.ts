@@ -519,10 +519,10 @@ describe('the request inbox, from another process', () => {
       // §2.3, §4.2.3 — the entry advertises exactly the kinds the inbox really acts on, and `cao emit status`
       // answers the same question for someone whose request is having no effect.
       const entry = JSON.parse(await fs.readFile(entryFile(registryKey(repo, runId), home), 'utf8')) as { capabilities: string[] };
-      expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt']);
+      expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt', 'pause']);
       process.env.CAO_HOME = home;
       const status = await captureCli(() => emitCommand('status', { json: true }));
-      expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt']);
+      expect(JSON.parse(status.stdout).capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt', 'pause']);
     } finally {
       orchestrator.kill();
       await orchestrator.catch(() => undefined);

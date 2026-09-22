@@ -11,6 +11,7 @@
  */
 import type { QuotaSnapshot, QuotaWindow } from 'code-agent-orchestrator-protocol';
 import { formatDurationShort } from '../../util/duration.js';
+import { formatTokens } from '../format.js';
 import { glyph } from '../../util/glyphs.js';
 import { sanitizeText } from '../../cli/color.js';
 
@@ -42,9 +43,18 @@ export function resetTime(iso: string, now: Date = new Date()): string {
   return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
 }
 
-/** One window: `5h 42%`, plus `resets 14:05` as its own part when the provider said when. */
+/**
+ * One window: `5h 42%`, plus `resets 14:05` as its own part when the provider said when.
+ *
+ * A window whose limit is unknown says what was spent instead of a percentage. That is the whole of the
+ * difference between a reading and an estimate on this line: `5h 42%` is a share of something the provider
+ * named, `5h 10.9M` is a count of something `cao` added up, and the chip says which it is.
+ */
 export function quotaWindowCells(window: QuotaWindow, now: Date = new Date()): string[] {
-  const used = `${window.label} ${Math.round(window.usedPercent)}%`;
+  const used =
+    window.usedPercent !== null
+      ? `${window.label} ${Math.round(window.usedPercent)}%`
+      : `${window.label} ${window.usedTokens !== undefined ? formatTokens(window.usedTokens) : '?'}`;
   const resets = window.resetsAt ? resetTime(window.resetsAt, now) : '';
   return resets ? [used, `resets ${resets}`] : [used];
 }
@@ -63,6 +73,9 @@ export function quotaChip(snapshot: QuotaSnapshot, now: number): string {
   if (snapshot.state === 'authRequired') return [...parts, reason || 'sign in for quotas'].join(SEP());
   if (snapshot.state === 'loading') return [...parts, 'loading'].join(SEP());
 
+  // Before the numbers, never after: the chip is one string in a `truncate-end` Text, so a line that runs
+  // out of room loses its tail - and an estimate that has lost the word "est" is the dishonest half.
+  if (snapshot.estimated) parts.push('est');
   if (snapshot.planType) parts.push(sanitizeText(snapshot.planType));
   for (const window of snapshot.windows) parts.push(...quotaWindowCells(window, new Date(now)));
 

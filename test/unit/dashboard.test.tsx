@@ -19,7 +19,7 @@ import type {
   ResolvedTask,
 } from 'code-agent-orchestrator-protocol';
 import { stripAnsi } from '../../src/cli/color.js';
-import { frameHeight, renderTree } from '../helpers/ink-harness.js';
+import { frameHeight, renderTree, KEYS } from '../helpers/ink-harness.js';
 
 const NL = String.fromCharCode(10);
 const ts = '2026-09-03T10:11:12.000Z';
@@ -1344,7 +1344,18 @@ describe('DashboardApp', () => {
       expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
       for (const line of help.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
       expect(help).toContain('stop the run and stay here');
-      expect(help).toContain('The task editor (E)');
+      // Paged to rather than expected on the first screen: the panel holds about seventeen rows at this
+      // size and grows a row whenever a key is added, so "which section is on page one" is a layout fact
+      // rather than the thing this case is about, which is that nothing is cut or pushed off the bottom.
+      let paged = help;
+      for (let page = 0; page < 12 && !paged.includes('The task editor (E)'); page += 1) {
+        tree.write(KEYS.pageDown);
+        await wait();
+        paged = tree.lastText();
+        expect(frameHeight(tree.lastFrame())).toBeLessThanOrEqual(24);
+        for (const line of paged.split(NL)) expect([...line].length).toBeLessThanOrEqual(80);
+      }
+      expect(paged).toContain('The task editor (E)');
 
       tree.write(String.fromCharCode(27));
       await wait();

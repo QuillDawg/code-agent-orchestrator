@@ -14,7 +14,7 @@ export type WorkflowEventBody =
   | { type: 'workflow.started'; workflowName: string; taskCount: number }
   | { type: 'workflow.resumed'; resumeCount: number; rerun: string[] }
   | { type: 'workflow.warning'; code: string; message: string; taskId?: string }
-  | { type: 'workflow.paused'; reason: 'approval' | 'needs_input'; taskIds: string[] }
+  | { type: 'workflow.paused'; reason: 'approval' | 'needs_input' | 'operator'; taskIds: string[] }
   | { type: 'workflow.completed'; summary: RunSummary }
   | { type: 'workflow.failed'; summary: RunSummary }
   | { type: 'workflow.interrupted'; summary: RunSummary }

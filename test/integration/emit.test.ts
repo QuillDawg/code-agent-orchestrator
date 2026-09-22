@@ -78,7 +78,7 @@ describe('cao run --emit (§4.2.4, §4.2.7)', () => {
     expect(entry.endedAt).toBeTruthy();
     // §4.2.3, §2.3 — what this build actually wired up: the request inbox and the five kinds its watcher
     // really acts on, `prompt` among them now that the controller delivers one (§3.5).
-    expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt']);
+    expect(entry.capabilities).toEqual(['requests', 'stop', 'kill', 'restart', 'edit', 'prompt', 'pause']);
     expect(Object.keys(entry)[0]).toBe('protocol');
     expect(existsSync(path.join(entry.orchestratorDir, 'runs', runId!))).toBe(true);
     expect(warnings).toEqual([]);

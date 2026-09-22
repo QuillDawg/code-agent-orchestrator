@@ -15,7 +15,7 @@ import { windowOf, scrollbarColumn } from '../../src/tui/window.js';
 import { workspaceLayout, footerColumnsFor } from '../../src/tui/workspace/layout.js';
 import { alwaysHints, footerHints, panelHelp, globalKeys, viewerKeys, type KeyMode } from '../../src/tui/workspace/keys.js';
 import { filterPalette, helpSections, PLACEHOLDER_TEXT, reportLines, wrapLines, type PaletteEntry } from '../../src/tui/workspace/panels.js';
-import { attentionBadge, fitCells, headerRowsFor, progressSegments } from '../../src/tui/workspace/chrome.js';
+import { attentionBadge, fitCells, headerRowsFor, progressSegments, ruleLine } from '../../src/tui/workspace/chrome.js';
 import { trimToRows } from '../../src/tui/workspace/overview.js';
 import { resolveTheme, reducedMotion, isThemeName, themeFor, themeNameOf, THEME_NAMES, STATE_TOKEN } from '../../src/tui/theme.js';
 import { sgrColor, stripAnsi } from '../../src/cli/color.js';
@@ -116,24 +116,96 @@ describe('workspace layout', () => {
     expect(large.stripRows).toBe(0);
   });
 
-  it('spends every row once: header, tabs, body and footer add up to the terminal', () => {
-    for (const [columns, rows] of [
-      [80, 24],
-      [120, 40],
-      [200, 60],
-      [60, 10],
-    ] as const) {
-      for (const notice of [false, true]) {
-        const layout = workspaceLayout({ columns, rows, headerRows: notice ? 3 : 2, notice });
-        expect(layout.headerRows + layout.tabRows + layout.bodyRows + layout.footerRows).toBeLessThanOrEqual(rows);
-        expect(layout.mainRows).toBeGreaterThan(0);
-        expect(layout.mainWidth).toBeLessThanOrEqual(columns);
+  it('spends every row once: header, tabs, rules, body and footer add up to the terminal', () => {
+    // Swept rather than sampled, because the rules are the first thing given up as the terminal shrinks and
+    // the row it happens on is exactly where an off-by-one would hide.
+    for (const columns of [60, 80, 100, 120, 200]) {
+      for (let rows = 6; rows <= 60; rows += 1) {
+        for (const headerRows of [1, 2, 3]) {
+          for (const notice of [false, true]) {
+            const layout = workspaceLayout({ columns, rows, headerRows, notice });
+            const chrome = layout.headerRows + layout.tabRows + layout.footerRows;
+            const rules = (layout.topRule ? 1 : 0) + (layout.bottomRule ? 1 : 0);
+            expect(chrome + rules + layout.bodyRows, `${columns}x${rows} overflowed`).toBeLessThanOrEqual(rows);
+            // The strip and its rule come out of the body, not out of the terminal a second time.
+            expect(layout.stripRows + (layout.stripRule ? 1 : 0) + layout.mainRows).toBeLessThanOrEqual(layout.bodyRows);
+            expect(layout.mainRows).toBeGreaterThan(0);
+            expect(layout.mainWidth).toBeLessThanOrEqual(columns);
+          }
+        }
       }
     }
   });
 
-  it('drops the footer freshness column before the quota chips', () => {
-    expect(footerColumnsFor(120)).toEqual(['shortcuts', 'quota', 'freshness']);
+  it('gives the rules up before the last rows of the body', () => {
+    // A fixed two-row cost is wrong on a terminal the header has already eaten: the rules are what goes.
+    expect(workspaceLayout({ columns: 120, rows: 10, headerRows: 2, notice: false }).ruleRows).toBe(0);
+    expect(workspaceLayout({ columns: 120, rows: 12, headerRows: 3, notice: true }).ruleRows).toBe(0);
+    const bare = workspaceLayout({ columns: 120, rows: 10, headerRows: 2, notice: false });
+    expect(bare.bodyRows).toBe(10 - 2 - 1 - 1);
+  });
+
+  it('draws no rule under a screen reader, for the reason the header collapses', () => {
+    const reader = workspaceLayout({ columns: 120, rows: 40, headerRows: 1, notice: false, screenReader: true });
+    const seeing = workspaceLayout({ columns: 120, rows: 40, headerRows: 1, notice: false });
+    expect(reader.ruleRows).toBe(0);
+    expect(reader.topRule).toBe(false);
+    expect(reader.bottomRule).toBe(false);
+    expect(reader.mainRows).toBeGreaterThan(seeing.mainRows);
+  });
+
+  it('spends the single compact rule under the task strip, not under the tab bar', () => {
+    const small = workspaceLayout({ columns: 80, rows: 24, headerRows: 2, notice: false });
+    expect(small.ruleRows).toBe(1);
+    expect(small.stripRule).toBe(true);
+    expect(small.topRule).toBe(false);
+    expect(small.bottomRule).toBe(false);
+    const large = workspaceLayout({ columns: 120, rows: 40, headerRows: 2, notice: false });
+    expect(large.topRule).toBe(true);
+    expect(large.bottomRule).toBe(true);
+    expect(large.stripRule).toBe(false);
+  });
+
+  it('charges the sidebar seam to the panel, so the three add up to the terminal', () => {
+    for (const columns of [100, 120, 200]) {
+      const layout = workspaceLayout({ columns, rows: 40, headerRows: 2, notice: false });
+      expect(layout.sidebarWidth + layout.gutterColumns + layout.mainWidth).toBe(columns);
+    }
+    // Collapsed, there is no seam to charge for.
+    const compact = workspaceLayout({ columns: 80, rows: 24, headerRows: 2, notice: false });
+    expect(compact.gutterColumns).toBe(0);
+    expect(compact.mainWidth).toBe(80);
+  });
+
+  it('draws a rule exactly as wide as the frame, with the tee where the seam is, in both alphabets', () => {
+    const previous = { ascii: process.env.CAO_ASCII, unicode: process.env.CAO_UNICODE };
+    try {
+      process.env.CAO_UNICODE = '1';
+      delete process.env.CAO_ASCII;
+      expect([...ruleLine(40)].length).toBe(40);
+      expect([...ruleLine(40, { at: 12, kind: 'top' })][12]).toBe('┬');
+      expect([...ruleLine(40, { at: 12, kind: 'bottom' })][12]).toBe('┴');
+      // A join off the end is a plain rule rather than a throw or a short line.
+      expect(ruleLine(40, { at: 99, kind: 'top' })).toBe(ruleLine(40));
+      expect([...ruleLine(40, { at: 99, kind: 'top' })].length).toBe(40);
+
+      delete process.env.CAO_UNICODE;
+      process.env.CAO_ASCII = '1';
+      expect([...ruleLine(40, { at: 12, kind: 'top' })][12]).toBe('+');
+      expect([...ruleLine(40, { at: 12, kind: 'bottom' })][12]).toBe('+');
+      expect([...ruleLine(40, { at: 12, kind: 'top' })].length).toBe(40);
+    } finally {
+      if (previous.ascii === undefined) delete process.env.CAO_ASCII;
+      else process.env.CAO_ASCII = previous.ascii;
+      if (previous.unicode === undefined) delete process.env.CAO_UNICODE;
+      else process.env.CAO_UNICODE = previous.unicode;
+    }
+  });
+
+  it('drops the footer freshness column before the quota chips, and never the run own number', () => {
+    // The spend cell has no width gate of its own: `fitCells` decides whether it fits, which is the one
+    // place that knows what else is on the line.
+    expect(footerColumnsFor(120)).toEqual(['shortcuts', 'spend', 'quota', 'freshness']);
     expect(footerColumnsFor(80)).toEqual(['shortcuts', 'quota']);
     expect(footerColumnsFor(50)).toEqual(['shortcuts']);
   });
@@ -259,6 +331,27 @@ describe('theme', () => {
     expect(mono.border(true).borderColor).toBeUndefined();
   });
 
+  it('draws a border the ASCII alphabet can actually spell', () => {
+    // cli-boxes spells 'round' and 'double' with box-drawing characters, so a terminal CAO_ASCII=1 was
+    // chosen for drew mojibake around the palette, the quit prompt, the answer field and every modal. The
+    // frame tests never open one, which is why nothing caught it.
+    const previous = { ascii: process.env.CAO_ASCII, unicode: process.env.CAO_UNICODE };
+    try {
+      delete process.env.CAO_UNICODE;
+      process.env.CAO_ASCII = '1';
+      const theme = resolveTheme({ env: {} });
+      expect(theme.border(true).borderStyle).toBe('classic');
+      expect(theme.border(false).borderStyle).toBe('classic');
+      // Focus still has to be visible, and under ASCII the colour is the only carrier left.
+      expect(theme.border(true).borderColor).not.toBe(theme.border(false).borderColor);
+    } finally {
+      if (previous.ascii === undefined) delete process.env.CAO_ASCII;
+      else process.env.CAO_ASCII = previous.ascii;
+      if (previous.unicode === undefined) delete process.env.CAO_UNICODE;
+      else process.env.CAO_UNICODE = previous.unicode;
+    }
+  });
+
   it('turns the animation off for reduced motion and for a terminal that cannot move the cursor', () => {
     expect(reducedMotion({})).toBe(false);
     expect(reducedMotion({ CAO_REDUCED_MOTION: '1' })).toBe(true);
@@ -339,14 +432,31 @@ describe('the keys the footer and ? agree on', () => {
   it('puts every panel key in the footer line, and the chords that work anywhere in their own', () => {
     for (const tab of WORKSPACE_TABS) {
       const hints = footerHints('main', tab);
-      // The Changes panel draws its own key line; the footer would only repeat it.
+      // The Changes panel answers its own keys and reports them, so the footer is given them rather than
+      // deriving them; `footerHints` with nothing passed has nothing to say about that tab.
       if (tab === 'changes') continue;
-      for (const key of panelHelp('main', tab).keys) expect(hints).toContain(key.keys);
+      for (const key of panelHelp('main', tab).keys) {
+        // A key marked `footer: false` is documented rather than advertised: the footer is one row shared
+        // with the provider chips, and it shed a quota reading for every key added to it.
+        if (key.footer === false) expect(hints).not.toContain(`${key.keys} `);
+        else expect(hints).toContain(key.keys);
+      }
     }
     // Kept out of `footerHints` on purpose: the footer truncates the panel keys into what is left after
     // these, so the way out of the workspace is never the thing a narrow terminal drops.
     expect(alwaysHints('executing')).toContain('Ctrl+P palette');
     expect(alwaysHints('executing')).toContain('? help');
+  });
+
+  it('still documents a key it keeps off the footer, so nothing is merely hidden', () => {
+    // The flag trades footer space for `?`; a key that fell out of both would just be gone.
+    const suspend = panelHelp('tasks', 'overview').keys.find((k) => k.keys === 'Z');
+    expect(suspend?.footer).toBe(false);
+    expect(suspend?.what).toContain('suspend');
+    expect(footerHints('tasks', 'overview')).not.toContain('Z ');
+    const shown = helpSections('tasks', 'overview').flatMap((section) => section.keys.map((k) => k.keys));
+    expect(shown).toContain('Z');
+    expect(shown).toContain('P');
   });
 
   it('keeps the composer keys out of the Session footer and gives them their own section in ?', () => {

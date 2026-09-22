@@ -30,6 +30,8 @@ import {
   addUsage,
   type QuotaSnapshot,
   type TranscriptEntry,
+  type TaskEdit,
+  type ControlAck,
 } from 'code-agent-orchestrator-protocol';
 import type { QuotaMonitor } from '../runners/quota.js';
 import type { AgentReport } from '../runners/diagnostics.js';
@@ -84,7 +86,8 @@ import { windowOf } from './window.js';
 import { workspaceRenderOptions } from './render-options.js';
 import { armAltScreenRestore } from './terminal.js';
 import type { ResumeRequest } from '../workflow/resume-request.js';
-import { anyActive, Footer, Header, headerRowsFor, Sidebar, TabBar, TaskStrip, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
+import { anyActive, Footer, Header, headerRowsFor, Rule, Sidebar, TabBar, TaskStrip, VRule, waitingTasks, type WorkspaceRole } from './workspace/chrome.js';
+import { runSpend } from './workspace/spend.js';
 import { workspaceLayout } from './workspace/layout.js';
 import { alwaysHintCells, footerHints, QUIT_ANSWERS, type KeyMode } from './workspace/keys.js';
 import { Overview } from './workspace/overview.js';
@@ -159,6 +162,15 @@ export interface DashboardOptions {
   onQuit?: () => void;
   /** Start another execution of this run (§2.4, [D36]); absent, and in observer mode, the actions are off. */
   onResume?: (request: ResumeRequest) => void;
+  /**
+   * Apply an edit to a run nobody is executing (§3.4), writing it into `workflow.json` for the next resume.
+   *
+   * Given by the session, which holds the store. Without it the form refuses on an ended run, which is what
+   * the workspace did before: it sent the operator to `cao task edit`, and that command then refused the
+   * same task for the same reason. The controller cannot serve this — it outlives the scheduler but turns
+   * every command away once the run has ended (§2.2).
+   */
+  offlineEdit?: (taskId: string, changes: TaskEdit) => Promise<ControlAck>;
   /**
    * Starts the provider quota readers when this tree mounts, and is stopped when it unmounts (§3.6,
    * `[D31]`).
@@ -446,7 +458,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
   // its window has before it can decide when the page above is worth fetching.
   const headerRows = headerRowsFor(run, screenReader);
   // The notice folds into the footer's one line under a screen reader, so it costs no row of its own.
-  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) && !screenReader });
+  const layout = workspaceLayout({ columns, rows, headerRows, notice: Boolean(notice) && !screenReader, screenReader });
 
   // ------------------------------------------------------------------ the Logs tab (§3.7)
   const paths = useMemo(() => createNativeRunPaths(run.repositoryRoot), [run.repositoryRoot]);
@@ -631,6 +643,64 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         setNotice(`Could not restart ${task.id}: ${(err as Error).message}`);
       });
   };
+  /** Send one command and let its ack be the answer, exactly as `restart` does. */
+  const send = (label: string, command: Parameters<typeof controller.submit>[0], said: string, expectedAttempt?: number): void => {
+    const envelope = controlEnvelope('tui', expectedAttempt ? { attempt: expectedAttempt } : undefined);
+    recordControl(envelope.id, label);
+    void controller
+      .submit(command, envelope)
+      .then((ack) => {
+        store.getState().settleControl(envelope.id, ack.status, ack.reason);
+        setNotice(ack.reason ?? (ack.status === 'rejected' ? `${said} was refused.` : said));
+      })
+      .catch((err: unknown) => {
+        store.getState().settleControl(envelope.id, 'rejected', (err as Error).message);
+        setNotice(`${said} failed: ${(err as Error).message}`);
+      });
+  };
+
+  /** `P`: hold the run, or let it schedule again (§3.2). The run's own state says which this press means. */
+  const pauseRun = (): void => {
+    if (observing) {
+      setNotice(`This window is watching ${props.observer?.ownerPid !== undefined ? `pid ${props.observer.ownerPid}` : 'another process'}; pause the run in the terminal that owns it, or with "cao pause ${run.runId}".`);
+      return;
+    }
+    if (props.finished) {
+      setNotice('The run has ended, so there is nothing to pause.');
+      return;
+    }
+    const held = run.state === 'paused';
+    send(held ? 'resume run' : 'pause run', held ? { kind: 'resume' } : { kind: 'pause' }, held ? 'Scheduling again' : 'Paused');
+  };
+
+  /**
+   * `Z`: suspend the selected task, or continue one that is already suspended (§3.5).
+   *
+   * One key for both, because they are the two halves of one intention and an operator who suspended a task
+   * looks for the key they pressed to get it back.
+   */
+  const suspendOrContinue = (task: ResolvedTask | undefined): void => {
+    if (!task) return;
+    if (observing) {
+      setNotice(`This window is watching another process; suspend "${task.id}" with "cao task suspend ${task.id}".`);
+      return;
+    }
+    if (props.finished) {
+      setNotice(`The run has ended, so "${task.id}" has no worker to suspend.`);
+      return;
+    }
+    const state = run.tasks[task.id];
+    const suspended = state?.state === 'suspended';
+    const attempts = state?.attempts;
+    const expected = attempts?.[attempts.length - 1]?.number;
+    send(
+      suspended ? `resume ${task.id}` : `suspend ${task.id}`,
+      suspended ? { kind: 'resumeTask', taskId: task.id } : { kind: 'suspendTask', taskId: task.id },
+      suspended ? `Continuing ${task.id}` : `Suspending ${task.id}`,
+      expected,
+    );
+  };
+
   /**
    * Open the task editor over the selected task (§3.4).
    *
@@ -645,14 +715,17 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       setNotice(`This window is watching ${props.observer?.ownerPid !== undefined ? `pid ${props.observer.ownerPid}` : 'another process'}; edit the task in the terminal that owns the run, or with "cao task edit ${task.id}".`);
       return;
     }
-    if (props.finished) {
-      // The controller outlives the scheduler but refuses every command once the run has ended (§2.2), so
-      // the form would fill in and then be turned away. The offline path is the one that works here.
+    // An ended run is edited offline, straight into `workflow.json`, and picked up by the next resume
+    // (§3.4). The controller cannot serve it — it outlives the scheduler but refuses every command once the
+    // run has ended (§2.2) — so the session hands the form `offlineEdit` instead. Only a workspace mounted
+    // without one still sends the operator to the command line.
+    if (props.finished && !props.offlineEdit) {
       setNotice(`Run ${run.runId} has ended, so nothing is executing "${task.id}". Edit it with "cao task edit ${task.id}", then resume the run.`);
       return;
     }
     const state = run.tasks[task.id];
-    const refusal = state ? editRejection(task, state, true) : undefined;
+    // Offline there is no worker to stop, so the edit is never a stop-edit-restart and `restart` is false.
+    const refusal = state ? editRejection(task, state, !props.finished) : undefined;
     if (refusal) {
       setNotice(refusal);
       return;
@@ -788,7 +861,15 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     const task = tasks.find((t) => t.id === taskId);
     const state = run.tasks[taskId];
     if (!task || !state) return;
-    const { edit, fields } = validateDraft(run.workflow, task, store.getState().drafts);
+    const { edit, fields, errors } = validateDraft(run.workflow, task, store.getState().drafts);
+    // The validator's message first, and only then "nothing to change". `validateDraft` zeroes `fields` on
+    // every error path (edit.tsx:149,152), so a form that reported a bad model and a greyed-out Save used to
+    // answer Enter with `Nothing to change on "x"` - the one sentence that means the opposite of what happened.
+    const refusal = EDIT_ROWS.map((field) => errors[field]).find(Boolean) ?? errors.form;
+    if (refusal) {
+      setNotice(refusal);
+      return;
+    }
     if (fields.length === 0) {
       setNotice(`Nothing to change on "${taskId}".`);
       return;
@@ -798,8 +879,11 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     const expected = attempts[attempts.length - 1]?.number;
     const envelope = controlEnvelope('tui', expected ? { attempt: expected } : undefined);
     recordControl(envelope.id, `edit ${taskId}`);
-    void controller
-      .submit({ kind: 'edit', taskId, changes: edit, restart: restartNow }, envelope)
+    // An ended run has no scheduler to ask, so the edit is written into `workflow.json` for the next resume
+    // (§3.4). Same gates, same sentences, same revision - `applyEditOffline` is the one implementation, so
+    // the form and `cao task edit` cannot answer differently about the same task.
+    const sent = props.finished && props.offlineEdit ? props.offlineEdit(taskId, edit) : controller.submit({ kind: 'edit', taskId, changes: edit, restart: restartNow }, envelope);
+    void sent
       .then((ack) => {
         store.getState().settleControl(envelope.id, ack.status, ack.reason);
         setNotice(ack.reason ?? (ack.status === 'rejected' ? `"${taskId}" could not be edited.` : `Edited "${taskId}".`));
@@ -831,6 +915,9 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     exit();
   };
   const closeOverlay = (): void => store.getState().setOverlay({ kind: 'none' });
+  // The Changes panel owns its own keys - the main `useInput` is off for that tab - so it reports them and
+  // the workspace footer draws them, rather than the panel drawing a second key line of its own (§3.2).
+  const [changesKeyCells, setChangesKeyCells] = useState<string[]>([]);
 
   // ------------------------------------------------------------------ lifecycle (§2.4)
   // The controls an observer may send: the ones the run advertises and the selected task could accept.
@@ -934,6 +1021,17 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     entries.push(
       { id: 'action:follow', label: 'Follow the selected task', hint: 'F', run: () => follow(selected) },
       ...(props.finished || observing ? [] : [{ id: 'action:restart', label: 'Restart the selected task', hint: 'R', run: () => restart(selected) }]),
+      ...(props.finished || observing
+        ? []
+        : [
+            { id: 'action:pause', label: run.state === 'paused' ? 'Continue the run' : 'Pause the run (nothing new starts)', hint: 'P', run: () => pauseRun() },
+            {
+              id: 'action:suspend',
+              label: run.tasks[selected?.id ?? '']?.state === 'suspended' ? 'Continue the selected task' : 'Suspend the selected task (keep its session)',
+              hint: 'Z',
+              run: () => suspendOrContinue(selected),
+            },
+          ]),
       ...(observing ? [] : [{ id: 'action:edit', label: 'Edit the selected task', hint: 'E', run: () => openEdit(selected) }]),
       ...(observing
         ? []
@@ -1396,6 +1494,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
       else if (lower === 'c') openTab('changes');
       else if (lower === 'r') restart(selected);
       else if (lower === 'e') openEdit(selected);
+      else if (lower === 'p') pauseRun();
+      else if (lower === 'z') suspendOrContinue(selected);
       else if (lower === 'h') state.setOverlay({ kind: 'help' });
       else if (lower === 'q') requestQuit();
     },
@@ -1438,6 +1538,18 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     <Header run={run} theme={theme} columns={columns} now={now} role={props.role ?? 'owner'} badge={props.badge} attention={screenReader ? undefined : attention} screenReader={screenReader} />
   );
 
+  // The form's task, resolved once and checked. A snapshot landing from a resume carries a different task
+  // set (the store re-clamps the cursor at store.ts:242), and the render path used to assert both of these
+  // with `!` - so an edit overlay open across that moment threw inside render. `editKey` already guards it.
+  const editTask = overlay.kind === 'edit' ? tasks.find((t) => t.id === overlay.taskId) : undefined;
+  const editState = overlay.kind === 'edit' ? run.tasks[overlay.taskId] : undefined;
+  // An overlay pointing at a task the run no longer has closes itself rather than falling through the chain
+  // below to the help panel for a frame. `editKey` already does this on a key press; a snapshot can land
+  // between two of them.
+  useEffect(() => {
+    if (overlay.kind === 'edit' && !(editTask && editState)) closeOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlay.kind, editTask, editState]);
   if (pending) {
     return (
       <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
@@ -1487,6 +1599,8 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     entriesCache.current = { taskId, value: next };
     return next;
   };
+
+
 
   if (view.kind === 'follow') {
     const st = run.tasks[view.taskId];
@@ -1571,6 +1685,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             root={run.repositoryRoot}
             loadDiff={loadDiff}
             isActive={focus === 'main' && !overlayOpen}
+            onKeys={setChangesKeyCells}
             onExit={() => focusPanel('tasks')}
             onQuit={requestQuit}
           />
@@ -1647,6 +1762,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
       {header}
       <TabBar tab={tab} focused={focus === 'tabs'} mainFocused={focus === 'main'} theme={theme} columns={columns} />
+      {layout.topRule && <Rule columns={columns} theme={theme} joinAt={layout.sidebarWidth} kind="top" />}
       <Box flexDirection="column" height={layout.bodyRows} overflow="hidden">
         {layout.compact && (
           <TaskStrip
@@ -1660,6 +1776,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
             screenReader={screenReader}
           />
         )}
+        {layout.stripRule && <Rule columns={columns} theme={theme} />}
         <Box flexDirection="row" height={layout.mainRows} overflow="hidden">
           {!layout.compact && (
             <>
@@ -1677,7 +1794,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                 pulseOn={pulseOn}
                 screenReader={screenReader}
               />
-              <Text> </Text>
+              <VRule rows={layout.mainRows} theme={theme} />
             </>
           )}
           <Box flexDirection="column" width={layout.mainWidth} overflow="hidden">
@@ -1686,10 +1803,10 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                 <Palette entries={paletteMatches} query={paletteQuery} cursor={paletteCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
               ) : overlay.kind === 'quit' ? (
                 <QuitPrompt cursor={quitCursor} rows={layout.mainRows} columns={layout.mainWidth} theme={theme} />
-              ) : overlay.kind === 'edit' ? (
+              ) : overlay.kind === 'edit' && editTask && editState ? (
                 <EditForm
-                  task={tasks.find((t) => t.id === overlay.taskId)!}
-                  state={run.tasks[overlay.taskId]!}
+                  task={editTask}
+                  state={editState}
                   workflow={run.workflow}
                   tasks={run.tasks}
                   drafts={drafts}
@@ -1699,7 +1816,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                   theme={theme}
                   confirmRestart={
                     overlay.confirmRestart
-                      ? { note: resetWorkspaceNote(tasks.find((t) => t.id === overlay.taskId)!, true) }
+                      ? { note: resetWorkspaceNote(editTask, true) }
                       : undefined
                   }
                 />
@@ -1721,6 +1838,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
           </Box>
         </Box>
       </Box>
+      {layout.bottomRule && <Rule columns={columns} theme={theme} joinAt={layout.sidebarWidth} kind="bottom" />}
       <Footer
         hints={
           composerOpen
@@ -1733,7 +1851,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
                   ? 'Y restart now   N apply only   Esc back to the form'
                   : `${glyph('up')}${glyph('down')} field   Ctrl+O prompt in $EDITOR   Enter save   Esc cancel`
                 : `Esc close   ${glyph('up')}${glyph('down')} move   Enter choose`
-            : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys })
+            : footerHints(focus, tab, { lead: observing ? obsActions : actions, taken: takenKeys, panel: tab === 'changes' ? changesKeyCells : undefined })
         }
         always={overlayOpen || composerOpen ? undefined : alwaysHintCells(mode)}
         columns={columns}
@@ -1742,6 +1860,7 @@ export function DashboardApp(props: AppProps): React.JSX.Element {
         snapshotAge={now - (snapshot?.at ?? now)}
         notice={notice}
         quotas={quotas}
+        spend={runSpend(run)}
         now={now}
         focused={focus === 'footer' && !overlayOpen && !composerOpen}
         screenReader={screenReader}

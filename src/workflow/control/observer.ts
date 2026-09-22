@@ -48,7 +48,7 @@ export const OBSERVE_INTERVAL_MS = 500;
 export const OBSERVER_ACK_WAIT_SECONDS = 10;
 
 /** The controls that cross a process boundary, in the order the workspace offers them. */
-export const OBSERVER_CONTROL_KINDS = ['stop', 'kill', 'restart'] as const;
+export const OBSERVER_CONTROL_KINDS = ['stop', 'kill', 'restart', 'pause', 'resume'] as const;
 export type ObserverControlKind = (typeof OBSERVER_CONTROL_KINDS)[number];
 
 /**

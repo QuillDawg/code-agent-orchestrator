@@ -18,6 +18,14 @@ export interface KeyHelp {
   what: string;
   /** What the footer says, when the full sentence is too long for a line shared with five others. */
   short?: string;
+  /**
+   * `false` keeps this key out of the footer line while leaving it in `?` and the palette.
+   *
+   * The footer is one row shared by the panel's keys, the global chords and the provider chips, and it
+   * shed a quota reading for every key added to it. So the rarely-reached ones are documented rather than
+   * advertised: `?` is one key away and costs nothing until it is pressed.
+   */
+  footer?: boolean;
 }
 
 export interface PanelHelp {
@@ -79,6 +87,8 @@ export function navigationKeys(): NavigationKey[] {
     { input: 'Ctrl+P', behaviour: 'Command palette over every action and every task id' },
     { input: '/', behaviour: 'Search the focused list or transcript' },
     { input: '?', behaviour: 'The keys of whatever has focus' },
+    { input: 'P', behaviour: 'Pause the run: nothing new starts, running tasks finish', note: 'again to continue; only while the run is executing' },
+    { input: 'Z', behaviour: 'Suspend the selected task, keeping its session', note: 'again to continue it where it stopped' },
     { input: 'Q', behaviour: 'Quit request', note: 'not inside a composer' },
     { input: 'Ctrl+C', behaviour: 'Graceful stop; the workspace stays open' },
     { input: 'Ctrl+O', behaviour: 'In a composer: open it in $VISUAL / $EDITOR', note: 'mirrors `O` in the Changes view' },
@@ -98,6 +108,11 @@ export function globalKeys(mode: KeyMode = 'executing'): KeyHelp[] {
     { keys: 'Ctrl+P', what: 'command palette: every action and every task id' },
     { keys: '?', what: 'the keys of whatever has focus' },
     ...LEAVING_KEYS[mode],
+    // After the two leaving keys, not before them: `Q` and `Ctrl+C` are what an operator opens this panel
+    // to find, and a row inserted above them pushes them onto the second page of an 80x24 terminal. Only
+    // while something is executing, too — there is nothing to hold on an ended run, and an observer asks
+    // the owner rather than holding it directly.
+    ...(mode === 'executing' ? [{ keys: 'P', what: 'pause the run; running tasks finish, P again continues', short: 'pause', footer: false }] : []),
   ];
 }
 
@@ -179,6 +194,7 @@ const taskListKeys = (): KeyHelp[] => [
   { keys: 'Enter', what: 'open the selected task in the panel', short: 'open' },
   { keys: 'F / L', what: "follow the task's live transcript", short: 'follow' },
   { keys: 'R', what: 'restart a failed, blocked, cancelled or skipped task', short: 'restart' },
+  { keys: 'Z', what: 'suspend a running task, keeping its session; Z resumes', short: 'suspend', footer: false },
   { keys: 'E', what: "edit an unfinished task (prompt, agent, model, limits)", short: 'edit' },
   { keys: '/', what: 'search the task list', short: 'search' },
 ];
@@ -192,6 +208,7 @@ const overviewKeys = (): KeyHelp[] => [
   { keys: UD(), what: 'move through the task table; PgUp/PgDn and Home/End too', short: 'select' },
   { keys: 'F / L', what: "follow the selected task's transcript", short: 'follow' },
   { keys: 'R', what: 'restart the selected task', short: 'restart' },
+  { keys: 'Z', what: 'suspend the selected task, keeping its session; Z resumes', short: 'suspend', footer: false },
   { keys: 'E', what: 'edit the selected task; a running one is stopped and started again', short: 'edit' },
   { keys: 'U', what: 'usage per task: tokens, context, cost, time in tools', short: 'usage' },
   { keys: 'C', what: 'the Changes tab: what each task changed', short: 'changes' },
@@ -319,6 +336,12 @@ export interface FooterHintOptions {
   lead?: readonly { key: string; label: string; short?: string }[];
   /** Keys those actions have claimed, so the panel does not advertise its own meaning for them. */
   taken?: ReadonlySet<string>;
+  /**
+   * The focused panel's own key cells, for a panel that answers its own keys and so knows them better than
+   * this table does. The Changes panel is the only one: `app.tsx` switches the workspace's `useInput` off
+   * for that tab, and the view has two levels of keys, so it reports whichever level is open.
+   */
+  panel?: readonly string[];
 }
 
 /**
@@ -333,7 +356,13 @@ export function footerHints(focus: FocusRegion, tab: WorkspaceTab, options: Foot
   // (§2.4), and an operator looking for "how do I retry this" should not have to press `?` to find out. The
   // observer's controls lead for the same reason and are passed in the same way (§2.1).
   const lead = options.lead?.length ? options.lead.map((action) => `${action.key} ${action.short ?? action.label}`) : [];
-  if (focus === 'main' && tab === 'changes') return lead.join('   ');
-  const panel = panelHelp(focus, tab, options.taken).keys.map((help) => `${help.keys} ${help.short ?? help.what}`);
+  // A panel that answers its own keys reports them. This table would otherwise have to guess which of the
+  // Changes view's two levels is open, and used to answer with nothing at all - a footer that said only
+  // `Ctrl+P palette   ? help   Q quit` on one tab out of six, while the panel drew a key line of its own.
+  const panel =
+    options.panel ??
+    panelHelp(focus, tab, options.taken)
+      .keys.filter((help) => help.footer !== false)
+      .map((help) => `${help.keys} ${help.short ?? help.what}`);
   return [...lead, ...panel].join('   ');
 }

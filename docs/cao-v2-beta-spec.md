@@ -39,7 +39,7 @@ Turn `cao` into a persistent terminal workspace: run workflows, inspect failures
 - **CLI** nests the task controls under `cao task` with `show` as default `[D6]`.
 - **Budget** is `claude.maxBudgetUsd`, Claude only; there is no task-level budget key today `[D20]`.
 - **Source YAML** already gets `state: completed` written by `WorkflowCompletionStore`; that is the one documented exception to "no source edits" `[D21]`.
-- **Claude quota** is unavailable by design, and no unofficial endpoint is used, because `cao` makes no network calls of its own `[D29]`. "Fable" is a model name, not a quota category `[D30]`.
+- **Claude quota** is estimated from the session logs Claude Code already writes, and marked as an estimate; no unofficial endpoint is used, because `cao` still makes no network calls of its own `[D29]`. "Fable" is a model name, not a quota category `[D30]`.
 - **Codex quota reads need ChatGPT login**; API-key auth is refused by the server, so the footer has an explicit auth-required state (§3.6).
 - **Codex `turn/start` on a thread with an active turn is silently treated as a steer** by the server (§7.2). The runner must never rely on `turn/start` to open a second turn.
 - **Vendor citations** are corrected: the app-server README was deleted in Codex 0.154.0; the docs page and the protocol crate are the sources now (§7).
@@ -148,7 +148,8 @@ interface PromptDelivery { id: Ulid; at: IsoDate; source; mode: 'steer' | 'follo
 
 interface QuotaSnapshot { protocol: 1; provider: 'codex' | 'claude'; readAt: IsoDate;
   state: 'ok' | 'stale' | 'unavailable' | 'authRequired' | 'error'; reason?: string; planType?: string;
-  windows: Array<{ label: string; durationMins: number | null; usedPercent: number; resetsAt: IsoDate | null }> }
+  estimated?: boolean;
+  windows: Array<{ label: string; durationMins: number | null; usedPercent: number | null; usedTokens?: number; resetsAt: IsoDate | null }> }
 ```
 
 - The run-level `events.jsonl` records `task.edited { taskId, revision, fields }` and `task.prompted { taskId, deliveryId, mode, state }` **without text**, following the existing rule that bulk and sensitive detail stays in the attempt directory.
@@ -197,6 +198,7 @@ Navigation (chords verified for Windows Terminal, conhost and mintty in §7.3):
 
 - While a composer or editor has focus, printable keys are text. Only Esc, Ctrl+P, Ctrl+O, Ctrl+J and Ctrl+C are chords there.
 - Resize: `useWindowSize()` drives every panel; the store keeps scroll positions clamped. Compact layout at 80×24 collapses the sidebar to a one-line task strip and drops the footer's freshness column first.
+- Separation: the body is a fenced region. A rule under the tab bar and a rule above the footer, joined by a vertical rule down the sidebar/panel seam with `┬`/`┴` where they meet; the Overview labels its task table and its detail block with labelled rules. Every row a rule costs is deducted inside `workspaceLayout()` before any component is sized, so §2.5 holds by construction. Compact spends its single rule under the task strip instead, where the boundary is actually lost; a screen reader gets none, for the reason the header collapses to one line; and the rules are the first rows given up as the terminal shrinks.
 - Modes: `--theme cyberpunk|mono`, `CAO_THEME`; `NO_COLOR` forces mono; `CAO_ASCII=1` switches glyphs (already exists); `CAO_REDUCED_MOTION=1`, Ink's screen-reader flag, or `TERM=dumb` disable the spinner and the activity pulse. Every state is readable without colour: glyph plus word `[D35]`.
 - The cyberpunk theme (S4) is a token table in `src/tui/theme.ts`: violet and cyan accents, one danger and one warning colour, panel borders in the accent, compact branding in the header. Animations are limited to the running spinner and a two-frame activity pulse, both off under reduced motion.
 
@@ -263,10 +265,10 @@ Native agent terminal handoff remains a **SUGGESTION**.
   - Display per window the server reports: label from `windowDurationMins` (`5h`, `7d`, else `Nm`), `usedPercent`, `resetsAt` as local time, plus `planType`. Never assume which windows exist.
   - `authRequired` when `account/read` says `apiKey` or the read fails with the server's "authentication required" message: the server refuses quota reads for API-key auth. Chip text: `codex · sign in with ChatGPT for quotas`.
   - `unavailable` when the CLI is below 0.48.0 (first version with the method) or not installed.
-- **Claude** `[D29]`: `unavailable · see /usage in Claude Code`. No documented programmatic read exists and `cao` makes no network calls of its own.
+- **Claude** `[D29]`: estimated from the transcripts Claude Code already writes under `~/.claude/projects/`, deduplicated by `message.id`, as rolling 5h and 7d windows of **absolute tokens** — no local file records the plan's limit, so there is no honest percentage and `usedPercent` is null. Marked `est` on the chip, `resetsAt` null, and `unavailable · see /usage in Claude Code` when there are no transcripts to add up. Still no network call of `cao`'s own.
 - **Fable** has no meaning here `[D30]`; the footer shows only provider-reported windows under provider labels.
 - States: `loading`, `ok` (with age), `stale` (last good reading kept, age shown, reason on hover in help), `unavailable`, `authRequired`, `error`. A failed refresh never blanks a good reading.
-- Timers start when the workspace mounts, are `unref`'d, and stop on unmount; headless never starts them `[D31]`. Task tokens and estimated costs stay in the Usage view, visually separate from quotas.
+- Timers start when the workspace mounts, are `unref`'d, and stop on unmount; headless never starts them `[D31]`. **Per-task** tokens and costs stay in the Usage view; the run's aggregate is a footer cell of its own beside the quota chips and never inside one `[D43]`.
 
 ### 3.7 Doctor, debugging, logs — S1 (probe default), S3 (rest)
 

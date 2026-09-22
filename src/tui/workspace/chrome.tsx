@@ -8,18 +8,19 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import { type QuotaSnapshot, type ResolvedTask, type TaskRunState, type WorkflowRun, ACTIVE_TASK_STATES, addUsage } from 'code-agent-orchestrator-protocol';
+import { type QuotaSnapshot, type ResolvedTask, type TaskRunState, type WorkflowRun, ACTIVE_TASK_STATES } from 'code-agent-orchestrator-protocol';
 import { STATE_LABEL, stateGlyph, summarize } from '../../workflow/states.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatDuration, formatDurationShort } from '../../util/duration.js';
 import { truncateVisible } from '../../cli/util.js';
 import { visibleLength } from '../../cli/color.js';
-import { agentLabel, formatCost, formatTokens } from '../format.js';
+import { agentLabel } from '../format.js';
+import { spendCells, type RunSpend } from './spend.js';
 import { TAB_LABEL, WORKSPACE_TABS, type WorkspaceTab } from '../store.js';
 import type { Theme } from '../theme.js';
 import { windowOf } from '../window.js';
 import { quotaChips } from './quota.js';
-import type { FooterColumn } from './layout.js';
+import { SIDEBAR_GUTTER, type FooterColumn } from './layout.js';
 
 /** Who is driving: this process holds the run, or it is watching one another process owns (§2.1). */
 export type WorkspaceRole = 'owner' | 'observer';
@@ -136,7 +137,11 @@ export function Header({ run, theme, columns, now, role, badge, attention, scree
   // doing, so a workspace left open on a finished run counted upwards for as long as it was open — and the
   // Overview's own outcome line, which does use `endedAt`, disagreed with the header on the same frame.
   const elapsed = run.startedAt ? formatDuration((run.endedAt ? new Date(run.endedAt).getTime() : now) - new Date(run.startedAt).getTime()) : '';
-  const usage = addUsage(...run.workflow.tasks.flatMap((t) => run.tasks[t.id]?.attempts.map((a) => a.usage) ?? []));
+
+  // What separates the facts on the second row. Seven of them used to be strung together with three spaces
+  // each, which reads as one long number rather than as a progress bar, four counters, a state, a clock, a
+  // concurrency and a badge. The rule is the same one the tab bar divides its cells with.
+  const sep = `  ${theme.paint(glyph('vrule'), 'border')} `;
 
   const width = narrow ? 10 : 20;
   const failed = summary.failed + summary.blocked + summary.cancelled;
@@ -177,16 +182,26 @@ export function Header({ run, theme, columns, now, role, badge, attention, scree
         [{bar}] {done}/{summary.total} {'  '}
         {theme.paint(`${glyph('ok')}${summary.success}`, 'ok')} {theme.paint(`${glyph('error')}${summary.failed + summary.blocked}`, failed ? 'danger' : 'muted')} {theme.paint(`${stateGlyph('running')}${running}`, 'accent2')}
         {waiting ? ` ${theme.paint(`?${waiting}`, 'warn')}` : ''}
-        {'   '}
-        {stateGlyph(run.state === 'running' ? 'running' : run.state === 'failed' ? 'failed' : run.state === 'completed' ? 'success' : 'pending')} {RUN_STATE_LABEL[run.state] ?? run.state}
-        {'   '}
+        {sep}
+        {/* A held run gets the pause mark rather than falling through to the ring, which said "not
+            started yet" about a run with work still in flight. */}
+        {stateGlyph(
+          run.state === 'running'
+            ? 'running'
+            : run.state === 'failed'
+              ? 'failed'
+              : run.state === 'completed'
+                ? 'success'
+                : run.state === 'paused'
+                  ? 'awaiting_approval'
+                  : 'pending',
+        )} {RUN_STATE_LABEL[run.state] ?? run.state}
+        {sep}
         {elapsed}
-        {'   '}
+        {sep}
         {running}/{run.workflow.execution.maxConcurrency}
-        {'   '}
+        {sep}
         {theme.paint(`[${badge ?? role}]`, role === 'owner' ? 'badgeBg' : 'warn')}
-        {usage.costUsd !== undefined ? `   ${formatCost(usage.costUsd)}` : ''}
-        {!narrow && usage.inputTokens ? theme.paint(`   ${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens ?? 0)} out`, 'muted') : ''}
       </Text>
       {attention !== undefined && (
         <Text wrap="truncate-end">
@@ -237,6 +252,59 @@ export function TabBar({ tab, focused, mainFocused, theme, columns }: TabBarProp
   });
   const mark = focusMark(focused);
   return <Text wrap="truncate-end">{truncateVisible(`${mark}${cells.join(theme.paint(glyph('vrule'), 'border'))}`, columns)}</Text>;
+}
+
+/**
+ * A rule across the frame, with the tee where the sidebar seam meets it.
+ *
+ * Pure, and exported, so "the rule is exactly as wide as the terminal in both alphabets" is a property a
+ * test asserts directly rather than by reading it back out of a rendered frame. `at` is the column the
+ * vertical rule sits in, which is the sidebar's width plus the gutter's leading space.
+ */
+export function ruleLine(columns: number, join?: { at: number; kind: 'top' | 'bottom' }): string {
+  const cells: string[] = new Array(Math.max(0, columns)).fill(glyph('rule'));
+  if (join && join.at >= 0 && join.at < cells.length) cells[join.at] = glyph(join.kind === 'top' ? 'teeDown' : 'teeUp');
+  return cells.join('');
+}
+
+export interface RuleProps {
+  columns: number;
+  theme: Theme;
+  /** The column the sidebar seam sits in; omitted when the sidebar is collapsed and there is no seam. */
+  joinAt?: number;
+  kind?: 'top' | 'bottom';
+}
+
+/** One of the two rules that fence the body (§3.2). */
+export function Rule({ columns, theme, joinAt, kind }: RuleProps): React.JSX.Element {
+  const line = joinAt !== undefined && kind !== undefined ? ruleLine(columns, { at: joinAt, kind }) : ruleLine(columns);
+  return <Text wrap="truncate-end">{theme.paint(line, 'border')}</Text>;
+}
+
+export interface VRuleProps {
+  rows: number;
+  theme: Theme;
+}
+
+/**
+ * The seam between the task list and the panel: the gutter, drawn full height whatever either side holds.
+ *
+ * A sibling of `Sidebar` rather than part of it, and told `mainRows` rather than measuring the list: the
+ * sidebar's own Box has no explicit height and collapses to its content, so a three-task run would have
+ * drawn a three-row seam down a thirty-row panel.
+ *
+ * `flexShrink={0}` is load-bearing. The row this sits in holds children that overflow, and Yoga takes the
+ * shrink out of whichever child allows it.
+ */
+export function VRule({ rows, theme }: VRuleProps): React.JSX.Element {
+  const mark = theme.paint(glyph('vrule'), 'border');
+  return (
+    <Box flexDirection="column" width={SIDEBAR_GUTTER} flexShrink={0}>
+      {Array.from({ length: Math.max(0, rows) }, (_, i) => (
+        <Text key={i} wrap="truncate-end">{`${mark} `}</Text>
+      ))}
+    </Box>
+  );
 }
 
 export interface SidebarProps {
@@ -395,6 +463,8 @@ export interface FooterProps {
   notice?: string | null;
   /** What each provider last said about its quota (§3.6); empty until the first reading arrives. */
   quotas?: readonly QuotaSnapshot[];
+  /** The run's own measured spend, which is not a quota and is never mixed into one (§3.6). */
+  spend?: RunSpend;
   /** The frame's clock, which is what ages the quota chips. */
   now?: number;
   /** Whether the footer holds the keys, so `R` is its own and the chips say they can be refreshed. */
@@ -415,18 +485,29 @@ export interface FooterProps {
  * has to leave room for the keys, so a chip is dropped here too when the line is full — in the same order,
  * freshness first, then the chips from the right.
  */
-export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice, quotas, now, focused, screenReader }: FooterProps): React.JSX.Element {
+export function Footer({ hints, always, columns, theme, columnsShown, snapshotAge, notice, quotas, spend, now, focused, screenReader }: FooterProps): React.JSX.Element {
   const hintCells = hints ? hints.split(HINT_GAP) : [];
   const alwaysCells = always ?? [];
+  // The run's own number, then what the providers said, then how old the picture is. Three groups rather
+  // than one, because the order below gives them up in three different places.
+  const spendLine: string[] = columnsShown.includes('spend') && spend ? spendCells(spend) : [];
   const chipCells: string[] = [];
   if (columnsShown.includes('quota')) chipCells.push(...quotaChips(quotas ?? [], now ?? Date.now()));
   if (columnsShown.includes('freshness')) chipCells.push(`updated ${formatDurationShort(Math.max(0, snapshotAge))} ago`);
 
-  const cells = [...hintCells, ...alwaysCells, ...chipCells];
-  // Given up in this order: the freshness chip, then the quota chip, then the panel's keys from the right,
-  // then the palette chord — and `? help` and the way out only if even they do not fit.
+  const cells = [...hintCells, ...alwaysCells, ...spendLine, ...chipCells];
+  const spendAt = hintCells.length + alwaysCells.length;
+  const chipAt = spendAt + spendLine.length;
+  // Given up in this order: the freshness chip, the quota chips from the right, the run's own spend, then
+  // the panel's keys from the right, then the palette chord — and `? help` and the way out only if even
+  // they do not fit.
+  //
+  // Spend goes before the panel's keys, not after. It is the more interesting number, but the footer's
+  // first job is to say what the keys are: an 80-column terminal that traded "F / L follow" for a token
+  // count would be the complaint this line exists to answer. At 120 there is room for both.
   const priority = [
-    ...chipCells.map((_, i) => hintCells.length + alwaysCells.length + chipCells.length - 1 - i),
+    ...chipCells.map((_, i) => chipAt + chipCells.length - 1 - i),
+    ...spendLine.map((_, i) => spendAt + spendLine.length - 1 - i),
     ...hintCells.map((_, i) => hintCells.length - 1 - i),
     ...alwaysCells.map((_, i) => hintCells.length + i),
   ];

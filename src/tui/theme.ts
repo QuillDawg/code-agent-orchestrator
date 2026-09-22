@@ -25,6 +25,7 @@
 import type { TaskState } from 'code-agent-orchestrator-protocol';
 import { colorLevel, sgrColor } from '../cli/color.js';
 import { ESC } from '../util/text.js';
+import { useUnicode } from '../util/glyphs.js';
 import { readUserConfig } from './render-options.js';
 
 /** The themes a user may ask for. `default` is still accepted as the old name of `cyberpunk`. */
@@ -168,11 +169,18 @@ export const STATE_TOKEN: Record<TaskState, ThemeToken> = {
   blocked: 'danger',
   skipped: 'muted',
   cancelled: 'agent',
+  suspended: 'agent',
 };
 
-/** What a panel's box is drawn with. The *style* carries focus, so `mono` shows it too (§3.2). */
+/**
+ * What a panel's box is drawn with. The *style* carries focus, so `mono` shows it too (§3.2).
+ *
+ * `classic` is the ASCII alphabet's answer. cli-boxes spells `round` and `double` with box-drawing
+ * characters, so every dialog drew mojibake on a terminal `CAO_ASCII=1` was chosen for - and nothing caught
+ * it, because the ASCII frame tests never open one.
+ */
 export interface BorderProps {
-  borderStyle: 'round' | 'double';
+  borderStyle: 'round' | 'double' | 'classic';
   borderColor: string | undefined;
 }
 
@@ -263,7 +271,10 @@ function makeTheme(name: ThemeName, table: Record<ThemeToken, TokenSpec>, level:
     inkBg: (token) => (color ? table[token].bg : undefined),
     stateColor: (state) => (color ? table[STATE_TOKEN[state]].fg : undefined),
     stateToken: (state) => STATE_TOKEN[state],
-    border: (focused) => ({ borderStyle: focused ? 'double' : 'round', borderColor: color ? table[focused ? 'borderFocused' : 'border'].fg : undefined }),
+    border: (focused) => ({
+      borderStyle: useUnicode() ? (focused ? 'double' : 'round') : 'classic',
+      borderColor: color ? table[focused ? 'borderFocused' : 'border'].fg : undefined,
+    }),
   };
 }
 

@@ -12,7 +12,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { type ResolvedTask, type TranscriptEntry, type WorkflowRun, ACTIVE_TASK_STATES } from 'code-agent-orchestrator-protocol';
 import { STATE_LABEL, stateGlyph } from '../../workflow/states.js';
-import { glyph } from '../../util/glyphs.js';
+import { glyph, labelledRule } from '../../util/glyphs.js';
 import { truncateVisible } from '../../cli/util.js';
 import { agentLabel, contextRatio, formatCost, formatTokens } from '../format.js';
 import { currentAttempt, elapsedParts } from '../history.js';
@@ -70,12 +70,17 @@ export function Overview(props: OverviewProps): React.JSX.Element {
   // is left, and the detail takes the rest. Every one of them is capped against the rows actually left, so
   // the panel adds up to `rows` on a terminal too small for all three rather than running past the bottom.
   const failure = (props.observer ? observerLines(run, theme, props.observer) : props.ended ? endedLines(run, theme, props.ended) : failureLines(run, theme, { selected: tasks[cursor]?.id })).slice(0, Math.max(0, rows - 1));
-  const afterFailure = Math.max(0, rows - failure.length);
+  // Three blocks used to be stacked with one blank line between the last two and no headings at all, which
+  // is most of why this panel read as a slab. Each gets a labelled rule - but only where there are rows to
+  // spend on one, and the detail's heading takes the place of the blank line rather than adding to it.
+  const headings = rows >= 12;
+  const tableHeadRows = headings ? 1 : 0;
+  const afterFailure = Math.max(0, rows - failure.length - tableHeadRows);
   const tableRows = Math.min(tasks.length, Math.max(0, Math.min(afterFailure, Math.max(3, Math.floor(afterFailure / 2)))));
   const slice = windowOf(tasks, cursor, tableRows);
   const hidden = slice.above > 0 || slice.below > 0;
   const marker = hidden && failure.length + slice.items.length + 1 <= rows;
-  const detailRows = Math.max(0, rows - failure.length - slice.items.length - (marker ? 1 : 0) - 1);
+  const detailRows = Math.max(0, rows - failure.length - tableHeadRows - slice.items.length - (marker ? 1 : 0) - 1);
 
   const idWidth = Math.min(28, Math.max(12, ...tasks.map((t) => t.id.length)));
   const taskCell = (id: string): string => truncateVisible(id, idWidth).padEnd(idWidth);
@@ -99,6 +104,8 @@ export function Overview(props: OverviewProps): React.JSX.Element {
       // At least one line of transcript as soon as there is any room at all: on a small terminal what the
       // worker is doing right now is worth more than the last line of the interaction history.
       activityRows: Math.max(detailRows >= 8 ? 1 : 0, Math.min(10, detailRows - 14)),
+      // The labelled rule above these lines already carries the id.
+      title: !headings,
     });
     detail = trimToRows(lines, detailRows, `  ${glyph('ellipsis')} cao task ${selected.id} for the rest`);
   }
@@ -110,6 +117,7 @@ export function Overview(props: OverviewProps): React.JSX.Element {
           {line.text}
         </Text>
       ))}
+      {headings && <Text wrap="truncate-end">{theme.paint(labelledRule(`Tasks ${slice.start + 1}-${slice.end} of ${tasks.length}`, columns), 'border')}</Text>}
       {slice.items.map((task, i) => {
         const index = slice.start + i;
         const state = run.tasks[task.id]!;
@@ -154,7 +162,9 @@ export function Overview(props: OverviewProps): React.JSX.Element {
           {theme.paint(`  ${glyph('ellipsis')} ${tasks.length} tasks, showing ${slice.start + 1}-${slice.end}`, 'muted')}
         </Text>
       )}
-      {detail.length > 0 && <Text> </Text>}
+      {detail.length > 0 && (
+        <Text wrap="truncate-end">{theme.paint(headings ? labelledRule(selected?.id ?? 'Task', columns) : ' ', 'border')}</Text>
+      )}
       {detail.map((line, i) => (
         <Text key={`detail-${i}`} bold={line.bold} dimColor={line.dim} wrap="truncate-end">
           {line.text}

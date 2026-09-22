@@ -7,7 +7,7 @@
 import type { InteractionAnswer } from './interaction.js';
 import type { ProtocolVersion } from './protocol.js';
 
-export const CONTROL_REQUEST_KINDS = ['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt'] as const;
+export const CONTROL_REQUEST_KINDS = ['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt', 'pause', 'resume'] as const;
 
 /**
  * Closed on purpose, unlike the enums §4.5 leaves open: this is the *written* side of the wire, and the

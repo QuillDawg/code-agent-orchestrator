@@ -34,6 +34,19 @@ export type ControlCommand =
   | { kind: 'cancelTask'; taskId: string }
   /** Return a terminal non-success task to `pending` so the run picks it up again. */
   | { kind: 'restart'; taskId: string }
+  /**
+   * Stop scheduling. In-flight tasks finish, nothing new starts, and the run does not end (§3.2).
+   *
+   * Deliberately not a `stop`: setting `stop` is what makes the scheduler's loop break and `finalize()`
+   * write the report and release the lock. A hold is the opposite instruction to the same loop.
+   */
+  | { kind: 'pause' }
+  /** Schedule again. Rejected when nothing is held. */
+  | { kind: 'resume' }
+  /** End one in-flight attempt keeping its session, so it can be continued rather than restarted (§3.5). */
+  | { kind: 'suspendTask'; taskId: string }
+  /** Continue a suspended task from the session it kept. */
+  | { kind: 'resumeTask'; taskId: string }
   | { kind: 'edit'; taskId: string; changes: TaskEdit; restart: boolean }
   /**
    * §3.5. `freshSession` is the explicit half of `[D25]`: start over rather than continue the session.
@@ -144,6 +157,12 @@ export function commandForRequest(request: ControlRequest): RequestTranslation {
       return taskId ? { ok: true, command: { kind: 'cancelTask', taskId } } : { ok: true, command: { kind: 'stop', mode: 'cancel' } };
     case 'kill':
       return { ok: true, command: { kind: 'kill' } };
+    // The same shape as `stop` above, for the same reason: a request that names a task means the task, one
+    // that does not means the run. Two wire kinds therefore carry all four operations.
+    case 'pause':
+      return taskId ? { ok: true, command: { kind: 'suspendTask', taskId } } : { ok: true, command: { kind: 'pause' } };
+    case 'resume':
+      return taskId ? { ok: true, command: { kind: 'resumeTask', taskId } } : { ok: true, command: { kind: 'resume' } };
     case 'restart':
       return taskId ? { ok: true, command: { kind: 'restart', taskId } } : needsTask('restart');
     case 'edit':

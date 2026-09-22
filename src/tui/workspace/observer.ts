@@ -10,6 +10,7 @@
  * rendered as a fact about the run and not as something this window can settle — and the line that says so
  * names the terminal that can.
  */
+import { isRunExecuting } from '../../workflow/states.js';
 import type { CapabilityToken, ResolvedTask, WorkflowRun } from 'code-agent-orchestrator-protocol';
 import { sanitizeText } from '../../cli/color.js';
 import { glyph } from '../../util/glyphs.js';
@@ -40,9 +41,25 @@ const RESTARTABLE = new Set(['failed', 'blocked', 'cancelled', 'skipped']);
 export function observerActions(run: WorkflowRun, selected: ResolvedTask | undefined, capabilities: readonly CapabilityToken[]): ObserverAction[] {
   const has = (token: CapabilityToken): boolean => capabilities.includes(token);
   const actions: ObserverAction[] = [];
-  const running = run.state === 'running';
+  // `isRunExecuting`, not `state === 'running'`: a held run is `paused` and still owned by a live
+  // orchestrator, and an observer that lost Stop and Kill the moment somebody paused it would be watching a
+  // run it could no longer do anything about.
+  const running = isRunExecuting(run);
   if (has('stop') && running) actions.push({ key: 'S', label: 'Stop the run', short: 'stop the run', kind: 'stop' });
   if (has('kill') && running) actions.push({ key: 'K', label: 'Kill the run', short: 'kill the run', kind: 'kill' });
+  const held = run.state === 'paused';
+  if (has('pause') && running) {
+    actions.push(
+      held
+        ? { key: 'P', label: 'Continue the run', short: 'continue the run', kind: 'resume' }
+        : { key: 'P', label: 'Pause the run', short: 'pause the run', kind: 'pause' },
+    );
+  }
+  if (has('pause') && selected) {
+    const state = run.tasks[selected.id]?.state;
+    if (state === 'suspended') actions.push({ key: 'Z', label: `Continue ${selected.id}`, short: 'continue task', kind: 'resume', taskId: selected.id });
+    else if (state === 'running' || state === 'waiting') actions.push({ key: 'Z', label: `Suspend ${selected.id}`, short: 'suspend task', kind: 'pause', taskId: selected.id });
+  }
   if (has('restart') && selected && RESTARTABLE.has(run.tasks[selected.id]?.state ?? '')) {
     actions.push({ key: 'R', label: `Re-run ${selected.id}`, short: 're-run task', kind: 'restart', taskId: selected.id });
   }

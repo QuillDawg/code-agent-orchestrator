@@ -39,6 +39,7 @@ import {
   type CapabilityToken,
   type ControlAck,
   type ControlAckStatus,
+  type ControlSource,
   type PromptDelivery,
   CONTROL_SEEN_LIMIT,
   PROTOCOL_VERSION,
@@ -101,7 +102,9 @@ export type StopCause = 'signal' | 'on_failure' | 'pause';
  * exactly the task an operator restarts after fixing that dependency - and leaving it out silently turned
  * `requestRestart('some-skipped-task')`, which is on the exported library surface, into a no-op.
  */
-const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([...TERMINAL_TASK_STATES].filter((s) => s !== 'success'));
+// `suspended` is not terminal, but it is a task sitting still that `R` should be able to start again, so
+// it is named here beside the terminal ones rather than being reachable only through `resumeTask`.
+const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([...[...TERMINAL_TASK_STATES].filter((s) => s !== 'success'), 'suspended']);
 
 /**
  * Why a task is being started again, in the words the run log and `cao task` show (§2.6).
@@ -111,6 +114,8 @@ const RESTARTABLE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([...TERMIN
  * "manually restarted from dashboard", which was the wrong action and the wrong surface for two of them.
  */
 const RESTART_BY_OPERATOR = 'restarted by the operator';
+/** A continue rather than a restart: `applyRestart` leaves `resumeSessionId` alone for this one. */
+const RESTART_FOR_CONTINUE = 'continued from where it was suspended';
 const RESTART_FOR_EDIT = 'restarted to run the edit';
 const RESTART_FOR_MESSAGE = 'started again to carry the message you sent';
 
@@ -387,6 +392,19 @@ export class WorkflowScheduler {
    */
   private readonly restartAfterCancel = new Map<string, string>();
   private stop?: { mode: 'wait' | 'cancel'; cause: StopCause };
+  /**
+   * The operator has asked the run to stop *scheduling* (§3.2).
+   *
+   * Beside `stop` rather than part of it, with the opposite effect on the loop below: `stop` makes it
+   * break and finalize, this makes it refuse to break. They are mutually exclusive — a stop clears a hold —
+   * and that is the whole of the relationship between them.
+   *
+   * Not persisted. "Is this run held" is answered by `state === 'paused'` plus an orchestrator that is
+   * still alive, which is the same "report the process, not the record" rule `cao stop` already follows.
+   */
+  private hold?: { at: string; source: ControlSource; pid: number };
+  /** Tasks whose in-flight attempt is being ended with its session kept, by task id. */
+  private readonly suspendRequests = new Set<string>();
   private retryTimer: unknown;
   private liveTimer: unknown;
   private liveDirty = false;
@@ -619,7 +637,10 @@ export class WorkflowScheduler {
         this.promoteReady();
         await this.launchPendingMerges();
         await this.launchReady();
-        if (this.inflight.size === 0 && this.pendingApprovals.size === 0 && this.pendingMerges.size === 0 && this.wake.size === 0 && !this.hasDelayedReady()) break;
+        // `heldOpen()` turns "nothing left to do" into "nothing left to do *yet*": while it is true the loop
+        // parks on `wake.next()`, which resolves only when a command arrives. That is the hold.
+        const idle = this.inflight.size === 0 && this.pendingApprovals.size === 0 && this.pendingMerges.size === 0 && this.wake.size === 0 && !this.hasDelayedReady();
+        if (idle && !this.heldOpen()) break;
         const w = await this.wake.next();
         await this.handleWake(w);
         await this.persist();
@@ -733,7 +754,9 @@ export class WorkflowScheduler {
 
   private promoteReady(): void {
     // Once a stop is requested nothing is promoted; finalize() cancels what is left with a clear reason.
-    if (this.stop) return;
+    // A held run promotes nothing either: an approval gate firing under a hold, or a task quietly becoming
+    // `ready`, would both be the scheduler carrying on after the operator was told it had stopped.
+    if (this.stop || this.hold) return;
     for (const id of this.topo) {
       const state = this.run.tasks[id]!;
       if (state.state !== 'pending') continue;
@@ -834,7 +857,7 @@ export class WorkflowScheduler {
   // ------------------------------------------------------------------ launching
 
   private async launchReady(): Promise<void> {
-    if (this.stop) return;
+    if (this.stop || this.hold) return;
     const now = this.clock.now();
     let earliest: number | undefined;
     const ready = this.topo.filter((id) => this.run.tasks[id]!.state === 'ready');
@@ -929,7 +952,10 @@ export class WorkflowScheduler {
     // an attempt labelled `retry`.
     const followUps = pendingFollowUps(state);
     const answering = followUps.length > 0;
-    const resumable = !editPending && (lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || answering);
+    // `suspended` joins the outcomes worth continuing: keeping the session is the whole point of suspending,
+    // and this is the line that spends it.
+    const resumable =
+      !editPending && (lastAttempt?.outcome === 'api_error' || lastAttempt?.outcome === 'invalid_result' || lastAttempt?.outcome === 'suspended' || answering);
     const resumeSessionId = resumable && sessionResumable(task) ? state.resumeSessionId : undefined;
     const nudge = resumeSessionId !== undefined && lastAttempt?.outcome === 'invalid_result';
     state.resumeSessionId = undefined;
@@ -1310,6 +1336,9 @@ export class WorkflowScheduler {
     if (mode === 'cancel') for (const e of this.inflight.values()) e.abort.abort();
     // Whatever the stop mode, nothing may still be asking the operator who just stopped the run: with
     // `wait` the worker is left to finish its turn, and a denial is what lets it.
+    // A stop supersedes a hold. Without this the loop would still refuse to break and the stop the operator
+    // asked for would sit behind a flag nothing clears.
+    this.hold = undefined;
     this.settleOpenInteractions(cause === 'signal' ? 'The run was interrupted' : 'The run is stopping');
   }
 
@@ -1317,6 +1346,11 @@ export class WorkflowScheduler {
     if (this.stop || this.inflight.has(taskId)) return;
     const state = this.run.tasks[taskId];
     if (!state || !RESTARTABLE_STATES.has(state.state)) return;
+    // Restarting a *suspended* task starts it over; only `resumeTask` continues it. Narrow on purpose: a
+    // follow-up has already chosen the session its attempt continues (§3.5), which is the same reason
+    // `applyPendingCancel` keeps it, and clearing it for every restart turned stop-and-continue into a
+    // fresh start.
+    if (state.state === 'suspended' && why !== RESTART_FOR_CONTINUE && !pendingFollowUps(state).length) state.resumeSessionId = undefined;
     this.setState(state, 'pending', undefined, why);
     state.blockedBy = undefined;
     state.retryWindowStart = (state.attempts[state.attempts.length - 1]?.number ?? 0) + 1;
@@ -1387,6 +1421,14 @@ export class WorkflowScheduler {
         return this.decideRestart(command.taskId);
       case 'cancelTask':
         return this.decideCancelTask(command.taskId);
+      case 'pause':
+        return this.decideHold();
+      case 'resume':
+        return this.decideRelease();
+      case 'suspendTask':
+        return this.decideSuspendTask(command.taskId);
+      case 'resumeTask':
+        return this.decideResumeTask(command.taskId);
       case 'edit':
         return this.decideEdit(command, envelope);
       case 'prompt':
@@ -1418,6 +1460,118 @@ export class WorkflowScheduler {
       if (revision !== expected.revision) return `Task "${taskId}" is at revision ${revision}, request expected ${expected.revision}.`;
     }
     return undefined;
+  }
+
+  // ------------------------------------------------------------------ holding the run (§3.2)
+
+  /**
+   * `pause`: stop starting things. Whatever is already running finishes; the run does not end.
+   *
+   * The hold is refused rather than queued while the run is stopping, because a stop is on its way to
+   * `finalize()` and a hold applied behind it would be a flag on a run that no longer has a loop.
+   */
+  private decideHold(): ControlDecision {
+    if (this.stop) {
+      return {
+        status: 'rejected',
+        reason: `The run is already stopping, so there is nothing to pause. Start it again with "cao resume ${this.run.runId}" once it has ended.`,
+      };
+    }
+    if (this.hold) return { status: 'rejected', reason: 'The run is already paused; nothing new starts until it continues.' };
+    const running = this.inflight.size;
+    const finishing = running === 0 ? 'Nothing is running.' : `${running} task${running === 1 ? '' : 's'} will finish the turn they are on.`;
+    return { status: 'applied', reason: `Paused. ${finishing} Nothing new will start.`, apply: () => this.applyHold() };
+  }
+
+  private decideRelease(): ControlDecision {
+    if (!this.hold) return { status: 'rejected', reason: 'The run is not paused.' };
+    return { status: 'applied', reason: 'Scheduling again.', apply: () => this.applyRelease() };
+  }
+
+  private applyHold(source: ControlSource = 'cli', pid = process.pid): void {
+    this.hold = { at: nowIso(), source, pid };
+    this.transitionRun('paused');
+    this.bus.emit({ type: 'workflow.paused', reason: 'operator', taskIds: [...this.inflight.keys()] });
+  }
+
+  private applyRelease(): void {
+    this.hold = undefined;
+    this.transitionRun('running');
+    this.bus.emit({ type: 'workflow.warning', code: 'pause', message: 'the run is scheduling again' });
+    // The loop is parked on `wake.next()`, which resolves only when something is pushed. `retry_due` is
+    // already a no-op wake, so this is the cheapest way to make it look again.
+    this.wake.push({ kind: 'retry_due' });
+  }
+
+  /** Whether the loop must stay open although nothing is in flight: a hold, or a task parked by one. */
+  private heldOpen(): boolean {
+    if (this.stop) return false;
+    if (!this.hold && !Object.values(this.run.tasks).some((t) => t.state === 'suspended')) return false;
+    // A hold on a run with nothing left to do releases itself rather than parking on a finished run.
+    return Object.values(this.run.tasks).some((t) => !TERMINAL_TASK_STATES.has(t.state));
+  }
+
+  // ------------------------------------------------------------------ suspending one task (§3.5)
+
+  /**
+   * `suspendTask`: end the attempt in front of us keeping its session, so it can be continued.
+   *
+   * The one precondition `cancelTask` does not have is that the session must be continuable. There is no
+   * silent downgrade to a plain cancel here `[D25]`: an operator who asked to suspend a task and got it
+   * cancelled has lost the turn, and would find out an hour later.
+   *
+   * On Windows there is no SIGSTOP, and this does not want one anyway. What is suspended is the *turn*, not
+   * the process: the worker is ended the way a cancel ends it, and the session it reported is what makes
+   * the next attempt a continuation rather than a fresh start.
+   */
+  private decideSuspendTask(taskId: string): ControlDecision {
+    const state = this.run.tasks[taskId];
+    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    const task = this.taskDefs.get(taskId);
+    const entry = this.inflight.get(taskId);
+    if (!entry || entry.kind !== 'task') {
+      if (state.state === 'suspended') return { status: 'rejected', reason: `Task "${taskId}" is already suspended. Continue it with "cao task resume ${taskId}".` };
+      if (TERMINAL_TASK_STATES.has(state.state)) return { status: 'rejected', reason: `Task "${taskId}" already finished as ${state.state}, so there is nothing to suspend.` };
+      return { status: 'rejected', reason: `Task "${taskId}" has no worker running, so there is nothing to suspend.` };
+    }
+    const attempt = state.attempts.find((a) => a.number === entry.attempt);
+    if (attempt?.endedAt) {
+      return {
+        status: 'rejected',
+        reason: `Attempt ${entry.attempt} of "${taskId}" has already ended and is merging back, so there is no turn left to suspend. "cao task prompt ${taskId}" continues its session instead.`,
+      };
+    }
+    const sessionId = attempt?.usage?.sessionId ?? attempt?.sessionId ?? state.resumeSessionId;
+    if (!sessionId || !task || !sessionResumable(task)) {
+      return {
+        status: 'rejected',
+        reason: `"${taskId}" has not reported a session that can be continued, so suspending it would throw the turn away. Use "cao task stop ${taskId}" to cancel it, or wait for the worker to report its session.`,
+      };
+    }
+    return {
+      status: 'applied',
+      reason: `Attempt ${entry.attempt} of "${taskId}" is being suspended; its session is kept, so it can be continued.`,
+      apply: () => {
+        this.suspendRequests.add(taskId);
+        // Deny first, then abort, exactly as a cancel does [D22]: a worker blocked on a permission prompt
+        // is not reading its abort signal.
+        this.settleTaskInteractions(taskId, 'The task was suspended');
+        entry.abort.abort(new Error(`task "${taskId}" was suspended`));
+      },
+    };
+  }
+
+  /** `resumeTask`: start the next attempt from the session the suspend kept. */
+  private decideResumeTask(taskId: string): ControlDecision {
+    const state = this.run.tasks[taskId];
+    if (!state) return { status: 'rejected', reason: noSuchTaskReason(taskId, this.run.runId) };
+    if (state.state !== 'suspended') {
+      return { status: 'rejected', reason: `Only a suspended task can be continued; "${taskId}" is ${state.state}. "cao task restart ${taskId}" starts it again from the beginning.` };
+    }
+    // Not refused while merely held: an operator who continues a task during a pause means "and when the
+    // run goes again, run this", and the ack says so rather than making them do it twice.
+    const when = this.hold ? ' It starts when the run continues.' : '';
+    return { status: 'applied', reason: `Continuing "${taskId}" from the session it kept.${when}`, apply: () => this.applyRestart(taskId, RESTART_FOR_CONTINUE) };
   }
 
   private decideRestart(taskId: string): ControlDecision {
@@ -2100,6 +2254,20 @@ export class WorkflowScheduler {
     }
 
     if (outcome === 'cancelled' || outcome === 'interrupted') {
+      // A suspend before a cancel: the abort that ended this attempt was one or the other, and only the
+      // operator knows which. The difference is the session — a suspend keeps it, and the task stays
+      // non-terminal so its dependents are not blocked behind a task that is only parked.
+      if (this.suspendRequests.delete(task.id)) {
+        attempt.outcome = 'suspended';
+        state.resumeSessionId = attempt.usage?.sessionId ?? attempt.sessionId ?? state.resumeSessionId;
+        // It has not ended, it is parked: an `endedAt` here would make every elapsed clock stop on it.
+        state.endedAt = undefined;
+        state.retryNotBefore = undefined;
+        this.setState(state, 'suspended', 'suspended', 'suspended by the operator');
+        this.bus.emit({ type: 'task.cancelled', taskId: task.id, attempt: attempt.number, reason: 'suspended' });
+        await this.persist();
+        return;
+      }
       // An operator who cancelled this one task interrupted it as surely as a Ctrl+C did, and the run around
       // it is not stopping: `stop_requested` would say the opposite of what happened.
       const requested = this.cancelRequests.delete(task.id);
@@ -2230,7 +2398,9 @@ export class WorkflowScheduler {
     const tasks = Object.values(this.run.tasks);
     let state: WorkflowRun['state'];
     if (this.stop?.cause === 'signal') state = 'interrupted';
-    else if (this.stop?.cause === 'pause' || tasks.some((t) => t.state === 'awaiting_approval' || t.state === 'needs_input')) state = 'paused';
+    // A run stopped while holding a suspended task is paused for the same reason a needs_input one is:
+    // something is waiting for a person, and "cao resume" is the next thing anybody does.
+    else if (this.stop?.cause === 'pause' || tasks.some((t) => t.state === 'awaiting_approval' || t.state === 'needs_input' || t.state === 'suspended')) state = 'paused';
     else if (tasks.some((t) => t.state === 'failed' || t.state === 'blocked' || t.state === 'cancelled')) state = 'failed';
     else state = 'completed';
     this.transitionRun(state);

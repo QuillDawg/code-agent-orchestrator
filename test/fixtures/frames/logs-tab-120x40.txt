@@ -1,40 +1,40 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
 ▸   Overview │  Session │ [Logs]│  Changes │  Report │  Diagnostics
-  Tasks #/#                          Logs
-▶ ✓ implement-par… claude|opus-#  █  view events  · source orchestrator.log  · task all  · severity all  · time all
-  ✗ implement-ren… codex|gpt-#-… !█  orchestrator.log is empty. Run with --debug to record what the orchestrator did.
-  ○ review-and-me… claude         █  nothing here  · newest line  · file #/#
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  ←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   updated #s ago
+────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────
+  Tasks #/#                         │ Logs
+▶ ✓ implement-par… claude|opus-#  █ │ view events  · source orchestrator.log  · task all  · severity all  · time all
+  ✗ implement-ren… codex|gpt-#-… !█ │ orchestrator.log is empty. Run with --debug to record what the orchestrator did.
+  ○ review-and-me… claude         █ │ nothing here  · newest line  · file #/#
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────
+  ←→ tab   Enter open   Ctrl+P palette   ? help   Q quit   spend $#.##   ##.#k tok   updated #s ago

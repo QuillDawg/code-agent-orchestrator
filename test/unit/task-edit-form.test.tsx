@@ -43,7 +43,17 @@ tasks:
 
 const shared = (): DashboardShared => ({ queue: [], listeners: new Set(), notify: () => undefined, remove: () => false });
 
-async function mountWorkspace(over: (run: WorkflowRun) => void = () => undefined): Promise<{
+interface MountOptions {
+  /** The run has ended: `E` takes the offline route rather than the controller (§3.4). */
+  finished?: boolean;
+  /** Supplied by the session for an ended run; absent means the form still refuses. */
+  offlineEdit?: (taskId: string, changes: unknown) => Promise<ControlAck>;
+}
+
+async function mountWorkspace(
+  over: (run: WorkflowRun) => void = () => undefined,
+  options: MountOptions = {},
+): Promise<{
   tree: RenderedTree;
   submits: Array<{ kind: string; taskId?: string; changes?: unknown; restart?: boolean }>;
   run: WorkflowRun;
@@ -72,7 +82,8 @@ async function mountWorkspace(over: (run: WorkflowRun) => void = () => undefined
       bus={{ onAny: () => () => undefined } as never}
       controller={controller as never}
       shared={shared()}
-      finished={false}
+      finished={options.finished ?? false}
+      {...(options.offlineEdit ? { offlineEdit: options.offlineEdit as never } : {})}
       onMinimise={() => undefined}
       onInterrupt={() => undefined}
     />,
@@ -239,6 +250,89 @@ describe('the Session panel editor (§3.4)', () => {
       tree.write(KEYS.enter);
       await wait();
       expect(submits).toHaveLength(0);
+      fits(tree);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it("says what is wrong with the draft rather than that nothing changed", async () => {
+    // `validateDraft` zeroes `fields` on every error path, and `submitEdit` used to read only that - so a
+    // rejected model answered Enter with `Nothing to change`, the one sentence that means the opposite.
+    const { tree, submits } = await mountWorkspace((r) => {
+      r.tasks["implement-api"]!.state = "pending";
+    });
+    try {
+      tree.write("e");
+      await wait();
+      // Down to Effort and give it something no agent offers.
+      for (let i = 0; i < 3; i += 1) tree.write(KEYS.down);
+      await wait();
+      tree.write("sideways");
+      for (let i = 0; i < 4; i += 1) tree.write(KEYS.down);
+      await wait();
+      tree.write(KEYS.enter);
+      await wait();
+      expect(submits).toHaveLength(0);
+      const shown = tree.lastText();
+      expect(shown).not.toContain("Nothing to change");
+      // The validator's own sentence, which is what the operator needs in order to fix the row.
+      expect(shown).toContain("is not one of");
+      expect(shown).toContain("sideways");
+      fits(tree);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it("edits a failed task on an ended run through the offline route, not the controller", async () => {
+    // The workspace used to refuse outright and point at `cao task edit`, which refused the same task for
+    // the same reason. The session hands the form `offlineEdit` instead (§3.4).
+    const offline: Array<{ taskId: string; changes: unknown }> = [];
+    const { tree, submits } = await mountWorkspace(
+      (r) => {
+        r.state = "failed";
+        r.tasks["implement-api"]!.state = "failed";
+      },
+      {
+        finished: true,
+        offlineEdit: async (taskId, changes) => {
+          offline.push({ taskId, changes });
+          return { protocol: 1, id: "offline-edit", status: "applied", reason: `Edited "${taskId}" as revision 1: prompt.`, at: new Date().toISOString() };
+        },
+      },
+    );
+    try {
+      tree.write("e");
+      await wait();
+      expect(tree.lastText()).toContain("Edit implement-api");
+      tree.write("!");
+      for (let i = 0; i < 7; i += 1) tree.write(KEYS.down);
+      await wait();
+      tree.write(KEYS.enter);
+      await wait();
+      expect(submits).toHaveLength(0);
+      expect(offline).toHaveLength(1);
+      expect(offline[0]).toMatchObject({ taskId: "implement-api", changes: { prompt: "write the parser!" } });
+      fits(tree);
+    } finally {
+      tree.unmount();
+    }
+  });
+
+  it("still sends the operator to the command line when the session gave it no offline route", async () => {
+    const { tree } = await mountWorkspace(
+      (r) => {
+        r.state = "failed";
+        r.tasks["implement-api"]!.state = "failed";
+      },
+      { finished: true },
+    );
+    try {
+      tree.write("e");
+      await wait();
+      expect(tree.lastText()).not.toContain("Edit implement-api");
+      expect(tree.lastText()).toContain("cao task edit implement-api");
       fits(tree);
     } finally {
       tree.unmount();

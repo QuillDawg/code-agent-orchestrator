@@ -75,7 +75,7 @@ The file itself looks like this:
   "endedAt": null,
   "exitCode": null,
   "taskCount": 7,
-  "capabilities": ["requests", "stop", "kill", "restart", "edit", "prompt"],
+  "capabilities": ["requests", "stop", "kill", "restart", "edit", "prompt", "pause"],
   "feedUrl": null
 }
 ```

@@ -1,40 +1,40 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
    [Overview]│  Session │  Logs │  Changes │  Report │  Diagnostics
-▸ Tasks #/#                          Tasks — the panel with the keys
-▶ ✓ implement-par… claude|opus-#  █    ↑↓                 move through the tasks
-  ✗ implement-ren… codex|gpt-#-… !█    Enter              open the selected task in the panel
-  ○ review-and-me… claude         █    F / L              follow the task's live transcript
-                                       R                  restart a failed, blocked, cancelled or skipped task
-                                       E                  edit an unfinished task (prompt, agent, model, limits)
-                                       /                  search the task list
-
-                                     Anywhere
-                                       Tab / Shift+Tab    cycle the task list, the tabs, the panel and the footer
-                                       Ctrl+P             command palette: every action and every task id
-                                       ?                  the keys of whatever has focus
-                                       Q                  quit: stay, stop and quit, or carry on in plain output
-                                       Ctrl+C             stop the run and stay here; again within ##s forces it
-
-                                     The task editor (E)
-                                       ↑↓                 move between the fields; Enter on the last one goes to Save
-                                       Ctrl+O             write the prompt in $VISUAL / $EDITOR
-                                       Ctrl+J or \+Enter  a newline; both work on every terminal
-                                       Enter              Save; a running or waiting task is asked about first
-                                       Esc                close the form; nothing is sent
-
-                                     Transcript viewer (F)
-                                       ←→ / Tab / #-#     switch task    P task picker    [ ] earlier/later attempt
-                                       ↑↓ PgUp/PgDn       scroll    g oldest line    G newest line and follow again
-                                       t / T / k          tool output, thinking, kind filter
-                                       / n N              search and step through matches
-                                       Esc / Q            back to the workspace
-
-                                     When a worker needs you
-                                       Y / A / N / R      allow, allow for the rest of the task, deny, deny with a
-                                                          reason
-                                       #-# / ↑↓ Enter     choose an answer    T type one    N decline
-
-                                     Moving around — the rest of the table
-                                     ▼ # more   ↑↓ scroll   Esc close
-  Esc close   ↑↓ move   Enter choose   updated #s ago
+────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────
+▸ Tasks #/#                         │ Tasks — the panel with the keys
+▶ ✓ implement-par… claude|opus-#  █ │   ↑↓                 move through the tasks
+  ✗ implement-ren… codex|gpt-#-… !█ │   Enter              open the selected task in the panel
+  ○ review-and-me… claude         █ │   F / L              follow the task's live transcript
+                                    │   R                  restart a failed, blocked, cancelled or skipped task
+                                    │   Z                  suspend a running task, keeping its session; Z resumes
+                                    │   E                  edit an unfinished task (prompt, agent, model, limits)
+                                    │   /                  search the task list
+                                    │
+                                    │ Anywhere
+                                    │   Tab / Shift+Tab    cycle the task list, the tabs, the panel and the footer
+                                    │   Ctrl+P             command palette: every action and every task id
+                                    │   ?                  the keys of whatever has focus
+                                    │   Q                  quit: stay, stop and quit, or carry on in plain output
+                                    │   Ctrl+C             stop the run and stay here; again within ##s forces it
+                                    │   P                  pause the run; running tasks finish, P again continues
+                                    │
+                                    │ The task editor (E)
+                                    │   ↑↓                 move between the fields; Enter on the last one goes to Save
+                                    │   Ctrl+O             write the prompt in $VISUAL / $EDITOR
+                                    │   Ctrl+J or \+Enter  a newline; both work on every terminal
+                                    │   Enter              Save; a running or waiting task is asked about first
+                                    │   Esc                close the form; nothing is sent
+                                    │
+                                    │ Transcript viewer (F)
+                                    │   ←→ / Tab / #-#     switch task    P task picker    [ ] earlier/later attempt
+                                    │   ↑↓ PgUp/PgDn       scroll    g oldest line    G newest line and follow again
+                                    │   t / T / k          tool output, thinking, kind filter
+                                    │   / n N              search and step through matches
+                                    │   Esc / Q            back to the workspace
+                                    │
+                                    │ When a worker needs you
+                                    │   Y / A / N / R      allow, allow for the rest of the task, deny, deny with a
+                                    │ ▼ # more   ↑↓ scroll   Esc close
+────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────
+  Esc close   ↑↓ move   Enter choose   spend $#.##   ##.#k tok   updated #s ago

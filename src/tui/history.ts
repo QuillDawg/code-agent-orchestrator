@@ -39,6 +39,7 @@ export const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
   merge_conflict: 'merge conflict',
   cancelled: 'cancelled',
   interrupted: 'interrupted',
+  suspended: 'suspended',
 };
 
 export const TRIGGER_LABEL: Record<TaskAttempt['triggeredBy'], string> = {

@@ -1,12 +1,12 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##
+[██████░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
 ▸   Overview │  Session │ [Logs]│  Changes │  Report │  Diagnostics
   Task #/# ✓ implement-parser  Completed  claude|opus-#
+────────────────────────────────────────────────────────────────────────────────
 Logs
 view events  · source orchestrator.log  · task all  · severity all  · time all
 orchestrator.log is empty. Run with --debug to record what the orchestrator did.
 nothing here  · newest line  · file #/#
-
 
 
 

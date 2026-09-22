@@ -242,7 +242,7 @@ describe('the new contract types (§4.2.3, §4.3.1, §4.4.2, §4.6.1)', () => {
   it('types a control request whose kind-specific fields are optional (§4.3.1)', async () => {
     const { CONTROL_REQUEST_KINDS, PROTOCOL_VERSION } = await import('code-agent-orchestrator-protocol');
     type Request = import('code-agent-orchestrator-protocol').ControlRequest;
-    expect([...CONTROL_REQUEST_KINDS]).toEqual(['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt']);
+    expect([...CONTROL_REQUEST_KINDS]).toEqual(['stop', 'kill', 'approve', 'reject', 'answer', 'restart', 'edit', 'prompt', 'pause', 'resume']);
     const stop: Request = { protocol: PROTOCOL_VERSION, id: '01K7Q3M8XA', kind: 'stop', requestedAt: '2026-09-10T09:03:11.008Z', source: 'cao-desktop 0.1.0', pid: 4188 };
     const answer: Request = { ...stop, id: '01K7Q3N1B2', kind: 'answer', taskId: 'implement-api', uid: 'implement-api.2.1', answer: { kind: 'allow', scope: 'once' } };
     expect(Object.keys(stop)).toEqual(['protocol', 'id', 'kind', 'requestedAt', 'source', 'pid']);

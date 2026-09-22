@@ -36,6 +36,8 @@ export type GlyphName =
   | 'focus'
   | 'pulse'
   | 'vrule'
+  | 'teeDown'
+  | 'teeUp'
   | 'barFull'
   | 'barEmpty'
   | 'up'
@@ -73,6 +75,8 @@ const UNICODE: Record<GlyphName, string> = {
   focus: '▸',
   pulse: '▪',
   vrule: '│',
+  teeDown: '┬',
+  teeUp: '┴',
   barFull: '█',
   barEmpty: '░',
   up: '↑',
@@ -111,6 +115,8 @@ const ASCII: Record<GlyphName, string> = {
   focus: '>',
   pulse: '*',
   vrule: '|',
+  teeDown: '+',
+  teeUp: '+',
   barFull: '#',
   barEmpty: '-',
   up: '^',
@@ -164,4 +170,22 @@ export function spinnerFrames(): readonly string[] {
 /** A horizontal rule `width` columns wide, in whichever character the terminal can draw. */
 export function rule(width: number): string {
   return glyph('rule').repeat(Math.max(0, width));
+}
+
+/**
+ * A labelled divider, `── label ───────`, exactly `width` columns wide.
+ *
+ * Pure: it is told its width rather than reading the terminal, because the workspace sizes every row from
+ * `useWindowSize()` and nothing under `src/tui/` may consult `process.stdout` for itself. `src/cli/util.ts`
+ * wraps this for the command line, where reading the terminal *is* the right thing to do.
+ */
+export function labelledRule(label: string, width: number): string {
+  const total = Math.max(0, width);
+  const text = label.trim();
+  if (!text) return rule(total);
+  // Two for the spaces either side of the label, three so the lead-in still reads as a rule. Below that
+  // there is no room for a divider that is also a label, and the label is what carries the meaning.
+  const lead = 2;
+  if (total < text.length + lead + 3) return text.slice(0, total);
+  return `${rule(lead)} ${text} ${rule(Math.max(0, total - lead - text.length - 2))}`;
 }

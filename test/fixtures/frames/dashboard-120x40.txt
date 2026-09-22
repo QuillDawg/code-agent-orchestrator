@@ -1,40 +1,40 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
    [Overview]│  Session │  Logs │  Changes │  Report │  Diagnostics
-▸ Tasks #/#                          ✗ implement-renderer failed  after # attempt
-▶ ✓ implement-par… claude|opus-#  █    exit code #
-  ✗ implement-ren… codex|gpt-#-… !█    ↑↓ to implement-renderer, then R re-run   F open logs   C open diff
-  ○ review-and-me… claude         █
-                                     ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
-                                       ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit co…
-                                       ○ review-and-merge    Waiting                claude  │ waiting for: implement-re…
-
-                                     implement-parser
-                                     Status:       ✓ Completed
-                                     Attempt:      # / #
-                                     Agent:        claude  Model: claude-opus-#  Effort: CLI default
-                                     Started:      ##:##:##   Elapsed: ##m ##s
-                                     PID:          ####   Session: sess-abc###
-                                     Working Dir:  /repo/.orchestrator/worktrees/implement-parser
-                                     Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##% ##.#…
-                                     Files:        ±#  src/parser.ts
-
-                                     Attempts
-                                       ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.##
-
-                                     Latest activity
-                                       ##:## › Reading the parser
-                                       ##:## $ npm test
-
-
-
-
-
-
-
-
-
-
-
-
-  ↑↓ select   Enter open   F / L follow   R restart   E edit   / search   Ctrl+P palette   ? help   Q quit
+────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────
+▸ Tasks #/#                         │ ✗ implement-renderer failed  after # attempt
+▶ ✓ implement-par… claude|opus-#  █ │   exit code #
+  ✗ implement-ren… codex|gpt-#-… !█ │   ↑↓ to implement-renderer, then R re-run   F open logs   C open diff
+  ○ review-and-me… claude         █ │
+                                    │ ── Tasks #-# of # ────────────────────────────────────────────────────────────────
+                                    │ ▶ ✓ implement-parser    Completed     ##m ##s  claude|opus-#  $#.##  ±#
+                                    │   ✗ implement-renderer  Failed        ##m ##s  codex|gpt-#-codex  $#.##  │ exit c…
+                                    │   ○ review-and-merge    Waiting                claude  │ waiting for: implement-r…
+                                    │ ── implement-parser ──────────────────────────────────────────────────────────────
+                                    │ Status:       ✓ Completed
+                                    │ Attempt:      # / #
+                                    │ Agent:        claude  Model: claude-opus-#  Effort: CLI default
+                                    │ Started:      ##:##:##   Elapsed: ##m ##s
+                                    │ PID:          ####   Session: sess-abc###
+                                    │ Working Dir:  /repo/.orchestrator/worktrees/implement-parser
+                                    │ Usage:        $#.##  ##.#k in / #.#k out  # turns  context [███░░░░░░░░░] ##% ##.…
+                                    │ Files:        ±#  src/parser.ts
+                                    │
+                                    │ Attempts
+                                    │   ##  task  initial  ##:##:## → ##:##:##  ##m ##s  no outcome  #m in tools  $#.##
+                                    │
+                                    │ Latest activity
+                                    │   ##:## › Reading the parser
+                                    │   ##:## $ npm test
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────
+  ↑↓ select   Enter open   F / L follow   R restart   E edit   / search   Ctrl+P palette   ? help   Q quit   spend $#.##

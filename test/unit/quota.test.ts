@@ -22,6 +22,7 @@ import {
   type QuotaChannelHandlers,
 } from '../../src/runners/codex/quota.js';
 import { claudeQuotaSnapshot, startQuotaMonitors } from '../../src/runners/quota.js';
+import { startClaudeQuota, NO_LOCAL_LOGS } from '../../src/runners/claude/quota.js';
 import { quotaChip, resetTime } from '../../src/tui/workspace/quota.js';
 import type { Clock } from '../../src/util/misc.js';
 
@@ -520,17 +521,136 @@ describe('the Codex quota process (§3.6, [D28])', () => {
 });
 
 describe('the provider set (§3.6, [D29], [D31])', () => {
-  it('publishes the Claude chip at once and makes no call for it', () => {
+  it('publishes the Claude chip at once, as loading, and reads nothing to do it', () => {
+    // The first frame must carry a chip for every provider, and the read is deferred to a macrotask so
+    // mounting the workspace never waits on a filesystem walk.
     const snapshots: QuotaSnapshot[] = [];
+    let reads = 0;
     const monitor = startQuotaMonitors({
       onSnapshot: (snapshot) => snapshots.push(snapshot),
       clock: fakeClock(),
       codex: () => ({ refresh: () => undefined, stop: () => undefined }),
+      claude: (options) =>
+        startClaudeQuota({
+          ...options,
+          read: async () => {
+            reads += 1;
+            return { windows: [], models: [], filesRead: 0, filesSkipped: 0, empty: true };
+          },
+        }),
     });
     expect(snapshots.map((s) => s.provider)).toEqual(['claude']);
-    expect(snapshots[0]!.state).toBe('unavailable');
-    expect(snapshots[0]!.reason).toBe('see /usage in Claude Code');
-    expect(snapshots[0]!.windows).toEqual([]);
+    expect(snapshots[0]!.state).toBe('loading');
+    expect(snapshots[0]!.estimated).toBe(true);
+    expect(reads).toBe(0);
+    monitor.stop();
+  });
+
+  it('stops both readers, not just the one that owns a process', () => {
+    // Claude used to be a single fixed line with nothing to stop, so `stop()` only ever reached Codex. It
+    // has a five-minute timer of its own now, and a timer nobody stops lives as long as the terminal does.
+    let codexStopped = 0;
+    let claudeStopped = 0;
+    const monitor = startQuotaMonitors({
+      onSnapshot: () => undefined,
+      clock: fakeClock(),
+      codex: () => ({ refresh: () => undefined, stop: () => (codexStopped += 1) }),
+      claude: () => ({ refresh: () => undefined, stop: () => (claudeStopped += 1) }),
+    });
+    monitor.stop();
+    expect(codexStopped).toBe(1);
+    expect(claudeStopped).toBe(1);
+  });
+
+  it('refreshes both readers, so R in the footer means both chips', () => {
+    let codexRefreshed = 0;
+    let claudeRefreshed = 0;
+    const monitor = startQuotaMonitors({
+      onSnapshot: () => undefined,
+      clock: fakeClock(),
+      codex: () => ({ refresh: () => (codexRefreshed += 1), stop: () => undefined }),
+      claude: () => ({ refresh: () => (claudeRefreshed += 1), stop: () => undefined }),
+    });
+    monitor.refresh();
+    expect(codexRefreshed).toBe(1);
+    expect(claudeRefreshed).toBe(1);
+    monitor.stop();
+  });
+
+  it('counts what it found, says it is an estimate, and never claims a percentage', async () => {
+    const snapshots: QuotaSnapshot[] = [];
+    const clock = fakeClock();
+    const monitor = startClaudeQuota({
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      clock,
+      read: async (windows) => ({
+        windows: windows.map((ms) => ({ ms, inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheCreationTokens: 4, totalTokens: 10, messages: 1 })),
+        models: ['claude-opus-5'],
+        filesRead: 2,
+        filesSkipped: 0,
+        empty: false,
+      }),
+    });
+    clock.tick(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    const latest = snapshots[snapshots.length - 1]!;
+    expect(latest.state).toBe('ok');
+    expect(latest.estimated).toBe(true);
+    expect(latest.windows.length).toBeGreaterThan(0);
+    for (const window of latest.windows) {
+      // The whole point: counted, never divided, and never given a reset nobody recorded.
+      expect(window.usedPercent).toBeNull();
+      expect(window.usedTokens).toBe(10);
+      expect(window.resetsAt).toBeNull();
+    }
+    expect(latest.windows.map((w) => w.label)).toEqual(['5h', '7d']);
+    monitor.stop();
+  });
+
+  it('keeps the last good numbers when a later read fails, rather than blanking them', async () => {
+    const snapshots: QuotaSnapshot[] = [];
+    const clock = fakeClock();
+    let fail = false;
+    const monitor = startClaudeQuota({
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      clock,
+      read: async (windows) => {
+        if (fail) throw new Error('the directory went away');
+        return {
+          windows: windows.map((ms) => ({ ms, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 42, messages: 1 })),
+          models: [],
+          filesRead: 1,
+          filesSkipped: 0,
+          empty: false,
+        };
+      },
+    });
+    clock.tick(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    fail = true;
+    monitor.refresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    const latest = snapshots[snapshots.length - 1]!;
+    expect(latest.state).toBe('stale');
+    expect(latest.reason).toContain('went away');
+    expect(latest.windows[0]!.usedTokens).toBe(42);
+    monitor.stop();
+  });
+
+  it('says there is nothing to estimate from rather than reporting zero', async () => {
+    const snapshots: QuotaSnapshot[] = [];
+    const clock = fakeClock();
+    const monitor = startClaudeQuota({
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      clock,
+      read: async () => ({ windows: [], models: [], filesRead: 0, filesSkipped: 0, empty: true }),
+    });
+    clock.tick(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    const latest = snapshots[snapshots.length - 1]!;
+    expect(latest.state).toBe('unavailable');
+    expect(latest.reason).toBe(NO_LOCAL_LOGS);
+    expect(latest.windows).toEqual([]);
     monitor.stop();
   });
 

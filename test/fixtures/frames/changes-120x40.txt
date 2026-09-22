@@ -1,40 +1,40 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
     Overview │  Session │  Logs │▸[Changes]│  Report │  Diagnostics
-  Tasks #/#                          ✓ implement-parser  # file seen while it ran; no patch captured
-▶ ✓ implement-par… claude|opus-#  █    ▶ M src/parser.ts  edited
-  ✗ implement-ren… codex|gpt-#-… !█  ✗ implement-renderer  no diff captured
-  ○ review-and-me… claude         █
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                                     ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back
-  Ctrl+P palette   ? help   Q quit   updated #s ago
+────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────
+  Tasks #/#                         │ ✓ implement-parser  # file seen while it ran; no patch captured
+▶ ✓ implement-par… claude|opus-#  █ │   ▶ M src/parser.ts  edited
+  ✗ implement-ren… codex|gpt-#-… !█ │ ✗ implement-renderer  no diff captured
+  ○ review-and-me… claude         █ │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+                                    │
+────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────
+  ↑↓ PgUp/PgDn select   g/G first/last   Enter hunks   O editor   Esc back   Ctrl+P palette   ? help   Q quit

@@ -497,7 +497,10 @@ export function entryLiveness(
   now: number = Date.now(),
   self: MachineIdentity = machineIdentity(),
 ): EntryLiveness {
-  if (entry.state !== 'running' && entry.state !== 'created') return 'ended';
+  // `paused` counts as live *while nothing has ended it*: an operator holding a run still owns it, and a
+  // run that dropped out of the listing after ten minutes of being held would then be reaped.
+  if (entry.endedAt) return 'ended';
+  if (entry.state !== 'running' && entry.state !== 'created' && entry.state !== 'paused') return 'ended';
   if (!sameMachine(entry.machine, self)) return 'unknown';
   return isFresh(entry.heartbeatAt, now) && isProcessAlive(entry.pid) ? 'running' : 'stale';
 }

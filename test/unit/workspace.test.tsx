@@ -43,6 +43,15 @@ const wait = async (ms = 30): Promise<void> => {
 
 const task = (id: string, agent: 'claude' | 'codex' = 'claude') => ({ id, agent, dependsOn: [], retry: { attempts: 1 }, codex: {} });
 
+/**
+ * A frame as one line, with the sidebar seam taken out.
+ *
+ * The workspace draws a rule between the task list and the panel, so a panel row that wraps has that
+ * character between its two halves. Flattening without removing it splices the rule into the middle of
+ * every wrapped sentence, which is a fact about the frame rather than about the sentence.
+ */
+const unseam = (frame: string): string => frame.replace(/[\u2502|]/g, ' ').replace(/\s+/g, ' ');
+
 const runWith = (ids: string[], over: Record<string, unknown> = {}) => ({
   runId: '01K5ABCDEFGHJKMNPQRSTVWXYZ',
   workflowName: 'stack-upgrade',
@@ -291,7 +300,9 @@ describe('navigation', () => {
         const frame = tree.lastText();
         expect(frame).toContain('the panel with the keys');
         // The whole of each sentence is on screen, across two rows when it has to be.
-        const flat = frame.replace(/\s+/g, ' ');
+        // The sidebar seam is taken out first: a panel row that wraps has the seam's rule between its two
+        // halves, which the reader's eye skips and a naive flatten would splice into the sentence.
+        const flat = unseam(frame);
         expect(flat, `${small.columns} cut a help row`).toContain('quit: stay, stop and quit, or carry on in plain output');
         expect(flat, `${small.columns} cut a help row`).toContain('stop the run and stay here; again within 20s forces it');
         expect(flat, `${small.columns} cut a help row`).toContain('restart a failed, blocked, cancelled or skipped task');
@@ -302,13 +313,69 @@ describe('navigation', () => {
         for (let page = 0; page < 12 && !found.includes('allow, allow for the rest of the task'); page += 1) {
           tree.write(KEYS.pageDown);
           await wait();
-          found = tree.lastText().replace(/\s+/g, ' ');
+          found = unseam(tree.lastText());
         }
         expect(found, `${small.columns} cut the longest help row`).toContain('allow, allow for the rest of the task, deny, deny with a reason');
         fits(tree, small);
       } finally {
         tree.unmount();
       }
+    }
+  });
+
+  it('sends a pause on P, and a resume on P again once the run is held', async () => {
+    const sent: Array<{ kind: string; taskId?: string }> = [];
+    const submit = async (command: { kind: string }) => {
+      sent.push(command as never);
+      return { protocol: 1, id: 'x', status: 'applied' as const, reason: 'Paused.', at: ts };
+    };
+    const tree = mount(runWith(['implement-parser', 'review']), size, { submit });
+    try {
+      await wait();
+      tree.write('p');
+      await wait();
+      expect(sent).toEqual([{ kind: 'pause' }]);
+      tree.unmount();
+    } finally {
+      // A second press on a run the snapshot now reports as held means the other half of the same key.
+      const held = mount(runWith(['implement-parser', 'review'], { state: 'paused' }), size, { submit });
+      await wait();
+      held.write('p');
+      await wait();
+      expect(sent[sent.length - 1]).toEqual({ kind: 'resume' });
+      held.unmount();
+    }
+  });
+
+  it('sends a suspend on Z, and a continue on Z once the task is suspended', async () => {
+    const sent: Array<{ kind: string; taskId?: string }> = [];
+    const submit = async (command: { kind: string }) => {
+      sent.push(command as never);
+      return { protocol: 1, id: 'x', status: 'applied' as const, reason: 'ok', at: ts };
+    };
+    const run = runWith(['implement-parser', 'review']);
+    const tree = mount(run, size, { submit });
+    try {
+      await wait();
+      tree.write('z');
+      await wait();
+      expect(sent).toEqual([{ kind: 'suspendTask', taskId: 'implement-parser' }]);
+    } finally {
+      tree.unmount();
+    }
+
+    const suspended = runWith(['implement-parser', 'review']) as { tasks: Record<string, { state: string }> };
+    suspended.tasks['implement-parser']!.state = 'suspended';
+    const back = mount(suspended, size, { submit });
+    try {
+      await wait();
+      back.write('z');
+      await wait();
+      expect(sent[sent.length - 1]).toEqual({ kind: 'resumeTask', taskId: 'implement-parser' });
+      // And the state is drawn under its own name rather than borrowing another one's.
+      expect(back.lastText()).toContain('Suspended');
+    } finally {
+      back.unmount();
     }
   });
 

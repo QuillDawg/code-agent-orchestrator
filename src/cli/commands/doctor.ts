@@ -25,7 +25,7 @@ import { packageInfo } from '../../util/package-info.js';
 import { formatAgeMs } from '../../util/duration.js';
 import { colorLevel } from '../color.js';
 import { DEFAULT_WORKFLOW_FILES, findStoreRoot, readOrchestrator, HEARTBEAT_STALE_MS } from '../util.js';
-import { resolveWorkflowPath } from '../util.js';
+import { nonInteractiveReason, resolveWorkflowPath } from '../util.js';
 import type { AgentCapability, AgentRuntimeDetection } from '../../runners/capabilities.js';
 import { controlSupport, type ControlSupport } from '../../runners/controls.js';
 import { readAgentAuth, type AgentAuth } from '../../runners/auth.js';
@@ -140,6 +140,12 @@ export interface TerminalFacts {
   tty: boolean;
   /** stdin can be put in raw mode, i.e. keys can be read one at a time. */
   rawMode: boolean;
+  /**
+   * Why an interactive `cao run` here would print plain output instead of opening the workspace, or absent
+   * when it would open. The same answer `executeRun` prints, from the same function, so the two cannot
+   * disagree about a terminal the operator is standing in front of.
+   */
+  headlessReason?: string;
   columns?: number;
   rows?: number;
   /** Whether glyphs will be drawn rather than the ASCII table (`useUnicode()`). */
@@ -356,6 +362,7 @@ export function detectTerminal(
     platform,
     tty,
     rawMode: Boolean(stdin.isTTY) && typeof stdin.setRawMode === 'function',
+    ...(nonInteractiveReason() ? { headlessReason: nonInteractiveReason()! } : {}),
     ...(typeof stdout.columns === 'number' ? { columns: stdout.columns } : {}),
     ...(typeof stdout.rows === 'number' ? { rows: stdout.rows } : {}),
     unicode: useUnicode(),
@@ -810,6 +817,12 @@ function terminalCheck(terminal: TerminalFacts): DoctorCheck {
   } else if (!terminal.rawMode) {
     problems.push('raw mode is unavailable, so keys cannot be read and the workspace would open read-only');
     remedies.push('run cao from a terminal that owns stdin');
+  }
+  if (terminal.headlessReason && terminal.tty) {
+    // stdout is a terminal, so nothing above has fired, and yet the workspace still will not open. That is
+    // the case nobody guesses: CI, TERM=dumb, or a wrapper that left stdin somewhere else.
+    problems.push(`an interactive run would print plain output here, because ${terminal.headlessReason}`);
+    remedies.push(`run cao from a terminal that owns stdin; the run still works, but it answers no keys`);
   }
   if (terminal.tty && ((terminal.columns ?? MIN_COLUMNS) < MIN_COLUMNS || (terminal.rows ?? MIN_ROWS) < MIN_ROWS)) {
     problems.push(`the window is ${terminal.columns ?? '?'}x${terminal.rows ?? '?'}; the workspace is laid out for at least ${MIN_COLUMNS}x${MIN_ROWS}`);

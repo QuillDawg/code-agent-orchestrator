@@ -21,7 +21,7 @@ import { nowIso } from '../../util/misc.js';
  * `interrupted` is not among them because it is not a task state: a run interrupted by Ctrl+C lands its
  * tasks as `cancelled`, which is.
  */
-export const FOLLOW_UP_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled', 'needs_input']);
+export const FOLLOW_UP_STATES: ReadonlySet<TaskState> = new Set<TaskState>(['failed', 'blocked', 'cancelled', 'needs_input', 'suspended']);
 
 /** How a follow-up reached (or failed to reach) a worker, with no live channel as an honest answer. */
 export const NO_TRANSPORT = 'none' satisfies PromptDelivery['transport'];

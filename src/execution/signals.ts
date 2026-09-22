@@ -191,7 +191,7 @@ function displayStopRequest(request: Partial<ControlRequest> | StopRequest, defa
  * that a run advertises what it actually does, not what it can parse, so a kind arrives here only once the
  * controller carries it out.
  */
-export const INBOX_REQUEST_KINDS: readonly CapabilityToken[] = ['stop', 'kill', 'restart', 'edit', 'prompt'];
+export const INBOX_REQUEST_KINDS: readonly CapabilityToken[] = ['stop', 'kill', 'restart', 'edit', 'prompt', 'pause'];
 
 export interface StopWatcherOptions {
   paths: RunPaths;

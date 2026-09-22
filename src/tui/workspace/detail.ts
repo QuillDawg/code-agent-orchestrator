@@ -51,6 +51,12 @@ export interface DetailInput {
   entries: TranscriptEntry[];
   /** How many transcript lines the panel can spare; 0 drops the block. */
   activityRows: number;
+  /**
+   * Whether to lead with the task id. False where the caller already names the task above these lines -
+   * the Overview's labelled rule does - because the id on two consecutive rows is a wasted row on a panel
+   * that is counting them.
+   */
+  title?: boolean;
 }
 
 export function detailLines(input: DetailInput): DetailLine[] {
@@ -60,7 +66,7 @@ export function detailLines(input: DetailInput): DetailLine[] {
   const usage = attempt?.usage ?? state.result?.usage;
   const files = taskFiles(state);
 
-  out.push({ text: task.id, bold: true });
+  if (input.title !== false) out.push({ text: task.id, bold: true });
   out.push({
     text:
       `Status:       ${theme.paint(`${stateGlyph(state.state)} ${STATE_LABEL[state.state]}`, theme.stateToken(state.state))}` +

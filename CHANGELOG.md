@@ -8,6 +8,41 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+### Added
+
+- The workspace separates its regions: a rule under the tab bar and above the footer, a vertical rule down
+  the sidebar/panel seam, separators between the header’s facts, and labelled rules over the Overview’s
+  task table and detail block. Every row a rule costs is budgeted before any panel is sized, so no frame
+  can grow taller than its terminal.
+- A footer cell for what the run has spent: tokens live, cost once the agent reports it, and `$1.84+` while
+  any attempt has tokens without one.
+- A Claude quota chip estimated from the session logs Claude Code already writes, marked `est`. Rolling
+  five-hour and seven-day windows of absolute tokens — no local file records the plan’s limit, so there is
+  no honest percentage to show. Still no network call of `cao`’s own.
+- **Pausing a run.** `cao pause [run]`, `cao pause --off`, and `P` in the workspace: what is running
+  finishes, nothing new starts, and the run does not end. The workspace stays interactive throughout, so a
+  task can be read, edited or restarted while the run is held.
+- **Suspending one task.** `cao task suspend <task>` and `Z`: the worker stops and its session is kept, so
+  `cao task resume` / `Z` continues where it left off rather than starting over. The task sits in a new
+  non-terminal `Suspended` state, so the tasks depending on it are not blocked behind it.
+- `cao doctor` says when an interactive run would print plain output here, and `cao run` says so itself
+  rather than falling through to headless in silence.
+
+### Fixed
+
+- The task editor reported `Nothing to change` when the edit was in fact invalid. It now shows the
+  validator’s message, which is the one an operator can act on.
+- `E` on an ended run refused and pointed at `cao task edit`, which refused the same task for the same
+  reason. The workspace now applies the edit offline itself, through the same code path as the command.
+- The Changes tab’s footer showed only `Ctrl+P palette   ? help   Q quit` while the panel drew a second key
+  line of its own. There is one footer now, and it carries the panel’s keys.
+- Dialogs drew box-drawing characters under `CAO_ASCII=1`.
+
+### Changed
+
+- The header no longer carries the run’s aggregate cost and tokens; they are a footer cell, which sheds by
+  rule rather than being chopped off the end of a line that has no priority order.
+
 ## [2.0.0-beta.1] - 2026-09-21
 
 The second generation of the orchestrator. The interactive screen became a workspace you can reopen on any

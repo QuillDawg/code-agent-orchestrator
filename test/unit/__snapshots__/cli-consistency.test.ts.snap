@@ -14,6 +14,8 @@ Run:
   run [options] [workflow]       Run a workflow
   resume [options] [run]         Resume an interrupted, failed or paused run
   ui [options] [run]             Open the workspace on a run, or pick one
+  pause [options] [run]          Hold a run: what is running finishes, nothing new starts, and the
+                                 run does not end
   stop [options] [run]           Stop a run from another terminal
   validate [options] [workflow]  Validate a workflow and print its execution plan
 
@@ -26,7 +28,8 @@ Inspect:
   report [options] [run]         Render a run as a document to paste into a pull request
 
 Task controls:
-  task                           Show a task, or steer it: show | stop | restart | edit | prompt
+  task                           Show a task, or steer it: show | stop | suspend | resume | restart
+                                 | edit | prompt
 
 Diagnostics:
   doctor [options] [config]      Check this machine: Node, git, the agent CLIs, the terminal,

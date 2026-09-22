@@ -22,7 +22,7 @@ import { sanitizeText } from '../../cli/color.js';
 import { truncateVisible } from '../../cli/util.js';
 import { glyph } from '../../util/glyphs.js';
 import { formatClock, formatDurationShort } from '../../util/duration.js';
-import { agentLabel } from '../format.js';
+import { formatTokens, agentLabel } from '../format.js';
 import { quotaChip } from './quota.js';
 import { TAB_LABEL, type ControlRecord } from '../store.js';
 import type { Theme, ThemeToken } from '../theme.js';
@@ -223,9 +223,15 @@ export function diagnosticsLines(input: DiagnosticsInput): DiagLine[] {
   if (!input.quotas.length) note('No provider has reported yet.');
   for (const snapshot of input.quotas) {
     row(quotaChip(snapshot, input.now));
-    row(`  read at ${clock(snapshot.readAt)}${snapshot.planType ? `  plan ${snapshot.planType}` : ''}${snapshot.reason ? `  ${snapshot.reason}` : ''}`, 'muted');
+    row(
+      `  read at ${clock(snapshot.readAt)}${snapshot.estimated ? '  estimated from local session logs' : ''}${snapshot.planType ? `  plan ${snapshot.planType}` : ''}${snapshot.reason ? `  ${snapshot.reason}` : ''}`,
+      'muted',
+    );
     for (const window of snapshot.windows) {
-      row(`  ${window.label}  ${window.usedPercent}% used${window.resetsAt ? `, resets ${formatClock(window.resetsAt)}` : ''}`, 'muted');
+      // A window whose limit is unknown reports what was spent. "0% used" and "we cannot know the limit"
+      // must never look the same, which is the rule the whole quota module is written to.
+      const used = window.usedPercent !== null ? `${window.usedPercent}% used` : `${formatTokens(window.usedTokens ?? 0)} tokens`;
+      row(`  ${window.label}  ${used}${window.resetsAt ? `, resets ${formatClock(window.resetsAt)}` : ''}`, 'muted');
     }
   }
   return out;

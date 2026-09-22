@@ -1,5 +1,5 @@
 cao ##K#ABCDEFGHJKMNPQRSTVWXYZ  stack-upgrade · /repo/code-agent-orchestrator
-[██████████████░░░░░░] #/#   ✓# ✗# ▶#   ▶ Running   ##m ##s   #/#   [owner]   $#.##   ##.#k in / #.#k out
+[██████████████░░░░░░] #/#   ✓# ✗# ▶#  │ ▶ Running  │ ##m ##s  │ #/#  │ [owner]
 
   Task                State          Cost      In     Out   Cache r/w Turns   Time  Tools  Context
   implement-parser    Completed     $#.##   ##.#k    #.#k   #.#k/#.#k     #     #m     #m  [██░░░░░░] ##.#k/###k

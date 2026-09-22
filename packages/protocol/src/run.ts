@@ -12,6 +12,15 @@ export const TASK_STATES = [
   'waiting',
   'awaiting_approval',
   'needs_input',
+  /**
+   * Stopped by the operator, with its session kept so it can be continued (§3.5).
+   *
+   * Non-terminal on purpose, and it has to be: `cancelled` is terminal, so a task suspended *as* cancelled
+   * would make every dependent `blocked` on the next pass and make the run report `failed` at the end. The
+   * precedent is `needs_input` — stopped, holding a session, and moved only by a human. This is that state
+   * without the question.
+   */
+  'suspended',
   'success',
   'failed',
   'blocked',
@@ -49,7 +58,8 @@ export type TaskReason =
   | 'merge_conflict'
   | 'needs_input'
   | 'stop_requested'
-  | 'user_interrupt';
+  | 'user_interrupt'
+  | 'suspended';
 
 export type RunState = 'created' | 'running' | 'paused' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 
@@ -71,7 +81,15 @@ export type AttemptOutcome =
   | 'invalid_result'
   | 'merge_conflict'
   | 'cancelled'
-  | 'interrupted';
+  | 'interrupted'
+  /**
+   * The operator suspended it and its session was kept (§3.5).
+   *
+   * Deliberately not one of `FAILURE_OUTCOMES`: suspending a task is not a way of failing it, and it must
+   * not spend a retry. It is also what tells the workspace manager to leave the worktree alone, because the
+   * continued session is going to walk straight back into it.
+   */
+  | 'suspended';
 
 export interface WorkspaceInfo {
   kind: WorkspaceMode;

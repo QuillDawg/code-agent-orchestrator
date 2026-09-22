@@ -15,6 +15,7 @@ import { diffCommand } from './commands/diff.js';
 import { reportCommand } from './commands/report.js';
 import { cleanCommand } from './commands/clean.js';
 import { stopCommand } from './commands/stop.js';
+import { pauseCommand } from './commands/pause.js';
 import { doctorCommand } from './commands/doctor.js';
 import { diagnosticsCommand, DIAGNOSTICS_INCLUDES } from './commands/diagnostics.js';
 import { emitCommand, EMIT_ACTIONS } from './commands/emit.js';
@@ -161,6 +162,24 @@ export const COMMAND_HELP: Record<string, CommandHelp> = {
   'task show': {
     examples: ['cao task review', 'cao task show 002 review --json'],
     exits: '0 shown  2 no such run or task, or usage error',
+  },
+  pause: {
+    examples: [
+      'cao pause                               # hold the latest run',
+      'cao pause 002 --off                     # let it schedule again',
+    ],
+    exits: '0 the run answered  2 nothing is executing it, or it refused',
+  },
+  'task suspend': {
+    examples: [
+      'cao task suspend implement-api          # stop its worker, keep its session',
+      'cao task resume implement-api           # carry on from where it stopped',
+    ],
+    exits: '0 the run answered  2 it refused, or no session could be kept',
+  },
+  'task resume': {
+    examples: ['cao task resume implement-api', 'cao task resume 002 implement-api --wait 0'],
+    exits: '0 the run answered  2 the task is not suspended',
   },
   'task stop': {
     examples: [
@@ -349,6 +368,15 @@ export function buildProgram(): Command {
     .action((run: string | undefined, opts) => exitWith(() => uiCommand(run, opts)));
 
   program
+    .command('pause')
+    .description('Hold a run: what is running finishes, nothing new starts, and the run does not end')
+    .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
+    .option('--off', 'schedule again')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((run: string | undefined, opts) => exitWith(() => pauseCommand(run, opts)));
+
+  program
     .command('stop')
     .description('Stop a run from another terminal')
     .argument('[run]', 'run id, or a unique prefix of one (default: latest)')
@@ -442,7 +470,7 @@ export function buildProgram(): Command {
   // is reached through `cao task show <name>` - which the help below says in as many words.
   const task = program
     .command('task')
-    .description('Show a task, or steer it: show | stop | restart | edit | prompt')
+    .description('Show a task, or steer it: show | stop | suspend | resume | restart | edit | prompt')
     .addHelpText(
       'after',
       [
@@ -481,6 +509,22 @@ export function buildProgram(): Command {
     .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
     .option('--repository <dir>', 'repository containing .orchestrator')
     .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('restart', refs ?? [], opts)));
+
+  task
+    .command('suspend')
+    .description('Stop the worker a task is running, keeping its session so it can be continued')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('suspend', refs ?? [], opts)));
+
+  task
+    .command('resume')
+    .description('Continue a suspended task from the session it kept')
+    .argument('[refs...]', 'task id, or run id followed by task id (ids may be shortened to a unique prefix)')
+    .option('--wait <seconds>', `how long to wait for the owning process to answer (default: ${DEFAULT_ACK_WAIT_SECONDS}; 0 returns as soon as the request is written)`, nonNegativeInt)
+    .option('--repository <dir>', 'repository containing .orchestrator')
+    .action((refs: string[] | undefined, opts) => exitWith(() => taskControlCommand('resume', refs ?? [], opts)));
 
   task
     .command('prompt')

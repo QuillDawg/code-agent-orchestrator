@@ -25,11 +25,12 @@ import type {
   TaskRevision,
   TaskRunState,
   TaskState,
+  WorkflowEvent,
   WorkflowRun,
 } from 'code-agent-orchestrator-protocol';
 import { ACTIVE_TASK_STATES, TASK_EDIT_FIELDS } from 'code-agent-orchestrator-protocol';
 import type { Diagnostic } from '../../config/normalize.js';
-import { validateWorkflow } from '../validator.js';
+import { buildGraph, validateWorkflow } from '../validator.js';
 import { parseDuration } from '../../util/duration.js';
 import { detectClaude } from '../../runners/claude/detect.js';
 import { detectCodex } from '../../runners/codex/detect.js';
@@ -76,6 +77,9 @@ export const EDITABLE_TASK_STATES: ReadonlySet<TaskState> = new Set<TaskState>([
   'blocked',
   'cancelled',
   'needs_input',
+  // Suspended is stopped and holds a session: exactly the shape `needs_input` is, and editable for the
+  // same reason - nothing is running, so there is nothing to stop before the edit lands.
+  'suspended',
 ]);
 
 /** What one field of an edit changed, for the `TaskRevision` and for the ack. */
@@ -310,7 +314,10 @@ export function editRejection(task: ResolvedTask, state: TaskRunState, restart: 
   if (task.isApproval) {
     return `"${task.id}" is an approval gate: it has no prompt, model or agent to edit. Approve or reject it instead.`;
   }
-  if (state.state === 'success') return `"${task.id}" has already succeeded, and a successful task is immutable. Add a task or start a new run.`;
+  // Immutable [D27] - but the refusal names the thing that does work, because the operator who pressed `E`
+  // on a succeeded task wants another attempt at it, and `R` is right there. A refusal that only says "no"
+  // sent them to `cao task edit`, which refuses the same task for the same reason.
+  if (state.state === 'success') return `"${task.id}" has already succeeded, and a successful task is immutable. Re-run it for a fresh attempt with the same configuration, or start a new run to change it.`;
   if (state.state === 'skipped') return `"${task.id}" was skipped and this run will not come back to it. Start a new run to have it do anything.`;
   if (ACTIVE_TASK_STATES.has(state.state)) {
     if (!restart) {
@@ -328,7 +335,7 @@ export function editRejection(task: ResolvedTask, state: TaskRunState, restart: 
 export function restartPlanFor(state: TaskRunState): RestartPlan {
   if (ACTIVE_TASK_STATES.has(state.state)) return 'cancelAndRestart';
   if (state.state === 'pending' || state.state === 'ready') return 'notStarted';
-  if (state.state === 'needs_input') return 'paused';
+  if (state.state === 'needs_input' || state.state === 'suspended') return 'paused';
   return 'restart';
 }
 
@@ -409,4 +416,83 @@ export function markRevisionsApplied(state: TaskRunState, attempt: number): numb
     if (revision.appliedToAttempt === undefined) revision.appliedToAttempt = attempt;
   }
   return revisions[revisions.length - 1]?.number;
+}
+
+// ---------------------------------------------------------------------------- applying one offline
+
+/** The little of a run store an offline edit needs; `FileRunStore` satisfies it, and so does a fake. */
+export interface OfflineEditStore {
+  appendEvent(event: WorkflowEvent): Promise<void>;
+  saveRun(run: WorkflowRun): Promise<void>;
+}
+
+export interface OfflineEditResult {
+  status: 'applied' | 'rejected';
+  /** One sentence, in the same words whichever surface asked. */
+  reason: string;
+  fields?: TaskEditField[];
+  revision?: number;
+  /** Warnings and the reset-workspace note, to be shown under the answer rather than inside it. */
+  notes?: string[];
+}
+
+/**
+ * Apply an edit to a run nobody is executing, writing the revision straight into `workflow.json` (§3.4).
+ *
+ * A stopped run still has a `workflow.json`, and that file is what a resume executes — `startRuntime` loads
+ * the stored workflow rather than re-reading the YAML — so an edit with no owner is written there and picked
+ * up by the next `cao resume`.
+ *
+ * Shared by `cao task edit` and by the workspace's own form on an ended run, because the two must not be
+ * able to give different answers about the same task: the workspace used to refuse outright and point at the
+ * command, and the command then refused too. Every gate the scheduler applies is applied here, in the same
+ * order and with the same sentences; an offline edit that skipped them would leave a run the next resume
+ * refuses to start, which is the worst possible place to discover that a model name was wrong.
+ */
+export async function applyEditOffline(
+  run: WorkflowRun,
+  taskId: string,
+  changes: TaskEdit,
+  store: OfflineEditStore,
+  opts: { source: TaskRevision['source']; pid: number; now: () => string; readiness?: AgentReadiness },
+): Promise<OfflineEditResult> {
+  const state = run.tasks[taskId];
+  const task = run.workflow.tasks.find((t) => t.id === taskId);
+  if (!state || !task) return { status: 'rejected', reason: `Run ${run.runId} has no task called "${taskId}".` };
+
+  const refusal = editRejection(task, state, false) ?? dependentRejection(run, taskId, buildGraph(run.workflow).descendants(taskId));
+  if (refusal) return { status: 'rejected', reason: refusal };
+
+  const decided = await decideEdit(run.workflow, task, changes, {
+    knownRunners: ['claude', 'codex'],
+    gitAvailable: Boolean(run.workflow.gitRoot),
+    readiness: opts.readiness ?? detectAgentReadiness(),
+  });
+  if (!decided.ok) return { status: 'rejected', reason: decided.reason };
+
+  const plan = decided.plan;
+  if (plan.fields.length === 0) return { status: 'applied', reason: `"${taskId}" already has those values, so nothing was changed.`, fields: [] };
+
+  // `restarting: false` — nothing is executing this run, so the reset happens on the next attempt, which is
+  // what the note already says; claiming a restart here would promise something this path cannot do.
+  const notes = [...plan.warnings, ...(resetWorkspaceNote(plan.task, true) ? [resetWorkspaceNote(plan.task, true)!] : [])];
+  const revision = applyEdit(task, state, plan, { source: opts.source, pid: opts.pid, at: opts.now(), ...(notes.length ? { note: notes.join(' ') } : {}) });
+
+  // The same summary event a live run records (§2.6), so the run log tells the whole story whether the edit
+  // was applied by an orchestrator or with nobody at the wheel. Fields, never values.
+  run.eventSeq += 1;
+  await store
+    .appendEvent({ seq: run.eventSeq, ts: opts.now(), runId: run.runId, type: 'task.edited', taskId, revision: revision.number, fields: plan.fields })
+    .catch(() => undefined);
+  // The revision has to be on disk before the operator is told it landed; `saveRun` writes atomically, so a
+  // crash here leaves either the run as it was or the run with the whole edit in it.
+  await store.saveRun(run);
+
+  return {
+    status: 'applied',
+    reason: `Edited "${taskId}" as revision ${revision.number}: ${editFieldList(plan.fields)}.`,
+    fields: plan.fields,
+    revision: revision.number,
+    ...(notes.length ? { notes } : {}),
+  };
 }

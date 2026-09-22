@@ -444,7 +444,7 @@ export function renderReportMarkdown(report: RunReport): string {
   // the same news to a reader, so they are counted apart here.
   // A task holding the run paused is not running: nothing is, and telling a reader otherwise sends them
   // looking for a worker that exited.
-  const paused = report.tasks.filter((t) => t.state === 'needs_input' || t.state === 'awaiting_approval').length;
+  const paused = report.tasks.filter((t) => t.state === 'needs_input' || t.state === 'awaiting_approval' || t.state === 'suspended').length;
   const inFlight = report.tasks.filter((t) => t.ran && !TERMINAL_STATES.has(t.state)).length - paused;
   if (inFlight > 0) outcome.push(`${inFlight} still running`);
   if (paused) outcome.push(`${paused} waiting for you`);
