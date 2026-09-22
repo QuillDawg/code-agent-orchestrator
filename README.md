@@ -22,19 +22,24 @@ One fresh agent per task · parallel tasks in their own git worktrees · structu
 npm install -g code-agent-orchestrator@beta
 ```
 
+<img alt="The cao workspace: a six-task run with two tasks running in parallel, the Overview tab showing each task's state, model, cost and context" src="https://raw.githubusercontent.com/QuillDawg/code-agent-orchestrator/main/assets/cli-screenshot.png" width="900">
+
+<sub>A run in the workspace: two tasks in flight, what each has spent, and the run's own total in the footer.</sub>
+
 </div>
 
 ---
 
-> **Pre-1.0 beta.** This is the first release of the **2.0 line**, published under the `beta` npm tag. It is
-> not the package's first release: `0.1.0-beta.1` through `0.1.0-beta.3` went out under the same tag in
-> September. The number jumped because 2.0 is the second-generation orchestrator rather than a patch on the
-> 0.1 line — a persistent workspace you can reopen on any run, `cao ui`, task editing and prompting, a
-> `cao doctor` that spends nothing unless you ask it to, and a second published package,
+> **Pre-1.0 beta.** This is the first published release of the **2.0 line**, and it carries both the `beta`
+> and the `latest` npm tag, so a bare `npm install -g code-agent-orchestrator` now gets 2.0 rather than the
+> 0.1 line. It is not the package's first release: `0.1.0-beta.1` through `0.1.0-beta.3` went out under the
+> `beta` tag in September. The number jumped because 2.0 is the second-generation orchestrator rather than a
+> patch on the 0.1 line — a persistent workspace you can reopen on any run, `cao ui`, task editing and
+> prompting, a `cao doctor` that spends nothing unless you ask it to, and a second published package,
 > `code-agent-orchestrator-protocol`, for surfaces that read run directories. **No workflow YAML key was
-> added, removed or renamed**, so a 0.1 workflow file runs unchanged. Versioning is still pre-1.0: the
-> schema, the CLI output and the library exports can change in a minor version, so pin an exact version if
-> you depend on them and read the [CHANGELOG](CHANGELOG.md) before upgrading.
+> added, removed or renamed**, so a 0.1 workflow file runs unchanged. Versioning is still pre-1.0: the schema,
+> the CLI output and the library exports can change in a minor version, so pin an exact version if you depend
+> on them and read the [CHANGELOG](CHANGELOG.md) before upgrading.
 
 
 ## Table of contents
@@ -143,7 +148,8 @@ cao --version
 ```
 
 Use the `@beta` tag until 1.0: every pre-release is published under it, so that is the tag that always
-resolves to the newest one.
+resolves to the newest one. `latest` points at the same version today, so the bare name installs it too —
+but a 1.0 would move `latest` and leave `@beta` where the pre-releases are.
 
 Two binaries are installed, `cao` and `code-agent-orchestrator`, the same program under both names. `cao` is
 a short name that npm does not reserve, so it can lose to a shell alias or another tool on your PATH. If
