@@ -226,7 +226,10 @@ describe.skipIf(!HAS_GIT)('the workspace stays open when a run ends (§2.4)', ()
         // anything for it to stop; the second execution is left alone.
         execute: async (target, session) => {
           const running = executeOnce(target, session);
-          await waitUntil(() => target.run.tasks['a']!.state === 'running', 20_000);
+          // A worker with a pid, not merely a task the scheduler has marked running: between those two
+          // moments a stop tears the child down without the attempt's own cancellation ever firing, and the
+          // attempt is then recorded as a crash - which is what this asserts it is not.
+          await waitUntil(() => target.run.tasks['a']!.state === 'running' && target.run.tasks['a']!.attempts[0]?.pid !== undefined, 20_000);
           if (target.run.tasks['a']!.attempts.length === 1) workspace.options.onInterrupt();
           return running;
         },

@@ -359,7 +359,9 @@ describe('cao emit status prints the whole chain (§5.4)', () => {
     await putJson(runsDir(home), 'live.json', entry({ runId: '2026-09-10-001' }));
     await putJson(runsDir(home), 'ended.json', entry({ runId: '2026-09-10-002', state: 'completed', endedAt: new Date().toISOString(), exitCode: 0 }));
     await putJson(runsDir(home), 'stale.json', entry({ runId: '2026-09-10-003', heartbeatAt: new Date(Date.now() - 120_000).toISOString() }));
-    await putJson(runsDir(home), 'elsewhere.json', entry({ runId: '2026-09-10-004', machine: { ...machineIdentity(), platform: 'linux' } }));
+    // Another machine by hostname, not by platform: `platform: 'linux'` names *this* machine on a Linux
+    // runner, and the entry then counts as live rather than unknown.
+    await putJson(runsDir(home), 'elsewhere.json', entry({ runId: '2026-09-10-004', machine: { ...machineIdentity(), hostname: `not-${machineIdentity().hostname}` } }));
 
     const status = await readEmitStatus();
     expect(status.runs).toEqual({ live: 1, retained: 3, stale: 1, unknown: 1, total: 4 });
