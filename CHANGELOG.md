@@ -8,6 +8,12 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+## [2.0.0-beta.2] - 2026-09-22
+
+The workspace becomes a fenced screen, a run can be held without being ended, one task can be put down and
+picked up again, and the run says what it has spent. The first release of the 2.0 line that reaches npm:
+`2.0.0-beta.1` was tagged in this repository but never published.
+
 ### Added
 
 - The workspace separates its regions: a rule under the tab bar and above the footer, a vertical rule down

@@ -1,6 +1,6 @@
 {
   "name": "code-agent-orchestrator",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "Run YAML-defined engineering workflows as a DAG of isolated Claude Code and Codex sessions",
   "type": "module",
   "license": "MIT",
@@ -73,7 +73,7 @@
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
-    "code-agent-orchestrator-protocol": "^0.2.0",
+    "code-agent-orchestrator-protocol": "^0.3.0",
     "commander": "^15.0.0",
     "execa": "^9.5.2",
     "fuzzysort": "^4.0.2",

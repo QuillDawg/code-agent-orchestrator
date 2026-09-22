@@ -12,6 +12,36 @@ contract moves, so most `code-agent-orchestrator` releases do not bump it.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-22
+
+Additive except for one field that became nullable. `PROTOCOL_VERSION` stays `1`: every file a `0.2.0`
+reader could open, it can still open.
+
+### Changed
+
+- **`QuotaWindow.usedPercent` is now `number | null`.** A window can be counted without being divided: an
+  estimate read from local files knows what was spent and can never know what it was spent against, because
+  no local file records the plan's limit. A reader that answered `0%` there would report as certain the one
+  thing the operator most needs to be told is unknown. A `0.2.0` consumer that treats the field as a number
+  must handle the null; that is the only reason this is a minor rather than a patch.
+
+### Added
+
+- **`QuotaWindow.usedTokens?`** - absolute usage, for a window that can be counted but not divided.
+- **`QuotaSnapshot.estimated?`** - `cao` computed this snapshot rather than being told it. A flag and not a
+  seventh `state`: the states are about whether a number exists, this is about where it came from, and a
+  state would make "stale and estimated" inexpressible.
+- **`TASK_STATES` gains `suspended`**, with `TaskReason` and `AttemptOutcome` gaining the same token. A task
+  the operator stopped while keeping its session, and **non-terminal**: `cancelled` is terminal, so a task
+  suspended as cancelled would block every dependent and end the run as `failed`. The outcome is not one of
+  `FAILURE_OUTCOMES` either - a suspend is not a way of failing, and must not spend a retry.
+- **`CONTROL_REQUEST_KINDS` gains `pause` and `resume`** - holding a run's scheduling from another process,
+  and letting it go again. Eleven kinds; as before, a reader ignores kinds it does not know.
+- **`workflow.paused` gains the reason `operator`**, beside `approval` and `needs_input`.
+
+As at `0.2.0`, an exhaustive `switch` over `TASK_STATES`, `TaskReason`, `AttemptOutcome` or
+`CONTROL_REQUEST_KINDS` is where a consumer feels an addition; a `default` arm does not.
+
 ## [0.2.0] - 2026-09-21
 
 The first minor since the package was cut. Everything in it is additive: no existing field changed meaning,

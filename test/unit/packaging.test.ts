@@ -151,18 +151,18 @@ describe('package.json', () => {
 });
 
 /**
- * §4 S5 and `[D2]`: the release is `2.0.0-beta.1` on the `beta` tag, the protocol package moves on its own
- * train to `0.2.0` (`[D39]`, additive only), and `PROTOCOL_VERSION` — the on-disk contract, a different
- * number for a different reason — does not move at all.
+ * §4 S5 and `[D2]`: the release is `2.0.0-beta.2` on the `beta` tag, the protocol package moves on its own
+ * train to `0.3.0` (`[D39]`, one field made nullable and the rest additive), and `PROTOCOL_VERSION` — the
+ * on-disk contract, a different number for a different reason — does not move at all.
  */
 describe('release versions', () => {
-  it('is 2.0.0-beta.1, and says so in the changelog', async () => {
-    expect(pkg.version).toBe('2.0.0-beta.1');
+  it('is 2.0.0-beta.2, and says so in the changelog', async () => {
+    expect(pkg.version).toBe('2.0.0-beta.2');
     expect(await read('CHANGELOG.md')).toContain(`## [${pkg.version}]`);
   });
 
   it('carries the protocol package at its own minor, with the CLI range following it', async () => {
-    expect(protocolPkg.version).toBe('0.2.0');
+    expect(protocolPkg.version).toBe('0.3.0');
     expect(await read('packages', 'protocol', 'CHANGELOG.md')).toContain(`## [${protocolPkg.version}]`);
     // The range has to admit what the workspace builds, or a published CLI installs a protocol its bundle
     // was never compiled against.
