@@ -36,6 +36,8 @@ interface CodexTrace {
   prompt?: string;
   resumed?: boolean;
   transport?: string;
+  /** The app-server method a line records, for the handful the fake traces by name. */
+  method?: string;
 }
 
 interface RunOptions {
@@ -148,7 +150,9 @@ describe.skipIf(!HAS_GIT)('codex end-to-end with the fake CLI', () => {
         expect(session).toBeTruthy();
         expect(chatty.attempts[1]!.resumedSessionId).toBe(session);
 
-        const calls = trace.filter((t) => t.taskId === 'chatty').sort((a, b) => a.attempt - b.attempt);
+        // One line per process the runner started: a line carrying a `method` is something the fake
+        // recorded from inside a turn, not a call.
+        const calls = trace.filter((t) => t.taskId === 'chatty' && !t.method).sort((a, b) => a.attempt - b.attempt);
         expect(calls).toHaveLength(2);
         if (transport === 'exec') {
           // The second call resumes the recorded thread rather than starting a new one.
@@ -215,8 +219,14 @@ describe.skipIf(!HAS_GIT)('codex end-to-end with the fake CLI', () => {
         const { run, store, runtime, tracePath } = await prepare(repo, yaml, { modes: { waiter: 'hang' } });
         const execution = runtime.scheduler.execute();
         await waitFor(() => run.tasks.waiter?.state === 'running' && run.tasks.waiter.attempts[0]?.pid !== undefined, 20_000);
-        for (const start = Date.now(); !(await readTrace(tracePath)).some((t) => t.taskId === 'waiter'); ) {
-          if (Date.now() - start > 20_000) throw new Error('the fake Codex CLI never wrote its trace line');
+        // A turn in flight, not merely a process that has started. On `appServer` those are two different
+        // moments - the fake traces its startup before the handshake that creates the thread - and a stop
+        // between them cancels a turn that does not exist yet, which is how this passed everywhere except
+        // a Windows runner, where the handshake is slow enough to lose the race.
+        const inFlight = (t: CodexTrace): boolean =>
+          t.taskId === 'waiter' && (transport === 'exec' || t.method === 'turn/start');
+        for (const start = Date.now(); !(await readTrace(tracePath)).some(inFlight); ) {
+          if (Date.now() - start > 20_000) throw new Error('the fake Codex CLI never started a turn');
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
         runtime.scheduler.requestStop('cancel', 'signal');

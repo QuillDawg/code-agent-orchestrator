@@ -36,7 +36,7 @@ import {
 import { WorkflowScheduler } from '../../src/workflow/scheduler.js';
 import { WorkflowEventBus } from '../../src/events/event-bus.js';
 import { RunnerRegistry } from '../../src/runners/task-runner.js';
-import { buildWorkflow, makeRun, MemoryRunStore, MockRunner, MockWorkspace, tmpDir, waitFor } from '../helpers/index.js';
+import { buildWorkflow, makeRun, MemoryRunStore, mkdirHome, MockRunner, MockWorkspace, tmpDir, waitFor } from '../helpers/index.js';
 import type { Clock } from '../../src/util/misc.js';
 
 const DAY_MS = 86_400_000;
@@ -89,7 +89,7 @@ function entry(over: Partial<RegistryEntry> = {}): RegistryEntry {
 
 /** Write a file into `runs/` under a name of the test's choosing, bypassing key validation. */
 async function putRaw(dir: string, name: string, body: string): Promise<string> {
-  await fs.mkdir(dir, { recursive: true });
+  await mkdirHome(dir);
   const file = path.join(dir, name);
   await fs.writeFile(file, body, 'utf8');
   return file;

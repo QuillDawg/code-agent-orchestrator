@@ -15,7 +15,7 @@ import { emitCommand } from '../../src/cli/commands/emit.js';
 import { clearDetectionCache } from '../../src/runners/claude/detect.js';
 import { entryFile, registryKey, runsDir, setRegistryWarner } from '../../src/persistence/registry.js';
 import { FileRunStore } from '../../src/persistence/run-store.js';
-import { captureCli, FAKE_CLAUDE, tmpDir, tmpGitRepo } from '../helpers/index.js';
+import { captureCli, FAKE_CLAUDE, mkdirHome, tmpDir, tmpGitRepo } from '../helpers/index.js';
 
 const NL = String.fromCharCode(10);
 const YAML = ['name: emitted', 'tasks:', '  - id: implement-api', '    prompt: p'].join(NL) + NL;
@@ -120,7 +120,7 @@ describe('cao run with emit off is the release before it (§5.9, §12.1)', () =>
     expect(existsSync(home)).toBe(false);
 
     // …and --no-emit beats a config.json that says otherwise, still without touching the directory
-    await fs.mkdir(home, { recursive: true });
+    await mkdirHome(home);
     await fs.writeFile(path.join(home, 'config.json'), JSON.stringify({ protocol: 1, emit: true, retainDays: 14 }));
     await captureCli(() => runCommand(configPath, { repository: repo, claudeCommand: FAKE_CLAUDE, tui: false, emit: false, task: ['implement-api'] }));
     expect(existsSync(runsDir(home))).toBe(false);

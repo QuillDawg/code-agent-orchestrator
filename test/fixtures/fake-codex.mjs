@@ -525,6 +525,10 @@ rl.on('line', (raw) => {
     }
     emit({ id: message.id, result: { turn: { id: 'turn-1', status: 'inProgress', items: [], itemsView: 'full', error: null } } });
     activeTurnId = 'turn-1';
+    // The turn is now in flight, and this line is the only external evidence of the moment it started: the
+    // startup trace above says the process exists, which is a different and much earlier thing. A test that
+    // interrupts a turn has to wait for this one or it races the handshake on a slow machine.
+    trace({ method: 'turn/start' });
     // Rate limits move while a turn runs, and this is the only moment the server says so (§7.2).
     if (process.env.FAKE_CODEX_RATE_LIMITS_UPDATE === '1') emitRateLimitsUpdate();
     if (mode === 'steer') {

@@ -47,6 +47,18 @@ export async function tmpDir(prefix = 'cao-test-'): Promise<string> {
 }
 
 /**
+ * Make a `CAO_HOME` the way `cao` makes `~/.cao`: owner-only.
+ *
+ * `fs.mkdir` without a mode lands on `0755` under the umask CI runs with, and §4.2.1 refuses a home another
+ * account could read a request file out of — so a test that builds its own home with the default mode is
+ * refused on Linux while passing on Windows, where the mode check does not apply. Every test that writes
+ * into a home before `cao` has created it goes through this.
+ */
+export async function mkdirHome(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+}
+
+/**
  * Whether a usable `git` is on PATH. The worktree and end-to-end suites drive a real repository, so
  * without git every one of their cases would fail somewhere inside `git init` with a spawn error. They
  * call this at collection time and skip themselves instead, printing why once.

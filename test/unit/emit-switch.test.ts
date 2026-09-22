@@ -8,7 +8,7 @@ import { planEmit, wiredCapabilities } from '../../src/cli/emit.js';
 import { INBOX_REQUEST_KINDS } from '../../src/execution/signals.js';
 import { emitCommand, emitStatusLines, readEmitStatus } from '../../src/cli/commands/emit.js';
 import { configFile, machineIdentity, presenceDir, registryKey, runsDir, setRegistryWarner, writeConfig } from '../../src/persistence/registry.js';
-import { captureCli, tmpDir } from '../helpers/index.js';
+import { captureCli, mkdirHome, tmpDir } from '../helpers/index.js';
 
 const NL = String.fromCharCode(10);
 
@@ -266,7 +266,7 @@ describe('emit: PROTOCOL_VERSION is stamped first (§4)', () => {
 // ---------------------------------------------------------------------------- cao emit (§5.4)
 
 async function putJson(dir: string, name: string, value: unknown): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
+  await mkdirHome(dir);
   await fs.writeFile(path.join(dir, name), JSON.stringify(value, null, 2));
 }
 
@@ -416,7 +416,7 @@ describe('cao emit enable and disable (§4.2.6, §4.2.7)', () => {
   });
 
   it('preserves keys it does not understand, so a newer cao and an older one can share the file', async () => {
-    await fs.mkdir(home, { recursive: true });
+    await mkdirHome(home);
     await fs.writeFile(configFile(home), JSON.stringify({ protocol: 1, emit: false, retainDays: 30, notifications: { sound: true } }));
     await captureCli(() => emitCommand('enable', {}));
     expect(JSON.parse(await fs.readFile(configFile(home), 'utf8'))).toEqual({ protocol: PROTOCOL_VERSION, emit: true, retainDays: 30, notifications: { sound: true } });

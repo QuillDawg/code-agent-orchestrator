@@ -1,0 +1,17 @@
+# One line ending, on every machine that checks this repository out.
+#
+# The Windows CI runner checks out with `core.autocrlf=true` — and it does so in `actions/checkout`,
+# before the workflow's own `git config core.autocrlf false` can run. That is how `docs/capabilities.md`
+# reached the key-table test as CRLF and failed a comparison the code builds with `\n`: the same test
+# passes on Linux and on a developer's machine, so nothing but CI ever sees it. An attribute beats
+# `core.autocrlf` wherever the two disagree, which is what makes this the fix rather than the workflow.
+#
+# It also matters to the documents themselves: several tests assert that a document and the code it
+# describes carry the same table, byte for byte.
+* text=auto eol=lf
+
+# Left exactly as they are: git must not look for line endings in these at all.
+*.png binary
+*.ico binary
+*.gif binary
+*.jpg binary

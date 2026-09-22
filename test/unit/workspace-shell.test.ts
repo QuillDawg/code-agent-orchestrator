@@ -10,7 +10,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import { tmpDir } from '../helpers/index.js';
+import { mkdirHome, tmpDir } from '../helpers/index.js';
 import { windowOf, scrollbarColumn } from '../../src/tui/window.js';
 import { workspaceLayout, footerColumnsFor } from '../../src/tui/workspace/layout.js';
 import { alwaysHints, footerHints, panelHelp, globalKeys, viewerKeys, type KeyMode } from '../../src/tui/workspace/keys.js';
@@ -386,7 +386,7 @@ describe('alternate screen [D4]', () => {
     expect(altScreenEnabled({ env: {} })).toBe(true);
     await expect(fs.stat(dir)).rejects.toThrow();
 
-    await fs.mkdir(dir, { recursive: true });
+    await mkdirHome(dir);
     await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ protocol: 1, emit: false, altScreen: false }));
     expect(readUserConfig(dir)).toMatchObject({ altScreen: false });
     expect(altScreenEnabled({ env: {} })).toBe(false);
