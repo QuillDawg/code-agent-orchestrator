@@ -8,6 +8,10 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+## [2.0.0-beta.3] - 2026-09-24
+
+A fix for long runs: the workspace no longer grows its heap until Node gives up.
+
 ### Fixed
 
 - A long run with the workspace open no longer dies with "JavaScript heap out of memory". Every frame the

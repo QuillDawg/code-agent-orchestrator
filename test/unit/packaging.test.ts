@@ -151,13 +151,13 @@ describe('package.json', () => {
 });
 
 /**
- * §4 S5 and `[D2]`: the release is `2.0.0-beta.2` on the `beta` tag, the protocol package moves on its own
+ * §4 S5 and `[D2]`: the release is `2.0.0-beta.3` on the `beta` tag, the protocol package moves on its own
  * train to `0.3.0` (`[D39]`, one field made nullable and the rest additive), and `PROTOCOL_VERSION` — the
  * on-disk contract, a different number for a different reason — does not move at all.
  */
 describe('release versions', () => {
-  it('is 2.0.0-beta.2, and says so in the changelog', async () => {
-    expect(pkg.version).toBe('2.0.0-beta.2');
+  it('is 2.0.0-beta.3, and says so in the changelog', async () => {
+    expect(pkg.version).toBe('2.0.0-beta.3');
     expect(await read('CHANGELOG.md')).toContain(`## [${pkg.version}]`);
   });
 
