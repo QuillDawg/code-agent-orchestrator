@@ -8,6 +8,15 @@ workflow YAML schema, the CLI output or the library exports; when it does, this 
 
 ## [Unreleased]
 
+### Fixed
+
+- A long run with the workspace open no longer dies with "JavaScript heap out of memory". Every frame the
+  workspace drew was kept: Ink memoises every string it measures or wraps and never evicts, and React's
+  development build, which Ink loaded because `NODE_ENV` was unset, left profiler entries on Node's
+  performance timeline. `cao` now caps Ink's caches and loads React's production build, without passing
+  `NODE_ENV` on to the agents it starts. The heap stays flat however long the run.
+- `cao logs --follow` no longer adds an abort listener on every poll.
+
 ## [2.0.0-beta.2] - 2026-09-22
 
 The workspace becomes a fenced screen, a run can be held without being ended, one task can be put down and

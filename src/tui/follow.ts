@@ -80,11 +80,17 @@ export async function followFile(filePath: string, onLine: (line: string) => voi
       return;
     }
     await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, interval);
-      opts.signal?.addEventListener('abort', () => {
+      // One listener per wait, taken off again when the timer wins: `once` only removes it on abort, so
+      // leaving it would pile one up per poll for as long as the follow runs.
+      const onAbort = (): void => {
         clearTimeout(t);
         resolve();
-      }, { once: true });
+      };
+      const t = setTimeout(() => {
+        opts.signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, interval);
+      opts.signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
   if (pending) onLine(pending);
